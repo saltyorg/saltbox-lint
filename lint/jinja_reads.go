@@ -5,7 +5,8 @@ import "slices"
 // VariableReads returns lexical variable-read tokens from one complete Jinja
 // tag, in source order. It excludes attribute/filter/test names, callees,
 // keyword labels, and statement binding positions, but includes macro-default
-// expressions. It does not resolve values or track bindings across separate tags.
+// expressions and block-set filter arguments. It does not resolve values or
+// track bindings across separate tags.
 func VariableReads(expression Expression) []Token {
 	if !expression.Complete {
 		return nil
@@ -47,14 +48,14 @@ func statementBindings(expression Expression) map[int]bool {
 		return bindings
 	}
 	bindings[0] = true
-	markUntil := func(start int, stop string) {
-		for index := start; index < len(tokens) && tokens[index].Text != stop; index++ {
+	markUntil := func(start int, stops ...string) {
+		for index := start; index < len(tokens) && !slices.Contains(stops, tokens[index].Text); index++ {
 			bindings[index] = true
 		}
 	}
 	switch tokens[0].Text {
 	case "set":
-		markUntil(1, "=")
+		markUntil(1, "=", "|")
 	case "for":
 		markUntil(1, "in")
 	case "from":

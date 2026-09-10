@@ -192,7 +192,7 @@ func dockerEnvironmentIssues(source *Source, declaration defaultDeclaration) []D
 			case declaration.Name != role+"_role_docker_envs":
 				hint = "Read _docker_envs_custom only in " + role + "_role_docker_envs."
 			case !finalEnvironmentLayer(declaration, expression, call):
-				hint = "Make _docker_envs_custom the final combine(lookup('role_var', '_docker_envs_custom', role='" + role + "')) layer of its Docker environment aggregate."
+				hint = "Make _docker_envs_custom the final combine(lookup('role_var', '_docker_envs_custom', role='" + role + "')) layer of its Docker environment aggregate. Group a conditional base first: (base if enabled else {}) | combine(lookup(...))."
 			}
 			if hint != "" {
 				diagnostics = append(diagnostics, dockerDiagnostic(source, "docker-aggregate-contract", call.Span, "Docker custom environment access violates final override ownership", hint))
@@ -213,6 +213,11 @@ func finalEnvironmentLayer(declaration defaultDeclaration, expression Expression
 		return false
 	}
 	tokens := expression.Tokens
+	// Jinja filters bind inside an ungrouped conditional branch. The final
+	// combine must follow the complete base, not only its else value.
+	if inspectRegion(tokens, 0, len(tokens)).If >= 0 {
+		return false
+	}
 	for index, token := range tokens {
 		if token.Span.Start != call.Span.Start || index < 3 {
 			continue

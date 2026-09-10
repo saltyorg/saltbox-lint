@@ -246,3 +246,39 @@ func TestDockerAggregateCompanionsRemainFileLocal(t *testing.T) {
 		t.Fatalf("cross-file defaults changed contract: %+v", got)
 	}
 }
+
+func TestDockerEnvironmentBlockSetFilterReads(t *testing.T) {
+	input := "v: |\n  {% set example_role_docker_envs_custom | trim %}body{% endset %}\n"
+	if ds := dockerDiagnostics(t, input, "docker-aggregate-contract"); len(ds) != 0 {
+		t.Fatalf("block set binding diagnosed: %+v", ds)
+	}
+	input = "v: |\n  {% set captured | default(example_role_docker_envs_custom) %}body{% endset %}\n"
+	assertDockerDiagnostic(t, input, "docker-aggregate-contract", "example_role_docker_envs_custom", "role_var")
+}
+
+func TestDockerEnvironmentCustomFollowsCompleteConditionalBase(t *testing.T) {
+	for _, name := range []string{"conditional-env.good.yml", "conditional-env.bad.yml"} {
+		input, err := os.ReadFile("testdata/docker/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(name, ".bad.") {
+			assertDockerDiagnostic(t, string(input), "docker-aggregate-contract", "example_role_docker_envs", "final", "(base if enabled else {}) | combine(")
+		} else if ds := dockerDiagnostics(t, string(input)); len(ds) != 0 {
+			t.Fatalf("grouped complete base diagnosed: %+v", ds)
+		}
+	}
+	const header = "example_role_docker_envs_default: {BASE: value}\nexample_role_docker_envs_custom: {}\nexample_role_docker_envs: "
+	const def = "lookup('role_var', '_docker_envs_default', role='example')"
+	const custom = "lookup('role_var', '_docker_envs_custom', role='example')"
+	for _, base := range []string{def, "(" + def + " if enabled else ({} if other else {}))", def + " | combine({'key': a if enabled else b})", def + " | combine({'if': 'else'})"} {
+		input := header + "\"{{ " + base + " | combine(" + custom + ") }}\"\n"
+		if ds := dockerDiagnostics(t, input); len(ds) != 0 {
+			t.Fatalf("complete base %s diagnosed: %+v", base, ds)
+		}
+	}
+	for _, base := range []string{def + " if enabled else {}", def + " if enabled else {} if other else {}"} {
+		input := header + "\"{{ " + base + " | combine(" + custom + ") }}\"\n"
+		assertDockerDiagnostic(t, input, "docker-aggregate-contract", "example_role_docker_envs", "(base if enabled else {}) | combine(")
+	}
+}

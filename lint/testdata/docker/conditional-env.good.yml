@@ -1,0 +1,3 @@
+example_role_docker_envs_default: {BASE: value}
+example_role_docker_envs_custom: {}
+example_role_docker_envs: "{{ (lookup('role_var', '_docker_envs_default', role='example') if enabled else {}) | combine(lookup('role_var', '_docker_envs_custom', role='example')) }}"
