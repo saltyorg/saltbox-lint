@@ -282,3 +282,24 @@ func TestInstallAndRunActualBinary(t *testing.T) {
 		t.Fatalf("installed binary check exit %d: %s", code, out)
 	}
 }
+
+func TestRunLaunchFailuresAreOperational(t *testing.T) {
+	for _, name := range []string{"missing", "non-executable", "missing interpreter"} {
+		t.Run(name, func(t *testing.T) {
+			workspace := t.TempDir()
+			binary := filepath.Join(workspace, "saltbox-lint")
+			if name != "missing" {
+				writeFile(t, binary, []byte("#!/missing/interpreter\n"))
+				if name == "missing interpreter" {
+					if err := os.Chmod(binary, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			out, code := shell(t, "run.sh", map[string]string{"SALTBOX_LINT_BINARY": binary, "GITHUB_WORKSPACE": workspace})
+			if code != 2 || !strings.Contains(out, "unable to start check") {
+				t.Fatalf("exit=%d want=2 output=%s", code, out)
+			}
+		})
+	}
+}
