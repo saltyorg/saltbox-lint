@@ -44,7 +44,12 @@ func githubReport(w io.Writer, p *lint.Project, ds []Diagnostic, opts Options) e
 		for _, r := range d.Related {
 			message += fmt.Sprintf("\nRelated: %s:%d:%d: %s", relativeSource(opts.GitHub.Workspace, p.Root, r.Path), r.Range.Start.Line, r.Range.Start.Column, r.Message)
 		}
-		fmt.Fprintf(&b, "::%s file=%s,line=%d,col=%d,endLine=%d,endColumn=%d,title=%s::%s\n", level, property(path), d.Range.Start.Line, d.Range.Start.Column, end.Line, end.Column, property(d.RuleID), commandData(message))
+		location := fmt.Sprintf("line=%d,endLine=%d", d.Range.Start.Line, end.Line)
+		// The runner accepts columns only for a single-line annotation.
+		if d.Range.Start.Line == end.Line {
+			location = fmt.Sprintf("line=%d,col=%d,endLine=%d,endColumn=%d", d.Range.Start.Line, d.Range.Start.Column, end.Line, end.Column)
+		}
+		fmt.Fprintf(&b, "::%s file=%s,%s,title=%s::%s\n", level, property(path), location, property(d.RuleID), commandData(message))
 	}
 	if _, err := io.WriteString(w, b.String()); err != nil {
 		return err

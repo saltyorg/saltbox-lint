@@ -137,7 +137,7 @@ func TestRangesKeepHalfOpenOffsetsAndInclusiveGitHubEnds(t *testing.T) {
 		jsonRange  string
 	}{
 		{"non BMP token", lint.Span{Start: 4, End: 8}, "line=1,col=5,endLine=1,endColumn=5", `"range":{"start":{"line":1,"column":5},"end":{"line":1,"column":6}}`},
-		{"multiline", lint.Span{Start: 8, End: 15}, "line=1,col=6,endLine=2,endColumn=4", `"range":{"start":{"line":1,"column":6},"end":{"line":2,"column":5}}`},
+		{"multiline", lint.Span{Start: 8, End: 15}, "line=1,endLine=2,title=", `"range":{"start":{"line":1,"column":6},"end":{"line":2,"column":5}}`},
 		{"insertion", lint.Span{Start: 8, End: 8}, "line=1,col=6,endLine=1,endColumn=6", `"range":{"start":{"line":1,"column":6},"end":{"line":1,"column":6}}`},
 	}
 	for _, tt := range cases {
