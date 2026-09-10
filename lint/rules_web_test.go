@@ -141,3 +141,26 @@ func TestRoleVarEmptyDefaultRecognizesOnlyRepeatedFallbackPattern(t *testing.T) 
 		}
 	}
 }
+
+func TestLookupRulesRejectTestFilterAndBindingProvenance(t *testing.T) {
+	for _, expression := range []string{
+		"{{ data is lookup('role_var', '_value') }}",
+		"{{ data is not lookup('role_var', '_value') }}",
+		"{{ data | lookup('role_var', '_value') }}",
+		"{% filter lookup('role_var', '_value') %}",
+		"{% macro lookup(plugin='role_var', suffix='_value') %}",
+	} {
+		input := "example_role_value: >-\n  " + expression + "\n"
+		if ds := defaultsDiagnostics(t, "roles/example/defaults/main.yml", input, "role-lookup-target"); len(ds) > 0 {
+			t.Fatalf("%s: %+v", expression, ds)
+		}
+	}
+	input := "example_role_value: >-\n  {{ data is other(lookup('role_var', '_value')) }}\n"
+	assertSingleDefaultsDiagnostic(t, "roles/example/defaults/main.yml", input, "role-lookup-target", "lookup('role_var', '_value')", "role='example'")
+	for _, expression := range []string{"{{ data is lookup('vars', value if enabled else other) }}", "{{ data | lookup('vars', value if enabled else other) }}"} {
+		input := "example_role_value: >-\n  " + expression + "\n"
+		if ds := Analyze(defaultsProject(t, "roles/example/defaults/main.yml", input), dockerRules("lookup-conditional-argument")); len(ds) > 0 {
+			t.Fatalf("%s: %+v", expression, ds)
+		}
+	}
+}

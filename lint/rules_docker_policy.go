@@ -137,7 +137,7 @@ func dockerPolicies(s *Source) []dockerPolicy {
 		}
 		for _, call := range Calls(e, "lookup") {
 			plugin, ok := lookupPlugin(call)
-			if !ok || plugin != "docker_vars" || !directLookupCall(e, call) {
+			if !ok || plugin != "docker_vars" {
 				continue
 			}
 			for _, arg := range call.Arguments {
@@ -249,15 +249,4 @@ func literalDockerPolicies(s *Source, tokens []Token) []dockerPolicy {
 		}
 	}
 	return result
-}
-
-// Calls exposes named calls for multiple policy consumers; declarations require
-// a function call, not a filter with a coincidentally matching name.
-func directLookupCall(expression Expression, call Call) bool {
-	for index, token := range expression.Tokens {
-		if token.Span.Start == call.Span.Start {
-			return index == 0 || expression.Tokens[index-1].Text != "|"
-		}
-	}
-	return false
 }

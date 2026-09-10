@@ -15,21 +15,32 @@ func VariableReads(expression Expression) []Token {
 	bindings := statementBindings(expression)
 	var reads []Token
 	for index, token := range tokens {
-		if token.Kind != "name" || bindings[index] || jinjaReadKeyword(token.Text) {
+		if !nameReference(tokens, index, bindings) {
 			continue
 		}
-		if index > 0 && slices.Contains([]string{".", "|", "is", "as"}, tokens[index-1].Text) {
-			continue
-		}
-		if index > 1 && tokens[index-1].Text == "not" && tokens[index-2].Text == "is" {
-			continue
-		}
-		if index+1 < len(tokens) && slices.Contains([]string{"(", "="}, tokens[index+1].Text) {
+		if index+1 < len(tokens) && tokens[index+1].Text == "(" {
 			continue
 		}
 		reads = append(reads, token)
 	}
 	return reads
+}
+
+// nameReference is the shared lexical boundary for variable reads and direct
+// function callees. Attribute/filter/test names, statement bindings, keyword
+// argument labels and syntax keywords cannot refer to a global variable/function.
+func nameReference(tokens []Token, index int, bindings map[int]bool) bool {
+	token := tokens[index]
+	if token.Kind != "name" || bindings[index] || jinjaReadKeyword(token.Text) {
+		return false
+	}
+	if index > 0 && slices.Contains([]string{".", "|", "is", "as"}, tokens[index-1].Text) {
+		return false
+	}
+	if index > 1 && tokens[index-1].Text == "not" && tokens[index-2].Text == "is" {
+		return false
+	}
+	return index+1 >= len(tokens) || tokens[index+1].Text != "="
 }
 
 func jinjaReadKeyword(name string) bool {

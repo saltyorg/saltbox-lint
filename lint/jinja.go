@@ -360,19 +360,19 @@ func matching(a, b byte) bool {
 	return a == '(' && b == ')' || a == '[' && b == ']' || a == '{' && b == '}'
 }
 
-// Calls returns balanced named calls, including nested calls, in source order.
-// Named argument Tokens exclude the name and equals sign.
+// Calls returns balanced direct named function calls in source order, including
+// nested calls. Attribute/filter/test names and statement bindings are excluded
+// through the shared lexical name boundary. Named argument Tokens exclude the
+// name and equals sign. This does not resolve function values or runtime scope.
 func Calls(e Expression, name string) []Call {
 	if !e.Complete {
 		return nil
 	}
 	var calls []Call
 	ts := e.Tokens
+	bindings := statementBindings(e)
 	for i := 0; i+1 < len(ts); i++ {
-		if ts[i].Kind != "name" || ts[i].Text != name || ts[i+1].Text != "(" {
-			continue
-		}
-		if i > 0 && ts[i-1].Text == "." {
+		if ts[i].Text != name || ts[i+1].Text != "(" || !nameReference(ts, i, bindings) {
 			continue
 		}
 		depth := 0

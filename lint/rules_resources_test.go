@@ -158,3 +158,37 @@ func TestResourceImplicitConditionsIgnoreNameOnlyReads(t *testing.T) {
 	assertAnsible(t, "tasks/main.yml", input, "svm-github-api-resource", "svm", "github_api_request.yml")
 	assertAnsible(t, "tasks/main.yml", input, "cloudflare-auth-contract", "cloudflare.api", "cloudflare_")
 }
+
+func TestResourceAppliedIncludeConditions(t *testing.T) {
+	owners := []string{
+		"- include_role:\n    name: example\n    apply:\n      when: CONDITION\n",
+		"- ansible.builtin.include_tasks:\n    file: example.yml\n    apply:\n      when: CONDITION\n",
+		"- action:\n    module: include_role\n    name: example\n    apply:\n      when: CONDITION\n",
+		"- local_action:\n    module: ansible.builtin.include_tasks\n    file: example.yml\n    apply:\n      when: CONDITION\n",
+		"- action: include_role name=example\n  args:\n    apply:\n      when: CONDITION\n",
+		"- include_tasks: example.yml\n  args:\n    apply:\n      when: CONDITION\n",
+	}
+	for _, owner := range owners {
+		t.Run(owner, func(t *testing.T) {
+			input := strings.Replace(owner, "CONDITION", "cloudflare.api != ''", 1)
+			assertAnsible(t, "tasks/main.yml", input, "cloudflare-auth-contract", "cloudflare.api", "cloudflare_")
+			input = strings.Replace(owner, "CONDITION", "svm is defined", 1)
+			assertAnsible(t, "tasks/main.yml", input, "svm-github-api-resource", "svm", "github_api_request.yml")
+			input = strings.Replace(owner, "CONDITION", "_instance_name is defined", 1)
+			assertAnsible(t, networkHealthResource, input, "network-health-contract", "_instance_name", "explicit")
+			input = dockerPolicyDeclaration("default: 0") + strings.Replace(owner, "CONDITION", "_docker_vars._docker_memory is defined", 1)
+			assertAnsible(t, "resources/tasks/docker/main.yml", input, "docker-vars-policy", "_docker_vars._docker_memory", "omit: true")
+		})
+	}
+	input := "- include_role:\n    name: example\n    apply:\n      when:\n        - \"cloudflare.\\u0061pi != ''\"\n"
+	assertAnsible(t, "tasks/main.yml", input, "cloudflare-auth-contract", `cloudflare.\u0061pi`, "cloudflare_")
+	for _, input := range []string{
+		"- debug:\n    msg:\n      apply: {when: cloudflare.api}\n",
+		"- include_role:\n    name: example\n    apply:\n      vars:\n        payload: {when: cloudflare.api}\n",
+		"- debug: {msg: ok}\n  args:\n    apply: {when: cloudflare.api}\n",
+	} {
+		if ds := ansibleDiagnostics(t, "tasks/main.yml", input, "cloudflare-auth-contract"); len(ds) > 0 {
+			t.Fatal(ds)
+		}
+	}
+}

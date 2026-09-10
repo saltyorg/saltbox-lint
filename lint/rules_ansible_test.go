@@ -250,3 +250,35 @@ func TestAnsibleRegisteredExamples(t *testing.T) {
 		})
 	}
 }
+
+func TestAnsibleTaskMetadataCannotHideActions(t *testing.T) {
+	// Values are independently taken from the installed Ansible Base, Task and
+	// Handler field contracts and ModuleArgsParser metadata exclusions.
+	metadata := []string{
+		"name: Clone", "connection: local", "port: 22", "remote_user: root",
+		"vars: {}", "module_defaults: {}", "environment: {}", "no_log: true",
+		"run_once: true", "ignore_errors: true", "ignore_unreachable: true",
+		"check_mode: false", "diff: false", "any_errors_fatal: true", "throttle: 1",
+		"timeout: 10", "debugger: never", "become: true", "become_method: sudo",
+		"become_user: root", "become_flags: '-H'", "become_exe: sudo",
+		"args: {}", "async: 10", "async_val: 10", "changed_when: false",
+		"delay: 1", "failed_when: false", "loop: []", "loop_control: {}",
+		"poll: 1", "register: result", "retries: 1", "until: false",
+		"loop_with: items", "when: true", "tags: good", "collections: []",
+		"notify: handler", "delegate_to: localhost", "delegate_facts: false",
+		"listen: handler", "static: false", "with_items: []",
+	}
+	for _, field := range metadata {
+		t.Run(field, func(t *testing.T) {
+			for _, action := range []struct{ source, id, span, hint string }{
+				{"ansible.builtin.git: {repo: example}", "git-clone-resource", "ansible.builtin.git", "clone_git_repo.yml"},
+				{"action: git repo=example", "git-clone-resource", "git", "clone_git_repo.yml"},
+				{"local_action: {module: import_tasks, file: example.yml}", "ansible-static-import", "import_tasks", "include_tasks"},
+			} {
+				for _, input := range []string{"- " + field + "\n  " + action.source + "\n", "- " + action.source + "\n  " + field + "\n"} {
+					assertAnsible(t, "roles/example/handlers/main.yml", input, action.id, action.span, action.hint)
+				}
+			}
+		})
+	}
+}

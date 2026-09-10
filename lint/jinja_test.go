@@ -140,3 +140,51 @@ func TestUnavailableScalarMappingCannotExposeGuessedTokenSpans(t *testing.T) {
 		t.Fatalf("unavailable mapping diagnostic: %+v", ds)
 	}
 }
+
+func TestCallsRequireFunctionNamePositions(t *testing.T) {
+	for _, tc := range []struct {
+		expression string
+		want       int
+	}{
+		{"{{ lookup('x') }}", 1},
+		{"{{ outer(lookup('x'), lookup('y')) }}", 2},
+		{"{{ data | lookup('x') }}", 0},
+		{"{{ data is lookup('x') }}", 0},
+		{"{{ data is not lookup('x') }}", 0},
+		{"{{ config.lookup('x') }}", 0},
+		{"{% filter lookup('x') %}", 0},
+		{"{% macro lookup(arg='x') %}", 0},
+		{"{% set lookup = value %}", 0},
+		{"{% for lookup in items %}", 0},
+		{"{% import 'x' as lookup %}", 0},
+		{"{% from 'x' import lookup %}", 0},
+		{"{% call(lookup) helper() %}", 0},
+		{"{% set value = lookup('x') %}", 1},
+		{"{% macro helper(arg=lookup('x')) %}", 1},
+		{"{% macro lookup(arg=lookup('x')) %}", 1},
+		{"{% for item in lookup('x') %}", 1},
+		{"{% call helper(lookup('x')) %}", 1},
+		{"{% filter named(lookup('x')) %}", 1},
+		{"{% set value | named(lookup('x')) %}", 1},
+		{"{{ data is named(lookup('x')) }}", 1},
+		{"{{ data is not named(lookup('x')) }}", 1},
+		{"{{ data | named(lookup('x')) }}", 1},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			source := jinjaSource(t, "value: >-\n  "+tc.expression+"\n")
+			expressions := Expressions(source)
+			if len(expressions) != 1 {
+				t.Fatal(expressions)
+			}
+			calls := Calls(expressions[0], "lookup")
+			if len(calls) != tc.want {
+				t.Fatalf("calls=%+v want %d", calls, tc.want)
+			}
+			for _, call := range calls {
+				if raw := string(source.Data[call.Span.Start:call.Span.End]); raw != "lookup('x')" && raw != "lookup('y')" {
+					t.Errorf("span=%q", raw)
+				}
+			}
+		})
+	}
+}

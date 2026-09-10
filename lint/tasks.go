@@ -87,14 +87,27 @@ func normalizeTask(s *Source, n *Node) Task {
 	}
 	return task
 }
+
+// taskKeyword mirrors the Base/Task/Handler fields and ModuleArgsParser's
+// metadata exclusions. Actions and local_action are normalized separately;
+// legacy aliases/private loop metadata still must not masquerade as modules.
 func taskKeyword(key string) bool {
 	switch key {
-	case "name", "vars", "tags", "when", "changed_when", "failed_when", "until", "register", "loop", "loop_control", "with_items", "with_dict", "with_fileglob", "with_sequence", "with_nested", "with_subelements", "with_first_found", "with_together", "with_list", "with_lines", "with_file", "with_random_choice", "with_inventory_hostnames", "with_flattened", "with_cartesian", "with_ini", "with_community.general.filetree", "block", "rescue", "always", "args", "become", "become_user", "become_method", "become_flags", "delegate_to", "delegate_facts", "environment", "ignore_errors", "ignore_unreachable", "run_once", "check_mode", "diff", "no_log", "notify", "listen", "retries", "delay", "poll", "async", "any_errors_fatal", "connection", "collections", "throttle", "timeout", "debugger", "remote_user", "port", "module_defaults":
+	case "name", "vars", "connection", "port", "remote_user", "module_defaults",
+		"environment", "no_log", "run_once", "ignore_errors", "ignore_unreachable",
+		"check_mode", "diff", "any_errors_fatal", "throttle", "timeout", "debugger",
+		"become", "become_method", "become_user", "become_flags", "become_exe":
+		return true
+	case "args", "async", "async_val", "changed_when", "delay", "failed_when",
+		"loop", "loop_control", "loop_with", "poll", "register", "retries", "until",
+		"when", "tags", "collections", "notify", "delegate_to", "delegate_facts",
+		"listen", "static", "block", "rescue", "always":
 		return true
 	default:
 		return strings.HasPrefix(key, "with_")
 	}
 }
+
 func scalarTextSpan(s *Source, n *Node, start, length int) Span {
 	if start < 0 || length == 0 {
 		return n.Span
@@ -127,8 +140,9 @@ func (t Task) includeFile() string {
 }
 
 // RuntimeExpressions adds recognized implicit Ansible conditions to ordinary
-// tagged expressions. It reuses the existing Jinja lexer and YAML scalar source
-// mapping; no second quote parser or runtime evaluator is involved.
+// tagged expressions, including conditions applied by include_tasks/include_role.
+// It reuses the existing Jinja lexer and YAML scalar source mapping; no second
+// quote parser or runtime evaluator is involved.
 func RuntimeExpressions(s *Source) []Expression {
 	result := Expressions(s)
 	tagged := map[*Node]bool{}
@@ -178,6 +192,9 @@ func RuntimeExpressions(s *Source) []Expression {
 	}
 	for _, task := range TasksIn(s) {
 		conditions(task.Node)
+		if task.Module == "include_tasks" || task.Module == "include_role" {
+			conditions(task.argument("apply"))
+		}
 		if task.Module == "assert" {
 			add(task.argument("that"))
 		}

@@ -178,3 +178,43 @@ func TestDockerPolicyDynamicGetKeyIsNotLiteralSuffix(t *testing.T) {
 		t.Fatal(ds)
 	}
 }
+
+func TestDockerPolicyFunctionCallOwnership(t *testing.T) {
+	const lookup = "lookup('docker_vars', specs={'_docker_memory': {'omit': true}})"
+	for _, tc := range []struct {
+		expression string
+		declared   bool
+	}{
+		{"{{ " + lookup + " }}", true},
+		{"{{ wrapper(" + lookup + ") }}", true},
+		{"{% set specs = " + lookup + " %}", true},
+		{"{% macro helper(value=" + lookup + ") %}", true},
+		{"{{ data is other(" + lookup + ") }}", true},
+		{"{{ data is not other(" + lookup + ") }}", true},
+		{"{{ data | other(" + lookup + ") }}", true},
+		{"{% filter other(" + lookup + ") %}", true},
+		{"{{ data is " + lookup + " }}", false},
+		{"{{ data is not " + lookup + " }}", false},
+		{"{{ data | " + lookup + " }}", false},
+		{"{{ data." + lookup + " }}", false},
+		{"{% filter " + lookup + " %}", false},
+		{"{% macro lookup(plugin='docker_vars', specs={'_docker_memory': {'omit': true}}) %}", false},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			input := "- debug:\n    msg: >-\n      " + tc.expression + "\n- debug: {msg: '{{ _docker_vars._docker_memory | default(0) }}'}\n"
+			ds := ansibleDiagnostics(t, "resources/tasks/docker/main.yml", input, "docker-vars-policy")
+			if tc.declared {
+				if len(ds) > 0 {
+					t.Fatal(ds)
+				}
+				return
+			}
+			if len(ds) != 1 || !strings.Contains(ds[0].Message, "undeclared") {
+				t.Fatal(ds)
+			}
+			if raw := input[ds[0].Span.Start:ds[0].Span.End]; raw != "_docker_vars._docker_memory" {
+				t.Fatal(raw)
+			}
+		})
+	}
+}
