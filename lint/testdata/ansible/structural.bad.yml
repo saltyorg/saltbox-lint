@@ -1,0 +1,10 @@
+- name: Invalid
+  include_tasks: /resources/tasks/docker/create_docker_container.yml
+  vars:
+    _var_prefix: example
+  tags: Bad_tag
+- include_tasks: /resources/tasks/docker/network_container_health_status.yml
+- block:
+    - action: git repo=example
+  rescue:
+    - local_action: {module: import_role, name: example}

@@ -33,10 +33,14 @@ func dockerHealthchecks(source *Source) []dockerHealthcheck {
 }
 
 func healthcheckMarker(test *Node) string {
-	if test == nil || test.Kind != "sequence" || len(test.Items) == 0 || test.Items[0] == nil || test.Items[0].Kind != "string" {
+	if test == nil || test.Kind != "sequence" || len(test.Items) == 0 || test.Items[0] == nil {
 		return ""
 	}
-	return test.Items[0].Value
+	kind, value := EffectiveScalar(test.Items[0])
+	if kind != "string" {
+		return ""
+	}
+	return value
 }
 
 func healthcheckShape(test *Node) bool {
@@ -67,9 +71,10 @@ func healthcheckCommandValue(node *Node, nonempty bool) bool {
 	if node == nil {
 		return false
 	}
-	switch node.Kind {
+	kind, value := EffectiveScalar(node)
+	switch kind {
 	case "string":
-		return !nonempty || strings.TrimSpace(node.Value) != ""
+		return !nonempty || strings.TrimSpace(value) != ""
 	// The Ansible Docker consumer normalizes numeric/bool list elements with str().
 	// Null and collections remain explicitly forbidden by Saltbox command policy.
 	case "number", "bool":

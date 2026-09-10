@@ -1,0 +1,11 @@
+- name: Valid
+  include_tasks: /resources/tasks/docker/create_docker_container.yml
+  vars:
+    var_prefix: example
+  tags: [example, 'true']
+- include_tasks: /resources/tasks/docker/network_container_health_status.yml
+  vars:
+    network_container_source: example
+    network_container_target: gluetun
+- set_fact:
+    payload: {tags: Bad_tag, import_role: example, git: {}}

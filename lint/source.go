@@ -342,6 +342,9 @@ func (s *sourceAdapter) adapt(input ast.Node) (*Node, error) {
 		n.Kind, n.Value = "number", a.Token.Value
 	case *ast.NullNode:
 		n.Kind = "null"
+		if a.Token.Type != token.ImplicitNullType {
+			n.Value = a.Token.Value
+		}
 	case *ast.MergeKeyNode:
 		n.Kind, n.Value = "string", "<<"
 	case *ast.AnchorNode:
