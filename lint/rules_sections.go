@@ -54,10 +54,6 @@ func sectionGaps(source *Source) []sectionGap {
 	}
 	lines := sourceLines(source.Data)
 	banners := sectionBanners(source, lines)
-	starts := make(map[int]bool)
-	for _, banner := range banners {
-		starts[banner.EndLine-2] = true
-	}
 	comments := make(map[int]bool)
 	for _, span := range source.YAMLComments() {
 		line := source.Position(span.Start).Line - 1
@@ -66,10 +62,18 @@ func sectionGaps(source *Source) []sectionGap {
 		}
 	}
 	var gaps []sectionGap
-	for _, banner := range banners {
+	for index, banner := range banners {
 		next := banner.EndLine + 1
-		for i := next; i < len(lines); i++ {
-			if strings.TrimSpace(lines[i].Text) == "" || starts[i] {
+		limit := len(lines)
+		if index+1 < len(banners) {
+			// A later banner can share this banner's closing border. Its
+			// title is never variable documentation for the earlier section.
+			limit = banners[index+1].EndLine - 2
+		}
+		for i := next; i < limit; i++ {
+			text := lines[i].Text
+			documentStart := strings.HasPrefix(text, "---") && (len(text) == 3 || space(text[3]))
+			if strings.TrimSpace(text) == "" || documentStart {
 				break
 			}
 			if variable, ok := declarations[i]; ok {

@@ -74,6 +74,9 @@ func TestSectionSpacingRespectsCommentsAndEmptySections(t *testing.T) {
 		{"comment only section", settingsBanner + "# No variables yet\n", 0},
 		{"successive banners", settingsBanner + custom + "\nvalue: true\n", 0},
 		{"document boundary", settingsBanner + "---\nvalue: true\n", 0},
+		{"inline document mapping", settingsBanner + "--- {value: true}\n", 0},
+		{"inline tagged document", settingsBanner + "--- !!map {value: true}\n", 0},
+		{"marker-like key", settingsBanner + "---value: true\n", 1},
 		{"ordinary comment", "# Settings\nvalue: true\n", 0},
 		{"quoted content", "value: \"start\n" + settingsBanner + "end\"\n", 0},
 		{"literal content", "value: |\n  ################################\n  # Settings\n  ################################\n  text\n", 0},
@@ -91,6 +94,29 @@ func TestSectionSpacingRespectsCommentsAndEmptySections(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSectionSpacingPreservesSharedBordersAndOrderingFindings(t *testing.T) {
+	input := settingsBanner + "# Basics\n################################\nvalue: true\n"
+	want := settingsBanner + "# Basics\n################################\n\nvalue: true\n"
+	p, ds := sectionDiagnostics(t, "roles/example/defaults/main.yml", input)
+	if len(ds) != 1 || !strings.Contains(ds[0].Message, "Basics") {
+		t.Fatalf("only the final banner owns the variable: %+v", ds)
+	}
+	changes, err := PlanFixes(p, ds)
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("want one safe correction, got %d: %v", len(changes), err)
+	}
+	if string(changes[0].After) != want {
+		t.Fatalf("correction split a banner: %q", changes[0].After)
+	}
+	for _, content := range []string{input, want} {
+		project := defaultsProject(t, "roles/example/defaults/main.yml", content)
+		order := checkDefaultsSections(project, project.Sources["roles/example/defaults/main.yml"])
+		if len(order) != 1 || !strings.Contains(order[0].Message, "Basics") {
+			t.Fatalf("ordering violation must survive whitespace correction: %+v", order)
+		}
 	}
 }
 
