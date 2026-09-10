@@ -363,7 +363,7 @@ func sourceRoot(opts Options) (string, error) {
 	dir := filepath.Dir(absolute)
 	if info, err := os.Stat(absolute); err == nil && info.IsDir() {
 		dir = absolute
-	} else if err != nil && !(os.IsNotExist(err) && target == opts.StdinFilename) {
+	} else if err != nil && (!os.IsNotExist(err) || target != opts.StdinFilename) {
 		return "", fmt.Errorf("inspect target %s: %w", target, err)
 	}
 	for current := dir; ; current = filepath.Dir(current) {

@@ -192,7 +192,7 @@ func WriteChanges(project *Project, changes []Change) error {
 	if err != nil {
 		return fmt.Errorf("open project root: %w", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	for _, change := range changes {
 		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(change.Path)))
 		if clean != change.Path || filepath.IsAbs(change.Path) || clean == ".." || strings.HasPrefix(clean, "../") || !project.Selected[change.Path] || seen[change.Path] {
@@ -238,7 +238,7 @@ func replaceFile(root *os.Root, path string, change Change, info os.FileInfo) er
 	if err != nil {
 		return fmt.Errorf("open parent of %s: %w", path, err)
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	base := filepath.Base(path)
 	current, err := dir.Lstat(base)
 	if err != nil || !os.SameFile(info, current) || !current.Mode().IsRegular() {
@@ -264,7 +264,8 @@ func replaceFile(root *os.Root, path string, change Change, info os.FileInfo) er
 	if temp == nil {
 		return fmt.Errorf("create replacement for %s: %w", path, err)
 	}
-	defer dir.Remove(name)
+	// Best-effort cleanup: a successful rename already removed this name.
+	defer func() { _ = dir.Remove(name) }()
 	if _, err = temp.Write(change.After); err == nil {
 		err = temp.Chmod(info.Mode())
 	}

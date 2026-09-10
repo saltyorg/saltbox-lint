@@ -62,7 +62,7 @@ func Run(ctx context.Context, args []string, streams Streams, version string) in
 		return 1
 	}
 	if err != nil {
-		fmt.Fprintf(root.ErrOrStderr(), "saltbox-lint: %v\n", err)
+		_, _ = fmt.Fprintf(root.ErrOrStderr(), "saltbox-lint: %v\n", err)
 		return 2
 	}
 	return 0

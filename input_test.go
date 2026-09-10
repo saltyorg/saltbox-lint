@@ -21,8 +21,8 @@ func TestProcessInputCancellationClosesOnlyOwnedRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer source.Close()
-	defer writer.Close()
+	defer func() { _ = source.Close() }()
+	defer func() { _ = writer.Close() }()
 	before := fileFlags(t, source)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -91,7 +91,7 @@ func TestProcessInputPreservesRedirectedFileOffset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 	if _, err := source.Seek(4, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +115,8 @@ func TestProcessInputCancellationBeforeReadDoesNotConsumeInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer source.Close()
-	defer writer.Close()
+	defer func() { _ = source.Close() }()
+	defer func() { _ = writer.Close() }()
 	if _, err := writer.Write([]byte("untouched")); err != nil {
 		t.Fatal(err)
 	}
