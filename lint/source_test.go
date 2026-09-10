@@ -250,3 +250,46 @@ func TestDocumentHeadersAreNotScalarDocuments(t *testing.T) {
 		t.Fatalf("comment documents=%#v diagnostics=%v", comments.Documents, ds)
 	}
 }
+
+func TestYAMLDirectivesPreserveRealDocument(t *testing.T) {
+	for _, data := range []string{
+		"%YAML 1.2\n---\nvalue: 'kept'\n",
+		"%TAG !e! tag:example.com,2000:app/\n---\nvalue: !e!name 'kept'\n",
+	} {
+		s, ds := Parse("input.yml", []byte(data))
+		if len(ds) != 0 {
+			t.Fatalf("valid directive: %v", ds)
+		}
+		if len(s.Documents) != 1 || s.Documents[0].Get("value").Value != "kept" {
+			t.Fatalf("documents=%#v", s.Documents)
+		}
+		if string(s.Data) != data {
+			t.Fatal("directive bytes changed")
+		}
+		n := s.Documents[0].Get("value")
+		if !strings.HasSuffix(string(s.Data[n.Span.Start:n.Span.End]), "'kept'") {
+			t.Fatalf("scalar span=%+v", n.Span)
+		}
+	}
+}
+
+func TestInventoryClassificationUsesConventionalVariablePaths(t *testing.T) {
+	for _, tt := range []struct {
+		path string
+		kind Kind
+	}{
+		{"inventory", Generic},
+		{"inventory/group_vars/all.yml", Inventory},
+		{"inventories/production/group_vars/all.yml", Inventory},
+		{"inventories/production/host_vars/server/main.yml", Inventory},
+		{"inventory/production/group_vars/all/nested.yml", Inventory},
+		{"inventories/production/requirements.yml", Generic},
+		{"inventories/notes/config.yml", Generic},
+		{"inventory/production/hosts.yml", Generic},
+	} {
+		s, _ := Parse(tt.path, []byte("value: ok\n"))
+		if s.Kind != tt.kind {
+			t.Errorf("%s kind=%s want %s", tt.path, s.Kind, tt.kind)
+		}
+	}
+}

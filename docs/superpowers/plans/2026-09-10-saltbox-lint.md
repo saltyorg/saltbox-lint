@@ -128,7 +128,7 @@ Produces:
   nonignored YAML included, explicit ignored YAML accepted, missing/unsupported
   target rejected, source directory without Git supported, empty selection
   rejected, duplicate targets deduplicated, stdin bytes override one identity.
-  A selected task loads its role's defaults/tasks/templates as context, but only
+  A selected task loads its role's defaults/tasks/handlers/vars/templates as context, but only
   the selected file is marked Selected. Shared Docker resources load siblings
   when needed. Whole-project selection loads all conventional sources.
 - [ ] Implement Load with context cancellation and operational errors. Infer

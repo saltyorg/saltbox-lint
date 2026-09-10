@@ -40,7 +40,10 @@ func Parse(filename string, data []byte) (*Source, []Diagnostic) {
 			if doc.Body == nil {
 				continue
 			}
-			if _, commentOnly := doc.Body.(*ast.CommentGroupNode); commentOnly {
+			switch doc.Body.(type) {
+			case *ast.CommentGroupNode, *ast.DirectiveNode:
+				// Comments and directives are preserved in Data, but do not
+				// contribute a value document to rule evaluation.
 				continue
 			}
 			var n *Node
@@ -123,8 +126,15 @@ func classify(filename string) (Kind, string, string) {
 			return Playbook, "", ""
 		}
 	}
-	if parts[0] == "group_vars" || parts[0] == "host_vars" || parts[0] == "inventory" || parts[0] == "inventories" {
+	if parts[0] == "group_vars" || parts[0] == "host_vars" {
 		return Inventory, "", ""
+	}
+	if len(parts) > 1 && (parts[0] == "inventory" || parts[0] == "inventories") {
+		for _, dir := range parts[1 : len(parts)-1] {
+			if dir == "group_vars" || dir == "host_vars" {
+				return Inventory, "", ""
+			}
+		}
 	}
 	switch filename {
 	case "inventory.yml", "inventory.yaml":

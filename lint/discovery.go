@@ -285,7 +285,40 @@ func absoluteTarget(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve target %s: %w", name, err)
 	}
-	return absolute, nil
+	info, err := os.Stat(absolute)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect target %s: %w", name, err)
+	}
+	if err == nil && info.IsDir() {
+		return filepath.EvalSymlinks(absolute)
+	}
+	// Resolve directory aliases, but retain a file's own basename. The fix
+	// layer must still be able to Lstat Root/Source.Path and reject file links.
+	parent, err := canonicalDirectory(filepath.Dir(absolute))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(absolute)), nil
+}
+
+// An editor buffer may name a file in a directory that does not exist yet.
+// Resolve its nearest existing ancestor without concealing dangling links.
+func canonicalDirectory(dir string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err == nil {
+		return resolved, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("resolve directory %s: %w", dir, err)
+	}
+	if _, statErr := os.Lstat(dir); statErr == nil || !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("resolve directory %s: %w", dir, err)
+	}
+	parent, err := canonicalDirectory(filepath.Dir(dir))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(dir)), nil
 }
 func relativeSource(root, absolute string) (string, error) {
 	relative, err := filepath.Rel(root, absolute)

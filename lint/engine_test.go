@@ -83,3 +83,27 @@ func TestAnalyzeKindsAndOrdering(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyzePreservesDistinctRelatedLocationsAndFixes(t *testing.T) {
+	s, _ := Parse("input.yml", []byte("value: bad\n"))
+	p := &Project{Sources: map[string]*Source{s.Path: s}, Selected: map[string]bool{s.Path: true}}
+	makeDiagnostic := func(related string, fix *Fix) Diagnostic {
+		return Diagnostic{Path: s.Path, RuleID: "policy", Severity: "error", Message: "same primary finding", Span: Span{7, 10}, Related: []RelatedLocation{{Path: related, Message: "explains this case", Span: Span{0, 1}}}, Fix: fix}
+	}
+	first := makeDiagnostic("first.yml", &Fix{Message: "repair", Edits: []Edit{{Span: Span{7, 10}, Text: "one"}}})
+	otherRelated := makeDiagnostic("second.yml", &Fix{Message: "repair", Edits: []Edit{{Span: Span{7, 10}, Text: "one"}}})
+	otherEdit := makeDiagnostic("first.yml", &Fix{Message: "repair", Edits: []Edit{{Span: Span{7, 10}, Text: "two"}}})
+	otherFixMessage := makeDiagnostic("first.yml", &Fix{Message: "alternate repair", Edits: []Edit{{Span: Span{7, 10}, Text: "one"}}})
+	noFix := makeDiagnostic("first.yml", nil)
+	duplicate := makeDiagnostic("first.yml", &Fix{Message: "repair", Edits: []Edit{{Span: Span{7, 10}, Text: "one"}}})
+	rule := Rule{ID: "policy", Check: func(_ *Project, _ *Source) []Diagnostic {
+		return []Diagnostic{first, otherRelated, otherEdit, otherFixMessage, noFix, duplicate}
+	}}
+	got := Analyze(p, []Rule{rule})
+	if len(got) != 5 {
+		t.Fatalf("distinct diagnostic count=%d want 5: %#v", len(got), got)
+	}
+	if got[1].Related[0].Path != "second.yml" || got[2].Fix.Edits[0].Text != "two" || got[3].Fix.Message != "alternate repair" || got[4].Fix != nil {
+		t.Fatalf("distinct diagnostic data lost: %#v", got)
+	}
+}

@@ -253,3 +253,99 @@ func TestLoadRootPlaybooksByStructure(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadInventoryDirectoryExcludesUnrelatedYAML(t *testing.T) {
+	root := t.TempDir()
+	gitTest(t, root, "init", "-q")
+	for _, name := range []string{"inventories/production/group_vars/all.yml", "inventories/production/host_vars/server.yml", "inventories/production/requirements.yml", "inventories/notes/config.yml"} {
+		putFile(t, root, name, "value: ok\n")
+	}
+	gitTest(t, root, "add", ".")
+	p, err := Load(t.Context(), Options{Paths: []string{root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedPaths(p); !slices.Equal(got, []string{"inventories/production/group_vars/all.yml", "inventories/production/host_vars/server.yml"}) {
+		t.Fatalf("inventory selection=%v", got)
+	}
+}
+
+func TestLoadSymlinkedProjectPaths(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "project")
+	putFile(t, root, "saltbox.yml", "- hosts: all\n")
+	putFile(t, root, "roles/demo/tasks/main.yml", "- debug: msg=hello\n")
+	link := filepath.Join(base, "project-link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(link, "roles/demo/tasks/main.yml")
+	cases := []struct {
+		name string
+		opts Options
+	}{
+		{"inferred file", Options{Paths: []string{file}}},
+		{"explicit root", Options{Root: link, Paths: []string{file}}},
+		{"inferred directory", Options{Paths: []string{link}}},
+		{"explicit directory", Options{Root: link, Paths: []string{link}}},
+		{"duplicate lexical paths", Options{Paths: []string{file, filepath.Join(root, "roles/demo/tasks/main.yml")}}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Load(t.Context(), tt.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Root != root || !p.Selected["roles/demo/tasks/main.yml"] {
+				t.Fatalf("project identity=%#v", p)
+			}
+		})
+	}
+	for _, explicit := range []bool{false, true} {
+		opts := Options{StdinFilename: filepath.Join(link, "roles/demo/tasks/unsaved/new.yml"), Stdin: []byte("- debug: msg=buffer\n")}
+		if explicit {
+			opts.Root = link
+		}
+		p, err := Load(t.Context(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Root != root || !p.Selected["roles/demo/tasks/unsaved/new.yml"] || string(p.Sources["roles/demo/tasks/unsaved/new.yml"].Data) != "- debug: msg=buffer\n" {
+			t.Fatalf("stdin identity=%#v", p)
+		}
+	}
+}
+
+func TestLoadPreservesSymlinkFileProvenance(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "project")
+	putFile(t, root, "saltbox.yml", "- hosts: all\n")
+	actual := putFile(t, root, "roles/demo/tasks/main.yml", "- debug: msg=hello\n")
+	alias := filepath.Join(root, "roles/demo/tasks/alias.yml")
+	if err := os.Symlink(actual, alias); err != nil {
+		t.Fatal(err)
+	}
+	rootLink := filepath.Join(base, "project-link")
+	if err := os.Symlink(root, rootLink); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(rootLink, "roles/demo/tasks/alias.yml")
+	for _, stdin := range []bool{false, true} {
+		opts := Options{Paths: []string{target}}
+		if stdin {
+			opts.StdinFilename = target
+			opts.Stdin = []byte("- debug: msg=buffer\n")
+		}
+		p, err := Load(t.Context(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !p.Selected["roles/demo/tasks/alias.yml"] || p.Selected["roles/demo/tasks/main.yml"] {
+			t.Fatalf("symlink identity erased: %#v", p.Selected)
+		}
+		info, err := os.Lstat(filepath.Join(p.Root, filepath.FromSlash(p.Sources["roles/demo/tasks/alias.yml"].Path)))
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("fix layer cannot detect original symlink: %v %v", info, err)
+		}
+	}
+}

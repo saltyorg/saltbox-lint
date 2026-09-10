@@ -33,21 +33,36 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 		path, rule, severity, message, expected string
 		span                                    Span
 	}
-	seen := map[diagnosticKey]bool{}
+	seen := map[diagnosticKey][]Diagnostic{}
 	result := make([]Diagnostic, 0, len(diagnostics))
 	for _, d := range diagnostics {
 		if !project.Selected[d.Path] {
 			continue
 		}
 		key := diagnosticKey{d.Path, d.RuleID, d.Severity, d.Message, d.Expected, d.Span}
-		if seen[key] {
+		if slices.ContainsFunc(seen[key], func(prior Diagnostic) bool {
+			return sameDiagnosticDetails(prior, d)
+		}) {
 			continue
 		}
-		seen[key] = true
+		seen[key] = append(seen[key], d)
 		result = append(result, d)
 	}
 	slices.SortStableFunc(result, func(a, b Diagnostic) int {
 		return cmp.Or(cmp.Compare(a.Path, b.Path), cmp.Compare(a.Span.Start, b.Span.Start), cmp.Compare(a.Span.End, b.Span.End), cmp.Compare(a.RuleID, b.RuleID), cmp.Compare(a.Message, b.Message))
 	})
 	return result
+}
+
+// Primary fields share a bucket; only equal explanatory and fix content makes
+// a duplicate. Separate allocations of the same fix still compare equal.
+func sameDiagnosticDetails(a, b Diagnostic) bool {
+	if (a.Related == nil) != (b.Related == nil) || !slices.Equal(a.Related, b.Related) {
+		return false
+	}
+	if a.Fix == nil || b.Fix == nil {
+		return a.Fix == b.Fix
+	}
+	return a.Fix.Message == b.Fix.Message &&
+		(a.Fix.Edits == nil) == (b.Fix.Edits == nil) && slices.Equal(a.Fix.Edits, b.Fix.Edits)
 }
