@@ -180,11 +180,22 @@ type sourceAdapter struct {
 }
 
 // The lexer reports rune coordinates, and tags/block folding can also shift
-// those coordinates. Its ordered original token text is the authoritative
-// bridge to bytes. Only whitespace may occur between those original fragments.
+// those coordinates. Map ordered token text against bytes instead. Double-quote
+// origins normalize Unicode escapes, so those bounds come from raw quote syntax.
+// Only whitespace may occur between tokens; never search past other syntax.
 func (s *sourceAdapter) locateTokens(tokens token.Tokens) error {
 	cursor := 0
 	for _, t := range tokens {
+		if t.Type == token.DoubleQuoteType {
+			span, ok := doubleQuotedSpan(s.Data, cursor)
+			if !ok {
+				return fmt.Errorf("cannot locate double-quoted YAML scalar at byte %d", cursor)
+			}
+			s.spans[t] = span
+			cursor = span.End
+			s.originEnds[t] = cursor
+			continue
+		}
 		if t.Origin == "" {
 			continue
 		}
@@ -201,6 +212,29 @@ func (s *sourceAdapter) locateTokens(tokens token.Tokens) error {
 		s.originEnds[t] = cursor
 	}
 	return nil
+}
+
+// doubleQuotedSpan finds boundaries only. The YAML lexer remains responsible
+// for validating escapes and decoding their values. An escaped byte cannot be a
+// closing quote; skipping it handles escaped quotes, backslashes and newlines
+// without interpreting Unicode escapes or relying on normalized token lengths.
+func doubleQuotedSpan(data []byte, cursor int) (Span, bool) {
+	start := cursor
+	for start < len(data) && strings.ContainsRune(" \t\r\n", rune(data[start])) {
+		start++
+	}
+	if start >= len(data) || data[start] != '"' {
+		return Span{}, false
+	}
+	for end := start + 1; end < len(data); end++ {
+		switch data[end] {
+		case '\\':
+			end++
+		case '"':
+			return Span{start, end + 1}, true
+		}
+	}
+	return Span{}, false
 }
 
 func (s *sourceAdapter) tokenSpan(t *token.Token) Span {

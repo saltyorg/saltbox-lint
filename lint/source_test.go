@@ -293,3 +293,71 @@ func TestInventoryClassificationUsesConventionalVariablePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestDoubleQuotedUnicodeEscapesPreserveRawSpans(t *testing.T) {
+	cases := []struct{ name, raw, value string }{
+		{"hex", `"\x61"`, "a"},
+		{"unicode", `"\u0061"`, "a"},
+		{"long unicode", `"\U0001F600"`, "😀"},
+		{"unicode before escapes", `"é😀 \x61\u0062\U0001F600"`, "é😀 ab😀"},
+		{"escaped quote", `"\u0061\"tail"`, "a\"tail"},
+		{"escaped backslash", `"\u0061\\tail"`, "a\\tail"},
+		{"encoded quote", `"\x22"`, "\""},
+		{"line continuation", "\"\\u0061\\\n  b\"", "ab"},
+		{"folded newline", "\"\\u0061\n  b\"", "a b"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			data := "value: " + tt.raw + "\nafter: 'kept'\n"
+			s, ds := Parse("input.yml", []byte(data))
+			if len(ds) != 0 {
+				t.Fatalf("valid escape rejected: %v", ds)
+			}
+			n := s.Documents[0].Get("value")
+			if n.Kind != "string" || n.Style != "double-quoted" || n.Value != tt.value {
+				t.Fatalf("scalar=%#v", n)
+			}
+			if n.Span.Start != 7 || n.Span.End != 7+len(tt.raw) || string(s.Data[n.Span.Start:n.Span.End]) != tt.raw {
+				t.Fatalf("span=%+v raw=%q", n.Span, s.Data[n.Span.Start:n.Span.End])
+			}
+			after := s.Documents[0].Get("after")
+			if string(s.Data[after.Span.Start:after.Span.End]) != "'kept'" || after.Span.Start != len(tt.raw)+15 {
+				t.Errorf("following token=%#v", after)
+			}
+			if string(s.Data) != data {
+				t.Fatal("original bytes changed")
+			}
+		})
+	}
+}
+
+func TestRepeatedEscapedAndDecodedQuotedValuesKeepDistinctSpans(t *testing.T) {
+	data := "values: [\"\\x61\", \"a\", \"\\u0061\", \"\\U00000061\", \"a\"]\n"
+	s, ds := Parse("input.yml", []byte(data))
+	if len(ds) != 0 {
+		t.Fatalf("valid repeated values rejected: %v", ds)
+	}
+	items := s.Documents[0].Get("values").Items
+	if len(items) != 5 {
+		t.Fatalf("items=%d", len(items))
+	}
+	for i, tt := range []struct {
+		span Span
+		raw  string
+	}{
+		{Span{9, 15}, `"\x61"`}, {Span{17, 20}, `"a"`}, {Span{22, 30}, `"\u0061"`}, {Span{32, 44}, `"\U00000061"`}, {Span{46, 49}, `"a"`},
+	} {
+		n := items[i]
+		if n.Value != "a" || n.Span != tt.span || string(s.Data[n.Span.Start:n.Span.End]) != tt.raw {
+			t.Errorf("item %d=%#v raw=%q", i, n, s.Data[n.Span.Start:n.Span.End])
+		}
+	}
+}
+
+func TestDoubleQuotedBoundsRejectMissingBoundaries(t *testing.T) {
+	for _, data := range []string{`other "later"`, `"unfinished`, `"escaped\"`, " \t\n"} {
+		if span, ok := doubleQuotedSpan([]byte(data), 0); ok || span != (Span{}) {
+			t.Errorf("unverified boundary accepted for %q: %+v", data, span)
+		}
+	}
+}
