@@ -24,7 +24,7 @@ $(GORELEASER):
 	GOBIN='$(dir $(GORELEASER))' go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
 
 format-check:
-	@set -o pipefail; files="$$(git ls-files --cached --others --exclude-standard -z -- '*.go' | xargs -0 -r gofmt -l)" || exit $$?; if [[ -n "$$files" ]]; then printf 'Run gofmt on:\n%s\n' "$$files"; exit 1; fi
+	@set -o pipefail; files="$$(git ls-files --cached --others --exclude-standard -z -- '*.go' | while IFS= read -r -d '' path; do if [[ -e "$$path" || -L "$$path" ]]; then printf '%s\0' "$$path"; fi; done | xargs -0 -r gofmt -l)" || exit $$?; if [[ -n "$$files" ]]; then printf 'Run gofmt on:\n%s\n' "$$files"; exit 1; fi
 
 # Gate commands never rewrite sources or module files. Bootstrap tools and Go
 # caches may be populated; build/release artifacts live in ignored directories.
