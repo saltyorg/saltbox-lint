@@ -1,0 +1,9 @@
+example_role_docker_networks_default: []
+example_role_docker_networks_custom: []
+example_role_docker_networks: "{{ docker_networks_common + lookup('role_var', '_docker_networks_default', role='example') + lookup('role_var', '_docker_networks_custom', role='example') }}"
+example_role_docker_healthcheck:
+  test: # saltbox-lint allow cmd-shell
+    - CMD-SHELL
+    - >-
+      curl --fail http://localhost
+      || exit 1

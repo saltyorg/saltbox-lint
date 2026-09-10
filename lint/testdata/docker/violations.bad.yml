@@ -1,0 +1,10 @@
+example_role_docker_networks: []
+example_role_docker_ports_default: []
+example_role_docker_ports_custom: []
+example_role_docker_healthcheck:
+  test:
+    - CMD-SHELL
+    - curl
+example_worker_docker_healthcheck:
+  test: [CMD]
+# saltbox-lint allow unknown
