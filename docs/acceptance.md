@@ -9,7 +9,7 @@ automated regression inputs.
 
 ## Frozen inputs
 
-The production implementation at `9d2dec4556f01afa3cc2e0b5733e756bdbdf2509`
+The production implementation at `ee30f078aed590eb5aeee742762e0fe900070481`
 was tested with Go 1.27.1 on Linux amd64. This acceptance change adds an optional
 corpus test and records its evidence; it does not alter that implementation.
 
@@ -158,10 +158,10 @@ for ARM asset selection. No ARM64 binary was executed on an ARM guest.
 
 ## Final correction addendum
 
-The final correction wave after `29f1b99` fixes renderer output consumption,
+The final correction wave after `8902898` fixes renderer output consumption,
 active contract examples, Action launch-status normalization and the format
 gate's handling of unstaged Go-file deletions. The final implementation is
-`3dba9b42c885996510b83bb7d0dfb89614e27574`.
+`798a77ca20ba6695b2cd4faf68bfae4d47436fc8`.
 
 Renderer evidence now excludes discarded assignments and captured bodies.
 Middleware and endpoint values must be emitted; API enablement may guard the
