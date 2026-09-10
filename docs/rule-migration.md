@@ -2,6 +2,12 @@
 
 ## Migration catalog: all 40 policies into 29 rules
 
+The original migration contains 29 policies. The standalone catalog now also
+includes `section-spacing`, bringing the total to 30. This new file-level rule
+requires a blank line between genuine three-line section banners and variables,
+including custom titles. It safely inserts missing separators with `check --fix`
+and preserves existing spacing and attached variable documentation.
+
 This table records the accepted migration design. Runtime rule metadata in `lint.Rules()` is the
 authority for the implemented catalog. File scope includes source
 contents plus role/resource identity derived from its path. Role scope requires

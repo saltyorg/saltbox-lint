@@ -1,7 +1,7 @@
 # Saltbox Lint
 
 A standalone Go linter for Saltbox and Sandbox YAML/Jinja policy. One engine
-supplies 29 documented rules, selected-file checks, conservative formatting
+supplies 30 documented rules, selected-file checks, conservative formatting
 fixes, VS Code tasks, and GitHub annotations. It does not execute Ansible,
 Python, templates, or lookups. Licensed under [GPLv3](LICENSE).
 
@@ -95,6 +95,12 @@ non-whitespace tokens. Already-valid formatting stays byte-for-byte unchanged.
 Unsupported or uncertain edits remain diagnostics. Tag renames, source headers,
 lookup semantics, section moves and healthcheck conversion require manual edits.
 `examples.yaml` is the preserved failing-example collection: test fixes on copies.
+
+`section-spacing` requires at least one blank line between a three-line section
+banner and its variables in defaults, vars, inventory variables and explicitly
+selected generic YAML. Custom section titles follow the same spacing policy.
+`--fix` inserts only missing separators, before attached documentation comments;
+existing blank lines, comment contents and line endings remain unchanged.
 
 ## GitHub Action and VS Code
 

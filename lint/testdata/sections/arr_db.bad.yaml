@@ -1,0 +1,5 @@
+################################
+# Settings
+################################
+arr_db_sonarr_enabled: false
+arr_db_radarr_enabled: false

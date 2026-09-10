@@ -70,6 +70,11 @@ func allowedWhitespace(s *Source, e Edit) bool {
 			}
 		}
 	}
+	for _, gap := range sectionGaps(s) {
+		if e == gap.Edit {
+			return true
+		}
+	}
 	for _, expr := range Expressions(s) {
 		if !expr.Complete || !expr.mapped || expr.Kind != "output" || !layoutSupported(expr) {
 			continue
