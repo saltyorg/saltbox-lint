@@ -70,8 +70,9 @@ contents, YAML structure/styles, and idempotence. Semantic policies remain
 manual corrections; source headers, tags, lookup semantics and healthcheck lists
 are not rewritten by formatting fixes.
 
-Full matched Saltbox/Sandbox corpus acceptance is a separate validation step;
-this mapping does not claim every current consumer file passes.
+The [matched Saltbox/Sandbox acceptance](acceptance.md) records four intentional
+Saltbox findings and a clean Sandbox result at frozen revisions. This mapping
+does not claim every current consumer file passes.
 
 ## Four consumer workflow migrations
 
