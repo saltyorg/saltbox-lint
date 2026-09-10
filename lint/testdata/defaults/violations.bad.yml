@@ -1,0 +1,28 @@
+################################
+# Title: Example
+# Author(s): salty
+# URL: https://github.com/saltyorg/Saltbox
+# GNU General Public License v3.0
+################################
+
+---
+################################
+# Web
+################################
+
+example_role_web_subdomain: "{{ example_name }}"
+example_role_web_domain: "{{ user.domain }}"
+example_role_web_url: "{{ lookup('role_var', '_web_subdomain', role='example') }}.{{ lookup('role_var', '_web_domain', role='example') }}"
+
+################################
+# Basics
+################################
+
+other_role_enabled: true
+example_role_target: "{{ lookup('role_web') }}"
+example_role_docker_image_repo: ghcr.io/example/application
+example_role_docker_image_tag: latest
+example_role_docker_image: "{{ lookup('role_var', '_docker_image_repo', role='example') }}"
+example_role_docker_state: started
+example_role_secret_lookup: "{{ lookup('file', '/tmp/secret') }}"
+example_role_optional: "{{ lookup('role_var', '_optional', role='example') if (lookup('role_var', '_optional', role='example') | length > 0) else omit }}"

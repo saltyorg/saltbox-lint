@@ -1,0 +1,40 @@
+################################
+# Title: Example
+# Author(s): salty
+# URL: https://github.com/saltyorg/Saltbox
+# GNU General Public License v3.0
+################################
+
+---
+################################
+# Basics
+################################
+
+example_role_enabled: true
+example_role_optional_url: ""
+example_role_cross_role: "{{ lookup('role_var', '_enabled', role='other') }}"
+example_role_cross_web: "{{ lookup('role_web', role='other') }}"
+
+################################
+# Web
+################################
+
+example_role_web_subdomain: "{{ example_name }}"
+example_role_web_domain: "{{ user.domain }}"
+example_role_web_host: "{{ lookup('role_web', role='example') }}"
+example_role_web_url: "https://{{ lookup('role_var', '_web_host', role='example') }}"
+example_role_web_insecure_url: "{{ lookup('role_web', role='example', scheme='http') }}"
+
+################################
+# Docker
+################################
+
+example_role_docker_image_repo: ghcr.io/example/application
+example_role_docker_image_tag: latest
+example_role_docker_image: "{{ lookup('role_var', '_docker_image_repo', role='example') }}:{{ lookup('role_var', '_docker_image_tag', role='example') }}"
+
+# Skip docs
+example_role_secret_lookup: "{{ lookup('file', '/tmp/secret') }}"
+
+example_role_optional: ""
+example_role_literal: "lookup('role_var', '_ignored')"
