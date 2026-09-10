@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,7 +121,7 @@ func TestDiffAndFixRecheck(t *testing.T) {
 				t.Fatal(err)
 			}
 			code, out, stderr := invoke(t, "", "check", bad, "--diff")
-			if code != 1 || stderr != "" || !strings.Contains(out, "--- a/bad.yml\n+++ b/bad.yml\n@@") || !strings.Contains(out, "+       | combine(b)") {
+			if code != 1 || !strings.Contains(stderr, "jinja-layout") || !strings.Contains(out, "--- a/bad.yml\n+++ b/bad.yml\n@@") || !strings.Contains(out, "+       | combine(b)") {
 				t.Fatalf("%d %q %q", code, out, stderr)
 			}
 			data, err := os.ReadFile(bad)
@@ -188,5 +190,82 @@ func TestParseFailuresAreFindingsAndSummaryFailuresAreOperational(t *testing.T) 
 	code, out, stderr = invoke(t, "v: true\n", "check", "-", "--stdin-filename", "good.yml", "--format", "github")
 	if code != 2 || out != "" || !strings.Contains(stderr, "summary") {
 		t.Fatalf("%d %q %q", code, out, stderr)
+	}
+}
+
+func TestDiffReportsOriginalDiagnosticsOnStderr(t *testing.T) {
+	fixable := "v: \"{{ a\n | combine(b) }}\"\n"
+	unfixable := "x: \"{{ lookup('env', 'a' if x else 'b') }}\"\n"
+	for _, format := range []string{"human", "concise"} {
+		for _, tt := range []struct {
+			name, input string
+			rules       []string
+			patch       bool
+		}{
+			{"fixable only", fixable, []string{"jinja-layout"}, true},
+			{"unfixable only", unfixable, []string{"lookup-conditional-argument"}, false},
+			{"mixed", fixable + unfixable, []string{"jinja-layout", "lookup-conditional-argument"}, true},
+		} {
+			t.Run(format+"/"+tt.name, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "input.yml")
+				if err := os.WriteFile(path, []byte(tt.input), 0600); err != nil {
+					t.Fatal(err)
+				}
+				code, out, stderr := invoke(t, "", "check", path, "--diff", "--format", format)
+				if code != 1 {
+					t.Fatalf("code=%d out=%q err=%q", code, out, stderr)
+				}
+				if strings.HasPrefix(out, "--- a/input.yml\n") != tt.patch {
+					t.Fatalf("patch output: %q", out)
+				}
+				if !tt.patch && out != "" {
+					t.Fatalf("stdout must be empty without fixes: %q", out)
+				}
+				for _, rule := range tt.rules {
+					if !strings.Contains(stderr, "["+rule+"]") {
+						t.Errorf("stderr missing %s: %q", rule, stderr)
+					}
+				}
+				if format == "human" && !strings.Contains(stderr, "Expected:") {
+					t.Errorf("missing human hint: %q", stderr)
+				}
+				if format == "concise" && strings.Contains(stderr, "Expected:") {
+					t.Errorf("concise format ignored: %q", stderr)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(data) != tt.input {
+					t.Fatal("diff changed source")
+				}
+			})
+		}
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestDiffPropagatesPatchAndDiagnosticWriteFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.yml")
+	if err := os.WriteFile(path, []byte("v: \"{{ a\n | combine(b) }}\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name        string
+		out, stderr io.Writer
+	}{
+		{"patch", failWriter{}, &bytes.Buffer{}},
+		{"diagnostics", &bytes.Buffer{}, failWriter{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := NewRootCommand(Streams{Out: tt.out, Err: tt.stderr}, "test")
+			root.SetArgs([]string{"check", path, "--diff"})
+			if err := root.ExecuteContext(t.Context()); !errors.Is(err, io.ErrClosedPipe) {
+				t.Fatalf("want renderer error, got %v", err)
+			}
+		})
 	}
 }

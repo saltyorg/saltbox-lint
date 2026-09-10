@@ -14,7 +14,13 @@ var version = "dev"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := cmd.Run(ctx, os.Args[1:], cmd.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, version)
+	// Restore normal signal termination after cancellation as a fallback for
+	// operations outside our interruptible input boundary.
+	restoreSignals := context.AfterFunc(ctx, stop)
+	input := &processInput{ctx: ctx, source: os.Stdin}
+	code := cmd.Run(ctx, os.Args[1:], cmd.Streams{In: input, Out: os.Stdout, Err: os.Stderr}, version)
+	input.close()
+	restoreSignals()
 	stop()
 	os.Exit(code)
 }

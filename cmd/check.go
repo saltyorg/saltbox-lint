@@ -104,6 +104,9 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions) error {
 			if err := report.Diff(command.OutOrStdout(), changes); err != nil {
 				return err
 			}
+			if err := report.Render(command.ErrOrStderr(), project, diagnostics, report.Options{Format: opts.format}); err != nil {
+				return err
+			}
 			if len(diagnostics) > 0 {
 				return errFindings
 			}

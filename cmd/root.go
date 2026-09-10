@@ -51,7 +51,9 @@ func NewRootCommand(streams Streams, version string) *cobra.Command {
 }
 
 // Run reports operational/usage errors exactly once to stderr. Findings are
-// already rendered on stdout. Exit codes are 0 clean, 1 findings, 2 failure.
+// already rendered (on stderr in diff mode). Exit codes are 0 clean, 1 findings,
+// 2 failure. Injected readers remain caller-owned; callers must arrange any
+// cancellation needed by a blocking reader.
 func Run(ctx context.Context, args []string, streams Streams, version string) int {
 	root := NewRootCommand(streams, version)
 	root.SetArgs(args)
