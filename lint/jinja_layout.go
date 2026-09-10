@@ -153,39 +153,26 @@ func (a *layoutAnalysis) region(lo, hi, content, conditional int, force bool) {
 	if lo >= hi {
 		return
 	}
-	depth := 0
-	firstIf, firstElse := -1, -1
-	comprehension := false
-	for i := lo; i < hi; i++ {
-		v := ts[i].Text
-		if depth == 0 && ts[i].Kind == "name" {
-			if v == "for" {
-				comprehension = true
-			}
-			if v == "if" && firstIf < 0 {
-				firstIf = i
-			}
-			if v == "else" && firstIf >= 0 {
-				firstElse = i
-				break
-			}
-		}
-		if v == "(" || v == "[" || v == "{" {
-			depth++
-		}
-		if v == ")" || v == "]" || v == "}" {
-			depth--
-		}
-	}
+	syntax := inspectRegion(ts, lo, hi)
+	firstIf, firstElse := syntax.If, syntax.Else
 	multiline := a.source.Position(ts[lo].Span.Start).Line != a.source.Position(ts[hi-1].Span.End-1).Line
-	if firstIf >= 0 && firstElse > firstIf && !comprehension {
+	if firstIf >= 0 {
 		wrap := multiline || force
 		if wrap {
 			a.breakBefore(firstIf, conditional, "align conditional if with its owning expression")
-			a.breakBefore(firstElse, conditional, "align conditional else with its owning if")
+			if firstElse >= 0 {
+				a.breakBefore(firstElse, conditional, "align conditional else with its owning if")
+			}
 		}
 		a.region(lo, firstIf, content, conditional, false)
-		a.region(firstIf+1, firstElse, conditional+3, conditional+3, false)
+		testEnd := hi
+		if firstElse >= 0 {
+			testEnd = firstElse
+		}
+		a.region(firstIf+1, testEnd, conditional+3, conditional+3, false)
+		if firstElse < 0 {
+			return
+		}
 		branch := a.column(ts[firstElse].Span.Start) + 5
 		if wrap {
 			branch = conditional + 5
@@ -207,10 +194,14 @@ func (a *layoutAnalysis) region(lo, hi, content, conditional int, force bool) {
 		if close < 0 {
 			continue
 		}
-		function := i > lo && ((ts[i-1].Kind == "name" && !jinjaKeyword(ts[i-1].Text)) || ts[i-1].Text == ")" || ts[i-1].Text == "]")
+		function := syntax.Calls[i]
 		inner := a.column(ts[i].Span.Start) + 1
 		if a.block && function {
-			inner = a.column(ts[i-1].Span.Start) + 2
+			callee := i - 1
+			for callee >= lo+2 && ts[callee-1].Text == "." && ts[callee-2].Kind == "name" {
+				callee -= 2
+			}
+			inner = a.column(ts[callee].Span.Start) + 2
 		}
 		if v == "{" && i+1 < close {
 			inner = a.column(ts[i+1].Span.Start)
@@ -250,22 +241,6 @@ func (a *layoutAnalysis) region(lo, hi, content, conditional int, force bool) {
 		}
 		i = close
 	}
-}
-func balancedEnd(ts []Token, start, end int) int {
-	depth := 0
-	for i := start; i < end; i++ {
-		v := ts[i].Text
-		if v == "(" || v == "[" || v == "{" {
-			depth++
-		}
-		if v == ")" || v == "]" || v == "}" {
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
 }
 func argumentRanges(ts []Token, start, end int) []Span {
 	var out []Span
@@ -400,13 +375,6 @@ func whitespaceChanges(before, after []byte) ([]Edit, bool) {
 	return edits, true
 }
 
-func jinjaKeyword(name string) bool {
-	switch name {
-	case "if", "else", "and", "or", "not", "in", "is", "for":
-		return true
-	}
-	return false
-}
 func layoutSupported(e Expression) bool {
 	for _, t := range e.Tokens {
 		if t.Kind != "punctuation" {

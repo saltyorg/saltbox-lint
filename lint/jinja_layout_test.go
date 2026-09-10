@@ -264,3 +264,96 @@ func TestExplicitBlockIndicatorAfterVerbatimTag(t *testing.T) {
 		t.Fatalf("tagged indicator: %+v", ds)
 	}
 }
+
+func TestKeywordNamesAreNotConditionalOperators(t *testing.T) {
+	inputs := []string{
+		"v: \"{{ data.if\n       + data.else }}\"\n",
+		"v: \"{{ data.if(a,\n               b)\n       + data.else }}\"\n",
+		"v: \"{{ f(if=a, else=b,\n         other=c) }}\"\n",
+		"v: \"{{ {if: a,\n        else: b} }}\"\n",
+		"v: \"{{ value | if\n       + value | else }}\"\n",
+		"v: \"{{ value is if\n       + value is not else }}\"\n",
+		"v: \"{{ lookup('vars', data.if + data.else) }}\"\n",
+		"v: \"{{ lookup('vars', f(if=a, else=b), {if: a, else: b}) }}\"\n",
+		"v: \"{{ data.if + data.else }}\" # " + strings.Repeat("x", 170) + "\n",
+	}
+	for _, input := range inputs {
+		t.Run(input, func(t *testing.T) {
+			p := layoutProject(t, input)
+			ds := Analyze(p, jinjaRules())
+			if len(ds) > 0 {
+				t.Fatalf("valid name positions: %+v", ds)
+			}
+			changes, err := PlanFixes(p, ds)
+			if err != nil || len(changes) > 0 {
+				t.Fatalf("valid formatting changed: %+v %v", changes, err)
+			}
+		})
+	}
+}
+func TestOmittedElseConditionalPolicies(t *testing.T) {
+	for _, tc := range []struct {
+		input, id string
+		want      int
+	}{
+		{"v: \"{{ lookup('vars', field if enabled) }}\"", "lookup-conditional-argument", 1},
+		{"v: \"{{ lookup('vars', f(field if enabled)) }}\"", "lookup-conditional-argument", 1},
+		{"v: \"{{ lookup('vars', lookup('vars', field if enabled)) }}\"", "lookup-conditional-argument", 1},
+		{"v: \"{{ lookup('vars', data.if if enabled else data.else) }}\"", "lookup-conditional-argument", 1},
+		{"v: \"{{ lookup('vars', field) if enabled }}\"", "lookup-conditional-argument", 0},
+		{"v: \"{{ field if enabled }}\" # " + strings.Repeat("x", 170), "jinja-conditional-length", 1},
+		{"v: \"{{ field if enabled }}\"", "jinja-conditional-length", 0},
+	} {
+		p := layoutProject(t, tc.input)
+		ds := Analyze(p, jinjaRules())
+		n := 0
+		for _, d := range ds {
+			if d.RuleID == tc.id {
+				n++
+				if d.Fix != nil {
+					t.Fatalf("semantic correction: %+v", d)
+				}
+				if strings.Contains(d.Expected, "if and else") {
+					t.Fatalf("omitted-else hint invents branch: %+v", d)
+				}
+			}
+		}
+		if n != tc.want {
+			t.Fatalf("%s: got%d want%d diagnostics=%+v", tc.input, n, tc.want, ds)
+		}
+	}
+}
+func TestOmittedElseLayoutPreservesConditionalOwnership(t *testing.T) {
+	assertLayoutFix(t, "v: \"{{ field\n if enabled }}\"\n", "v: \"{{ field\n    if enabled }}\"\n")
+	assertLayoutFix(t, "v: \"{{ f((field\n if enabled)) }}\"\n", "v: \"{{ f((field\n          if enabled)) }}\"\n")
+	assertLayoutFix(t, "v: \"{{ a if first\n    else field if enabled }}\"\n", "v: \"{{ a\n    if first\n    else field\n         if enabled }}\"\n")
+	assertLayoutFix(t, "v: \"{{ data.if if enabled\n    else data.else }}\"\n", "v: \"{{ data.if\n    if enabled\n    else data.else }}\"\n")
+}
+
+func TestKeywordNamedAttributeCallUsesWholeCalleeAnchor(t *testing.T) {
+	valid := "v: >-\n  {{\n    data.if(\n      a,\n      b\n    )\n  }}\n"
+	p := layoutProject(t, valid)
+	if ds := Analyze(p, jinjaRules()); len(ds) > 0 {
+		t.Fatalf("valid attribute call: %+v", ds)
+	}
+	changes, err := PlanFixes(p, Analyze(p, jinjaRules()))
+	if err != nil || len(changes) > 0 {
+		t.Fatalf("valid attribute call changed: %+v %v", changes, err)
+	}
+}
+func TestLookupDiagnosticOwnsTheActualConditionalToken(t *testing.T) {
+	input := "v: \"{{ lookup('vars', data.if if enabled else data.else) }}\""
+	ds := Analyze(layoutProject(t, input), jinjaRules())
+	if len(ds) != 1 || ds[0].RuleID != "lookup-conditional-argument" || ds[0].Span != (Span{Start: 30, End: 32}) {
+		t.Fatalf("wrong conditional location: %+v", ds)
+	}
+	for _, input := range []string{
+		"v: \"{{ lookup('vars', {if: field if enabled, else: data.else}) }}\"",
+		"v: \"{{ lookup('vars', data.if(field if enabled)) }}\"",
+	} {
+		ds := Analyze(layoutProject(t, input), jinjaRules())
+		if len(ds) != 1 || ds[0].RuleID != "lookup-conditional-argument" {
+			t.Fatalf("nested real conditional: %+v", ds)
+		}
+	}
+}
