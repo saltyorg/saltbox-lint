@@ -229,6 +229,9 @@ func checkTraefikAdapterContract(p *Project, s *Source) []Diagnostic {
 // debug messages and unrelated task vars cannot prove that a contract renders.
 type traefikRenderer struct {
 	Source          *Source
+	OutputSource    *Source
+	Value           *Node
+	Kind            string
 	Span            Span
 	Expressions     []Expression
 	Conditions      []Expression
@@ -268,14 +271,14 @@ func traefikRenderers(p *Project, tasks []*Source) []traefikRenderer {
 				}
 				target := path.Join(s.RolePath, "templates", src.Value)
 				if template := p.Sources[target]; template != nil && template.Kind == Template {
-					renderers = append(renderers, traefikRenderer{Source: s, Span: src.Span, Conditions: conditions, Expressions: traefikOutputExpressions(template, scanExpressions(string(template.Data))), Related: []RelatedLocation{{Path: target, Span: Span{0, len(template.Data)}, Message: "template rendered by this task"}}})
+					renderers = append(renderers, traefikRenderer{Source: s, OutputSource: template, Kind: task.Module, Span: src.Span, Conditions: conditions, Expressions: traefikOutputExpressions(template, scanExpressions(string(template.Data))), Related: []RelatedLocation{{Path: target, Span: Span{0, len(template.Data)}, Message: "template rendered by this task"}}})
 				} else {
 					renderers = append(renderers, traefikRenderer{Source: s, Span: src.Span, Conditions: conditions, MissingTemplate: src.Value})
 				}
 				continue
 			}
 			if value != nil {
-				renderers = append(renderers, traefikRenderer{Source: s, Span: value.Span, Conditions: conditions, Expressions: traefikOutputExpressions(s, expressionsForDeclaration(s, defaultDeclaration{Value: value}))})
+				renderers = append(renderers, traefikRenderer{Source: s, OutputSource: s, Value: value, Kind: task.Module, Span: value.Span, Conditions: conditions, Expressions: traefikOutputExpressions(s, expressionsForDeclaration(s, defaultDeclaration{Value: value}))})
 			}
 		}
 	}
@@ -295,6 +298,87 @@ func traefikOutputExpressions(s *Source, expressions []Expression) []Expression 
 		result = append(result, e)
 	}
 	return result
+}
+
+// Docker output evidence is deliberately bounded: either the label argument
+// itself receives the shared mapping, or a labels mapping emits its sorted
+// key/value pairs in the supported Compose loop. A read alone proves neither.
+func traefikDockerLabelsOutput(renderer traefikRenderer) bool {
+	expressions := renderer.Expressions
+	if renderer.Kind == "community.docker.docker_container" || renderer.Kind == "docker_container" {
+		if renderer.Value == nil || renderer.Value.Kind != "string" || len(expressions) != 1 || strings.TrimSpace(renderer.Value.Value) != strings.TrimSpace(expressions[0].text) {
+			return false
+		}
+		return traefikOutputName(expressions[0], "docker_labels_common")
+	}
+	if renderer.OutputSource == nil {
+		return false
+	}
+	captureDepth := 0
+	for i, e := range expressions {
+		ts := e.Tokens
+		if e.Kind != "statement" || !e.Complete || len(ts) == 0 {
+			continue
+		}
+		switch ts[0].Text {
+		case "macro", "call", "filter":
+			captureDepth++
+		case "set":
+			if !slices.ContainsFunc(ts, func(t Token) bool { return t.Text == "=" }) {
+				captureDepth++
+			}
+		case "endmacro", "endcall", "endfilter", "endset":
+			if captureDepth > 0 {
+				captureDepth--
+			}
+		}
+		if captureDepth > 0 || len(ts) != 8 || ts[0].Text != "for" || ts[1].Kind != "name" || ts[2].Text != "," || ts[3].Kind != "name" || ts[1].Text == ts[3].Text || ts[4].Text != "in" || ts[5].Text != "docker_labels_common" || ts[6].Text != "|" || ts[7].Text != "dictsort" || i+3 >= len(expressions) {
+			continue
+		}
+		key, value, end := expressions[i+1], expressions[i+2], expressions[i+3]
+		if !traefikOutputName(key, ts[1].Text) || !traefikLabelValue(value, ts[3].Text) || !end.Complete || end.Kind != "statement" || len(end.Tokens) != 1 || end.Tokens[0].Text != "endfor" {
+			continue
+		}
+		if traefikLabelsLoopLayout(renderer.OutputSource.Data, e, key, value, end) {
+			return true
+		}
+	}
+	return false
+}
+func traefikOutputName(expression Expression, name string) bool {
+	tokens := stripGrouping(expression.Tokens)
+	return expression.Complete && expression.Kind == "output" && len(tokens) == 1 && tokens[0].Kind == "name" && tokens[0].Text == name
+}
+func traefikLabelValue(expression Expression, name string) bool {
+	tokens := expression.Tokens
+	if !expression.Complete || expression.Kind != "output" || len(tokens) == 0 || tokens[0].Kind != "name" || tokens[0].Text != name {
+		return false
+	}
+	for i := 1; i < len(tokens); i += 2 {
+		if i+1 >= len(tokens) || tokens[i].Text != "|" || !slices.Contains([]string{"string", "to_json"}, tokens[i+1].Text) {
+			return false
+		}
+	}
+	return true
+}
+func traefikLabelsLoopLayout(data []byte, loop, key, value, end Expression) bool {
+	before := string(data[:loop.Span.Start])
+	lineStart := strings.LastIndexByte(before, '\n') + 1
+	if strings.TrimSpace(before[lineStart:]) != "" {
+		return false
+	}
+	prefix := strings.TrimRight(before[:lineStart], " \t\r\n")
+	labelLine := prefix[strings.LastIndexByte(prefix, '\n')+1:]
+	if strings.TrimSpace(labelLine) != "labels:" {
+		return false
+	}
+	if strings.TrimSpace(string(data[loop.Span.End:key.Span.Start])) != "" || strings.TrimSpace(string(data[key.Span.End:value.Span.Start])) != ":" || strings.TrimSpace(string(data[value.Span.End:end.Span.Start])) != "" {
+		return false
+	}
+	keyLineStart := strings.LastIndexByte(string(data[:key.Span.Start]), '\n') + 1
+	keyIndent := string(data[keyLineStart:key.Span.Start])
+	labelIndent := len(labelLine) - len(strings.TrimLeft(labelLine, " \t"))
+	return strings.TrimSpace(keyIndent) == "" && len(keyIndent) > labelIndent
 }
 
 func traefikReads(expressions []Expression, name string) bool {
@@ -347,7 +431,7 @@ func retiredTraefikRole(tasks []*Source) bool {
 			continue
 		}
 		fail := list[len(list)-1]
-		if fail.Module != "fail" {
+		if fail.Module != "fail" || !traefikSimpleRetirementTask(fail) {
 			continue
 		}
 		msg := fail.argument("msg")
@@ -380,6 +464,22 @@ func retiredTraefikRole(tasks []*Source) bool {
 	}
 	return false
 }
+
+// Retirement is a narrow source contract, not an execution evaluator. Only
+// the action, its message arguments, descriptive name and supported when guard
+// belong to it. Loops, failure overrides, tags and other execution modifiers
+// cannot establish this exemption even when a particular value looks harmless.
+func traefikSimpleRetirementTask(task Task) bool {
+	for _, entry := range task.Node.Entries {
+		switch entry.Key.Value {
+		case "name", "when", "fail", "ansible.builtin.fail", "action", "local_action", "args":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func retirementMigration(task Task, condition []Token, s *Source) bool {
 	if task.Module != "include_tasks" || path.Base(task.includeFile()) != "migration.yml" {
 		return false
@@ -477,7 +577,7 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 		return nil
 	}
 	for _, r := range renderers {
-		if len(invalidTraefikRenderer(r)) == 0 && (traefikReads(r.Expressions, "docker_labels_common") || len(missingTraefikConsumption(r, s.Role)) == 0) {
+		if len(invalidTraefikRenderer(r)) == 0 && (traefikDockerLabelsOutput(r) || len(missingTraefikConsumption(r, s.Role)) == 0) {
 			return nil
 		}
 	}

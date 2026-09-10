@@ -393,3 +393,81 @@ func TestTraefikRetirementKeepsConditionalGrouping(t *testing.T) {
 		t.Fatalf("unrelated fail condition proves no retirement path: %+v", ds)
 	}
 }
+
+func TestTraefikDockerLabelsRequireActualOutput(t *testing.T) {
+	compose := "services:\n  example:\n    labels:\n{% for key, value in docker_labels_common | dictsort %}\n      {{ key }}: {{ value | string | to_json }}\n{% endfor %}\n"
+	cases := []struct {
+		name, output string
+		want         int
+	}{
+		{"compose labels", compose, 0},
+		{"discarded assignment", "{% set ignored = docker_labels_common %}\n", 1},
+		{"captured labels loop", "{% set ignored %}\n" + compose + "{% endset %}\n", 1},
+		{"scalar count", "label_count: {{ docker_labels_common | length }}\n", 1},
+		{"empty labels loop", "labels:\n{% for key, value in docker_labels_common | dictsort %}\n{% endfor %}\n", 1},
+		{"unrelated mapping", strings.Replace(compose, "    labels:", "    environment:", 1), 1},
+		{"overwritten key binding", strings.ReplaceAll(compose, "key", "value"), 1},
+		{"discarded loop value", strings.Replace(compose, "{{ value | string | to_json }}", "{{ value | length }}", 1), 1},
+	}
+	for _, tc := range cases {
+		for _, kind := range []string{"template", "copy"} {
+			t.Run(tc.name+"/"+kind, func(t *testing.T) {
+				files := map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml")}
+				if kind == "template" {
+					files[traefikTasksPath] = "- template: {src: router.yml.j2, dest: /docker-compose.yml}\n"
+					files[traefikTemplatePath] = tc.output
+				} else {
+					files[traefikTasksPath] = "- copy:\n    dest: /docker-compose.yml\n    content: |\n" + indentFixture(tc.output, "      ")
+				}
+				p := traefikProject(files)
+				ds := Analyze(p, traefikRules("traefik-renderer-contract"))
+				if len(ds) != tc.want {
+					t.Fatalf("diagnostics=%+v want %d", ds, tc.want)
+				}
+			})
+		}
+	}
+	for _, action := range []string{"community.docker.docker_container:\n    labels: '{{ docker_labels_common }}'", "action:\n    module: community.docker.docker_container\n    labels: '{{ docker_labels_common }}'", "action: community.docker.docker_container\n  args:\n    labels: '{{ docker_labels_common }}'"} {
+		p := traefikProject(map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml"), traefikTasksPath: "- " + action + "\n"})
+		if ds := Analyze(p, traefikRules("traefik-renderer-contract")); len(ds) != 0 {
+			t.Fatalf("normalized direct-container diagnostics=%+v", ds)
+		}
+	}
+	for _, labels := range []string{"'{{ docker_labels_common | length }}'", "{count: '{{ docker_labels_common | length }}'}"} {
+		p := traefikProject(map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml"), traefikTasksPath: "- community.docker.docker_container:\n    labels: " + labels + "\n"})
+		if ds := Analyze(p, traefikRules("traefik-renderer-contract")); len(ds) != 1 {
+			t.Fatalf("discarded container labels diagnostics=%+v", ds)
+		}
+	}
+}
+
+func TestTraefikRetirementRejectsExecutionModifiers(t *testing.T) {
+	base := "- fail:\n    msg: \"The 'example' role is deprecated in favor of another role.\"\n"
+	for _, modifier := range []string{
+		"failed_when: false", "ignore_errors: true", "ignore_errors: false",
+		"loop: []", "with_items: []", "loop_with: items", "run_once: true",
+		"until: false", "retries: 0", "tags: never", "check_mode: true",
+		"delegate_to: another_host", "vars: {continuous_integration: true}",
+	} {
+		for _, guard := range []string{"", "  when: not continuous_integration\n"} {
+			t.Run(modifier+guard, func(t *testing.T) {
+				p := traefikProject(map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml"), traefikTasksPath: base + "  " + modifier + "\n" + guard})
+				ds := Analyze(p, traefikRules("traefik-renderer-contract"))
+				if len(ds) != 1 {
+					t.Fatalf("modified fail cannot establish retirement: %+v", ds)
+				}
+			})
+		}
+	}
+	for _, action := range []string{"ansible.builtin.fail:\n    msg: \"The 'example' role is deprecated in favor of another role.\"", "action:\n    module: ansible.builtin.fail\n    msg: \"The 'example' role is deprecated in favor of another role.\"", "action: ansible.builtin.fail\n  args:\n    msg: \"The 'example' role is deprecated in favor of another role.\""} {
+		p := traefikProject(map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml"), traefikTasksPath: "- " + action + "\n"})
+		if ds := Analyze(p, traefikRules("traefik-renderer-contract")); len(ds) != 0 {
+			t.Fatalf("normalized simple fail diagnostics=%+v", ds)
+		}
+	}
+	migration := "- include_tasks: migration.yml\n  when: (not continuous_integration) and ('example-migration' in ansible_run_tags)\n" + base + "  when: (not continuous_integration) and ('example-migration' not in ansible_run_tags)\n  failed_when: false\n"
+	p := traefikProject(map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml"), traefikTasksPath: migration})
+	if ds := Analyze(p, traefikRules("traefik-renderer-contract")); len(ds) != 1 {
+		t.Fatalf("suppressed migration retirement diagnostics=%+v", ds)
+	}
+}
