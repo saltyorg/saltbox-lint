@@ -49,6 +49,10 @@ func (in *processInput) open() error {
 	if err != nil {
 		return fmt.Errorf("access stdin: %w", err)
 	}
+	if info.Mode()&os.ModeSocket != 0 {
+		in.reader = socketInput{ctx: in.ctx, raw: raw}
+		return nil
+	}
 	var owned *os.File
 	var openErr error
 	// An inherited blocking descriptor is not necessarily registered with Go's
