@@ -304,7 +304,7 @@ func traefikOutputExpressions(s *Source, expressions []Expression) []Expression 
 // itself receives the shared mapping, or a labels mapping emits its sorted
 // key/value pairs in the supported Compose loop. A read alone proves neither.
 func traefikDockerLabelsOutput(renderer traefikRenderer) bool {
-	expressions := renderer.Expressions
+	expressions := traefikUncapturedExpressions(renderer.Expressions)
 	if renderer.Kind == "community.docker.docker_container" || renderer.Kind == "docker_container" {
 		if renderer.Value == nil || renderer.Value.Kind != "string" || len(expressions) != 1 || strings.TrimSpace(renderer.Value.Value) != strings.TrimSpace(expressions[0].text) {
 			return false
@@ -314,25 +314,12 @@ func traefikDockerLabelsOutput(renderer traefikRenderer) bool {
 	if renderer.OutputSource == nil {
 		return false
 	}
-	captureDepth := 0
 	for i, e := range expressions {
 		ts := e.Tokens
 		if e.Kind != "statement" || !e.Complete || len(ts) == 0 {
 			continue
 		}
-		switch ts[0].Text {
-		case "macro", "call", "filter":
-			captureDepth++
-		case "set":
-			if !slices.ContainsFunc(ts, func(t Token) bool { return t.Text == "=" }) {
-				captureDepth++
-			}
-		case "endmacro", "endcall", "endfilter", "endset":
-			if captureDepth > 0 {
-				captureDepth--
-			}
-		}
-		if captureDepth > 0 || len(ts) != 8 || ts[0].Text != "for" || ts[1].Kind != "name" || ts[2].Text != "," || ts[3].Kind != "name" || ts[1].Text == ts[3].Text || ts[4].Text != "in" || ts[5].Text != "docker_labels_common" || ts[6].Text != "|" || ts[7].Text != "dictsort" || i+3 >= len(expressions) {
+		if len(ts) != 8 || ts[0].Text != "for" || ts[1].Kind != "name" || ts[2].Text != "," || ts[3].Kind != "name" || ts[1].Text == ts[3].Text || ts[4].Text != "in" || ts[5].Text != "docker_labels_common" || ts[6].Text != "|" || ts[7].Text != "dictsort" || i+3 >= len(expressions) {
 			continue
 		}
 		key, value, end := expressions[i+1], expressions[i+2], expressions[i+3]
@@ -391,16 +378,66 @@ func traefikReads(expressions []Expression, name string) bool {
 	}
 	return false
 }
+
+// Capture bodies cannot prove emitted output without resolving their later use.
+// Share this boundary with Docker-label evidence and retain the original tokens.
+func traefikUncapturedExpressions(expressions []Expression) []Expression {
+	var result []Expression
+	depth := 0
+	for _, e := range expressions {
+		if e.Kind == "statement" && e.Complete && len(e.Tokens) > 0 {
+			switch e.Tokens[0].Text {
+			case "macro", "call", "filter":
+				depth++
+			case "set":
+				// A block set can have filter arguments containing equals signs.
+				separator := slices.IndexFunc(e.Tokens, func(t Token) bool { return t.Text == "=" || t.Text == "|" })
+				if separator < 0 || e.Tokens[separator].Text == "|" {
+					depth++
+				}
+			case "endmacro", "endcall", "endfilter", "endset":
+				if depth > 0 {
+					depth--
+				}
+			}
+		}
+		if depth == 0 {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 func missingTraefikConsumption(renderer traefikRenderer, role string) []string {
-	expressions := renderer.Expressions
+	var outputs, guards, activeGuards []Expression
+	for _, e := range traefikUncapturedExpressions(renderer.Expressions) {
+		if e.Kind == "output" {
+			outputs = append(outputs, e)
+			guards = append(guards, activeGuards...)
+		} else if e.Kind == "statement" && len(e.Tokens) > 0 {
+			switch e.Tokens[0].Text {
+			case "if":
+				activeGuards = append(activeGuards, e)
+			case "elif":
+				if len(activeGuards) > 0 {
+					activeGuards[len(activeGuards)-1] = e
+				}
+			case "endif":
+				if len(activeGuards) > 0 {
+					activeGuards = activeGuards[:len(activeGuards)-1]
+				}
+			}
+		}
+	}
 	var missing []string
-	if !traefikReads(expressions, "traefik_middleware_api") {
+	if !traefikReads(outputs, "traefik_middleware_api") {
 		missing = append(missing, "traefik_middleware_api")
 	}
 	for _, suffix := range traefikAPISuffixes[2:] {
-		expressions := expressions
+		expressions := outputs
 		if suffix == traefikAPISuffixes[2] {
-			expressions = append(slices.Clone(expressions), renderer.Conditions...)
+			expressions = append(slices.Clone(outputs), guards...)
+			expressions = append(expressions, renderer.Conditions...)
 		}
 		if !traefikReads(expressions, role+"_role_"+suffix) && !hasExplicitRoleVarLookup(expressions, "_"+suffix, role) {
 			missing = append(missing, "_"+suffix)

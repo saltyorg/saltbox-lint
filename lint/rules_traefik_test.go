@@ -2,8 +2,10 @@ package lint
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -469,5 +471,70 @@ func TestTraefikRetirementRejectsExecutionModifiers(t *testing.T) {
 	p := traefikProject(map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml"), traefikTasksPath: migration})
 	if ds := Analyze(p, traefikRules("traefik-renderer-contract")); len(ds) != 1 {
 		t.Fatalf("suppressed migration retirement diagnostics=%+v", ds)
+	}
+}
+
+func TestTraefikRendererRejectsDiscardedAPIReads(t *testing.T) {
+	good := traefikFixture(t, "renderer.good.j2")
+	reads := "[traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint]"
+	for name, content := range map[string]string{
+		"discarded assignment":                  "{% set ignored = " + reads + " %}\nunrelated: true\n",
+		"captured body":                         "{% set ignored %}\n" + good + "{% endset %}\nunrelated: true\n",
+		"filtered capture":                      "{% set ignored | default(value=true) %}\n" + good + "{% endset %}\nunrelated: true\n",
+		"macro body":                            "{% macro ignored() %}\n" + good + "{% endmacro %}\nunrelated: true\n",
+		"nested captured body":                  "{% set ignored %}{% set inner %}\n" + good + "{% endset %}{% endset %}\nunrelated: true\n",
+		"assignment in guard":                   "{% if example_role_traefik_api_enabled %}{% set ignored = " + reads + " %}{% endif %}\nunrelated: true\n",
+		"middleware and endpoint only in guard": "{% if " + reads + " %}\nunrelated: true\n{% endif %}\n",
+	} {
+		for _, template := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/template=%v", name, template), func(t *testing.T) {
+				tasks := "- copy:\n    dest: /traefik/router.yml\n    content: |\n" + indentFixture(content, "      ")
+				files := map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml")}
+				if template {
+					tasks = "- template: {src: router.yml.j2, dest: /traefik/router.yml}\n"
+					files[traefikTemplatePath] = content
+				}
+				files[traefikTasksPath] = tasks
+				p := traefikProject(files)
+				rules := traefikRules("traefik-renderer-contract")
+				full := Analyze(p, rules)
+				if len(full) != 1 {
+					t.Fatalf("discarded reads diagnostics=%+v, want one", full)
+				}
+				assertTraefikDiagnostic(t, p, full[0], traefikTasksPath, "")
+				if template && !slices.ContainsFunc(full[0].Related, func(r RelatedLocation) bool { return r.Path == traefikTemplatePath }) {
+					t.Fatalf("missing template reference: %+v", full[0])
+				}
+				for selected := range files {
+					p.Selected = map[string]bool{selected: true}
+					ds := Analyze(p, rules)
+					if selected == traefikTasksPath {
+						if !reflect.DeepEqual(ds, full) {
+							t.Fatalf("selected task diagnostics=%+v, full=%+v", ds, full)
+						}
+					} else if len(ds) != 0 {
+						t.Fatalf("unselected primary leaked to %s: %+v", selected, ds)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestTraefikRendererEmitsAfterCapture(t *testing.T) {
+	for _, template := range []bool{false, true} {
+		t.Run(fmt.Sprintf("template=%v", template), func(t *testing.T) {
+			content := "{% set ignored %}{% set inner %}unused{% endset %}{% endset %}\n{{ traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}\n"
+			tasks := "- copy:\n    dest: /traefik/router.yml\n    content: |\n" + indentFixture(content, "      ")
+			files := map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml")}
+			if template {
+				tasks = "- template: {src: router.yml.j2, dest: /traefik/router.yml}\n"
+				files[traefikTemplatePath] = content
+			}
+			files[traefikTasksPath] = tasks + "  when: example_role_traefik_api_enabled\n"
+			if ds := Analyze(traefikProject(files), traefikRules("traefik-renderer-contract")); len(ds) != 0 {
+				t.Fatalf("actual output after capture diagnostics=%+v", ds)
+			}
+		})
 	}
 }
