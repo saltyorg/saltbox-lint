@@ -19,14 +19,14 @@ corpus test and records its evidence; it does not alter that implementation.
 | Python linter bytes | `2e4e23528a9ec43229f12a7078def0904fafc7baa7e031d9eafe813a3cfa2e2c` | Preserved |
 | User example bytes | `eab41c1a460f7a33e0b1f4e136160b934096c84b00c0e854d2e219871949eb32` | Preserved |
 
-The original baseline remains immutable in the local workflow evidence.
-Separate before/after manifests include every tracked and nonignored untracked
-consumer file, source revisions, dirty status, the Python linter blob and the
-original example hash. The local evidence directory is
-`.superpowers/sdd/2026-09-10-saltbox-lint/task-9-evidence/`; it is intentionally
-ignored, not a runtime or CI dependency. Command records retain argv, cwd,
-stdout, stderr, exit status and elapsed seconds. The task report identifies the
-final tested commit and packaged artifact hashes.
+During implementation and review, the original baseline and raw command records
+are kept in the ignored `.superpowers/sdd/2026-09-10-saltbox-lint/` workflow
+workspace. Before/after manifests cover tracked and nonignored untracked consumer
+files, revisions, dirty status, the Python linter blob and the example hash.
+These records are temporary review evidence and may be removed when the workflow
+finishes; they are not a runtime or CI dependency. This document and Git retain
+the durable results, input revisions, implementation changes and reproduction
+commands.
 
 ## Matched old/new results
 
@@ -153,3 +153,36 @@ findings to source paths. It did not launch a VS Code GUI or test interactive
 WSL/Remote SSH sessions. ARM64 validation cross-compiled the binary and checked
 ELF/build/archive metadata; the installer matrix used portable fixture bytes
 for ARM asset selection. No ARM64 binary was executed on an ARM guest.
+
+## Final correction addendum
+
+The final correction wave after `29f1b99` fixes renderer output consumption,
+active contract examples, Action launch-status normalization and the format
+gate's handling of unstaged Go-file deletions. The final implementation is
+`3dba9b42c885996510b83bb7d0dfb89614e27574`.
+
+Renderer evidence now excludes discarded assignments and captured bodies.
+Middleware and endpoint values must be emitted; API enablement may guard the
+output or its rendering task. The directly emitted middleware-item loop used
+by Saltbox is supported, including its `strip`, `string` and `to_json` steps.
+Captured, discarded or rebound loop items do not establish consumption. This
+remains bounded source analysis; unresolved capture/data-flow forms may require
+a manual change and no Jinja interpreter is involved.
+
+The first corrected corpus run exposed a temporary fifth Saltbox finding on
+`roles/traefik_file_template/tasks/main.yml`: the output-only check missed that
+real middleware loop. A focused positive regression and discarded/captured/
+rebound negatives corrected it. The final run again found the same **four
+Saltbox diagnostics and zero Sandbox diagnostics** listed above. The original
+four-finding acceptance record remains a result for its original implementation.
+
+The final race corpus comparison passed 431 Saltbox and 410 Sandbox selected-file
+comparisons, 10 stdin comparisons and 838 valid-source no-op plans. The consumer
+revisions, dirty bytes and source manifests matched the frozen inputs above.
+`make check`, `make build` and the focused catalog/renderer/Action/format tests
+passed. The Action preserves CLI exits 0/1/2 and maps missing/non-executable
+launch failures to 2. Format validation covers modified and untracked paths,
+spaces/newlines, unstaged deletion and real read/formatter errors without
+changing source or index. Local clean-commit snapshot packaging and amd64 smoke
+validation use the commands above; the workflow records their exact artifact
+provenance during review. Hosted workflow and ARM runtime limits remain unchanged.
