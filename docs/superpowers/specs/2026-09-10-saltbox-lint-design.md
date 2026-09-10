@@ -20,7 +20,8 @@ saved-file/workspace VS Code tasks, and a GitHub Action.
   Reading required context is allowed; related locations explain a finding.
 - Fix violations only; preserve already-valid formatting byte-for-byte.
 - No Python, Ansible, template execution, or lookup execution at lint runtime.
-- Preserve examples.yaml; test fixes on copies.
+- Preserve optional local, gitignored examples.yaml; automated tests use
+  committed regression fixtures in lint/testdata.
 - Consumer repositories are read-only validation inputs. No role execution,
   consumer edits, pushes, tags, releases, or remote workflow mutations.
 - Use Superpowers subagent-driven development with fresh implementers,
@@ -144,7 +145,8 @@ idempotence. Uncertain, incomplete, unsafe-tagged, raw/comment, or unsupported
 constructs receive no automatic edit. Never guess a role target, rename tags,
 reorder sections, delete declarations, or change a healthcheck's execution mode.
 
-The user's examples.yaml conditional must be rejected even though the legacy
+The user's original local examples.yaml conditional, captured in the committed
+first-if regression fixture, must be rejected even though the legacy
 linter accepts it. Its first if moves onto a continuation line aligned with
 the outer else, and nested if/else align under the else value. Tests preserve
 the original file and validate before/after behavior on copies.

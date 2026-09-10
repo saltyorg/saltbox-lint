@@ -94,7 +94,9 @@ YAML structure, comments, scalar styles/tags, exact Jinja string contents and
 non-whitespace tokens. Already-valid formatting stays byte-for-byte unchanged.
 Unsupported or uncertain edits remain diagnostics. Tag renames, source headers,
 lookup semantics, section moves and healthcheck conversion require manual edits.
-`examples.yaml` is the preserved failing-example collection: test fixes on copies.
+`examples.yaml` is an optional, gitignored local scratch file for cases that
+should fail. Check it explicitly when needed and test fixes on copies. Automated
+tests use committed regression fixtures in `lint/testdata` and do not require it.
 
 `section-spacing` requires at least one blank line between a three-line section
 banner and its variables in defaults, vars, inventory variables and explicitly

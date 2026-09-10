@@ -69,8 +69,10 @@ is a `yaml-syntax` diagnostic; missing/load/report failures are operational
 errors. Unsupported or incomplete template syntax remains visible instead of
 being treated as a clean expression.
 
-The first-line conditional in `examples.yaml` is deliberately diagnosed and
-safely fixable even though the frozen Python implementation misses it. Copies
+The first-line conditional captured in `lint/testdata/jinja/first-if.bad.yaml`
+is deliberately diagnosed and safely fixable even though the frozen Python
+implementation misses it. This committed fixture is independent of the user's
+optional local `examples.yaml`. Corrections
 must preserve outer and nested else-branch ownership, Jinja tokens/string
 contents, YAML structure/styles, and idempotence. Semantic policies remain
 manual corrections; source headers, tags, lookup semantics and healthcheck lists

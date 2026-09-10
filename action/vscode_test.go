@@ -42,7 +42,7 @@ func TestVSCodeTasksAndProblemMatcher(t *testing.T) {
 		t.Fatalf("unexpected task config: %s", data)
 	}
 	binary := buildBinary(t)
-	original, err := os.ReadFile("../examples.yaml")
+	original, err := os.ReadFile("../lint/testdata/jinja/first-if.bad.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

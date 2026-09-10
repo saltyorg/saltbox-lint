@@ -75,7 +75,9 @@ adding a new task policy.
    text, exact Jinja tokens/string contents and YAML styles/tags/structure.
    Exercise `PlanFixes`/`WriteChanges`, reparse, check idempotence and ensure
    already-valid inputs remain byte-identical. Uncertain syntax stays visible
-   as a diagnostic with no fix. Never rewrite `examples.yaml`; copy it.
+   as a diagnostic with no fix. Keep automated regressions in `lint/testdata`.
+   `examples.yaml` is optional local scratch input; preserve it and keep it out
+   of Git and test dependencies.
 6. Run the focused test through RED/GREEN, then `make check` and `make build`.
    Request independent specification and code-quality review. Record deliberate
    differences from the frozen legacy corpus instead of weakening a rule to

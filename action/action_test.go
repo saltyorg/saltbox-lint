@@ -193,7 +193,7 @@ func TestRunPathsAreDataAndStatusesArePreserved(t *testing.T) {
 		writeFile(t, filepath.Join(root, name, "inventory.yml"), []byte("v: true\n"))
 	}
 	// A real fixable finding proves inputs cannot opt in to writes.
-	original, err := os.ReadFile("../examples.yaml")
+	original, err := os.ReadFile("../lint/testdata/jinja/first-if.bad.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestInstallAndRunActualBinary(t *testing.T) {
 	}
 	path := strings.TrimSuffix(strings.TrimPrefix(string(installed), "binary="), "\n")
 	workspace := t.TempDir()
-	original, err := os.ReadFile("../examples.yaml")
+	original, err := os.ReadFile("../lint/testdata/jinja/first-if.bad.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

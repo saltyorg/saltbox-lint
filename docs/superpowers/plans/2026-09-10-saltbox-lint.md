@@ -22,7 +22,8 @@ Spec: docs/superpowers/specs/2026-09-10-saltbox-lint-design.md
   Reading required context is allowed; related locations explain a finding.
 - Fix violations only; preserve already-valid formatting byte-for-byte.
 - No Python, Ansible, template execution, or lookup execution at lint runtime.
-- Preserve examples.yaml; test fixes on copies.
+- Preserve optional local, gitignored examples.yaml; automated tests use
+  committed regression fixtures in lint/testdata.
 - Consumer repositories are read-only validation inputs. No role execution,
   consumer edits, pushes, tags, releases, or remote workflow mutations.
 - Work directly on main in the primary checkout, explicitly authorized by user.
@@ -169,7 +170,8 @@ Calls recognizes nested calls and top-level named/positional argument boundaries
   23-29, including conditional nesting, lookup boundaries and closing braces.
   Read the legacy implementations and the existing regression cases as source
   evidence; do not mechanically duplicate their line/quote-state bugs.
-- [ ] Make examples.yaml the mandatory first-if correction regression on a copy.
+- [ ] Capture the supplied first-if case in committed regression fixtures;
+  keep the user's optional examples.yaml local and outside automated tests.
   Expected output moves its outer if onto a new line aligned with outer else;
   nested if/else retain alignment under the else value. Already-valid input is
   identical after PlanFixes; a second correction run proposes zero changes.
@@ -347,7 +349,7 @@ Produces: executable CLI and report formatting without policy duplication.
   diagnostics. Reject --fix/--diff with stdin, both flags together, and
   --diff with structured output. Remaining unfixable findings still exit 1.
 - [ ] Run go test ./..., go vet ./..., and a real binary smoke check on a copy
-  of examples.yaml. Self-review and commit task files.
+  of the committed first-if fixture. Self-review and commit task files.
 
 ## Task 8: GitHub Action, VS Code tasks, packaging, and contributor docs
 

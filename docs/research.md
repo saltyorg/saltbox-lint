@@ -334,8 +334,9 @@ and Sandbox-specific author guidance remain separate from this check.
 
 ### Required new conditional case
 
-The user-supplied `examples.yaml` is a preserved collection of failing cases,
-not a file the implementation may rewrite. Its first-line conditional is not
+The user-supplied `examples.yaml` is optional, gitignored local scratch input,
+not a repository fixture or test dependency. Its first-line conditional was
+captured in `lint/testdata/jinja/first-if.bad.yaml` and is not
 reported by the frozen Python engine. The accepted v1 **must diagnose and safely
 fix a copy** into this shape:
 

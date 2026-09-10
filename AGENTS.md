@@ -48,8 +48,9 @@
 - Preserve original source positions, comments, scalar styles, and literal
   contents. Formatting fixes require explicit `check --fix`; verify token and
   YAML preservation and idempotence before applying them.
-- Treat `examples.yaml` as the user's collection of failing examples. Preserve
-  its contents during implementation and run fix validation on copies.
+- Keep `examples.yaml` optional, local and gitignored. It is the user's scratch
+  collection of cases that should fail; never stage or rewrite it. Automated
+  tests and CI must use committed fixtures in `lint/testdata`, not this file.
 - Validate against Saltbox and Sandbox without editing or executing their roles.
   Record intentional coverage differences instead of weakening rules to obtain
   a clean corpus result.

@@ -3,7 +3,9 @@
 The matched corpus run found **four Saltbox diagnostics and no Sandbox
 diagnostics**. All four are intentional differences from the old Python linter;
 this acceptance pass required no production-code correction or policy exemption.
-The consumer checkouts and the user's `examples.yaml` were preserved.
+The consumer checkouts and the user's local `examples.yaml` were preserved.
+That scratch file is optional and gitignored; committed fixtures supply all
+automated regression inputs.
 
 ## Frozen inputs
 

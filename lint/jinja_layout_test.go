@@ -1,7 +1,6 @@
 package lint
 
 import (
-	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -16,13 +15,6 @@ func TestLayoutFirstIfCorrection(t *testing.T) {
 	input, err := os.ReadFile("testdata/jinja/first-if.bad.yaml")
 	if err != nil {
 		t.Fatal(err)
-	}
-	original, err := os.ReadFile("../examples.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(input, original) {
-		t.Fatal("first-if fixture diverged from preserved examples.yaml")
 	}
 	want, err := os.ReadFile("testdata/jinja/first-if.good.yaml")
 	if err != nil {
