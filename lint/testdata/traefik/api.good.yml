@@ -1,5 +1,22 @@
+##########################################################################
+# Title:         Saltbox Lint: Traefik API defaults fixture                #
+# Author(s):     salty                                                    #
+# URL:           https://github.com/saltyorg/Saltbox                       #
+# --                                                                     #
+##########################################################################
+#                   GNU General Public License v3.0                      #
+##########################################################################
+---
+################################
+# Traefik
+################################
+
+example_role_traefik_sso_middleware: "{{ traefik_default_sso_middleware }}"
+example_role_traefik_middleware_default: "{{ traefik_default_middleware }}"
+example_role_traefik_middleware_custom: ""
+example_role_traefik_middleware_default_api: "{{ traefik_default_middleware_api }}"
+example_role_traefik_middleware_custom_api: ""
+example_role_traefik_certresolver: "{{ traefik_default_certresolver }}"
 example_role_traefik_enabled: false
-example_role_traefik_middleware_default_api: default
-example_role_traefik_middleware_custom_api: custom
 example_role_traefik_api_enabled: false
-example_role_traefik_api_endpoint: /api
+example_role_traefik_api_endpoint: "PathPrefix(`/api`)"

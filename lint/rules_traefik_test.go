@@ -43,6 +43,20 @@ func traefikProject(files map[string]string) *Project {
 }
 func TestTraefikAPIDeclarations(t *testing.T) {
 	good := traefikFixture(t, "api.good.yml")
+	lines := strings.Split(good, "\n")
+	defaultLine, customLine := -1, -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "example_role_traefik_middleware_default_api:") {
+			defaultLine = i
+		}
+		if strings.HasPrefix(line, "example_role_traefik_middleware_custom_api:") {
+			customLine = i
+		}
+	}
+	if defaultLine < 0 || customLine < 0 {
+		t.Fatal("API fixture lacks the middleware pair")
+	}
+	lines[defaultLine], lines[customLine] = lines[customLine], lines[defaultLine]
 	cases := []struct {
 		name, input string
 		want        int
@@ -51,7 +65,7 @@ func TestTraefikAPIDeclarations(t *testing.T) {
 		{"complete even disabled", good, 0, ""},
 		{"missing and both legacy names", traefikFixture(t, "api.bad.yml"), 3, "example_role_traefik_enabled"},
 		{"legacy without trigger", "example_role_traefik_middleware_api: []\n", 1, "example_role_traefik_middleware_api"},
-		{"custom before default", strings.Replace(good, "example_role_traefik_middleware_default_api: default\nexample_role_traefik_middleware_custom_api: custom", "example_role_traefik_middleware_custom_api: custom\nexample_role_traefik_middleware_default_api: default", 1), 1, "example_role_traefik_middleware_custom_api"},
+		{"custom before default", strings.Join(lines, "\n"), 1, "example_role_traefik_middleware_custom_api"},
 		{"nested is not declaration", "nested:\n  example_role_traefik_enabled: true\n", 0, ""},
 	}
 	for _, tc := range cases {
@@ -63,6 +77,34 @@ func TestTraefikAPIDeclarations(t *testing.T) {
 			}
 			if tc.want > 0 {
 				assertTraefikDiagnostic(t, p, ds[0], traefikDefaultsPath, tc.span)
+			}
+		})
+	}
+}
+
+func TestTraefikPositiveFixturesPassAllRulesWithRoleContext(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"docker API": {
+			traefikDefaultsPath: traefikFixture(t, "api.good.yml"),
+			traefikTasksPath: standardHeader + "- name: Create container\n" +
+				"  ansible.builtin.include_tasks: \"{{ resources_tasks_path }}/docker/create_docker_container.yml\"\n",
+		},
+		"non-Docker API": {
+			traefikDefaultsPath: traefikFixture(t, "api.good.yml"),
+			traefikTasksPath: standardHeader + "- name: Render API router\n" +
+				"  ansible.builtin.template:\n    src: router.yml.j2\n    dest: /traefik/router.yml\n    mode: \"0644\"\n",
+			traefikTemplatePath: traefikFixture(t, "renderer.good.j2"),
+		},
+		"namespaced adapter": {
+			traefikDefaultsPath: standardHeader + traefikFixture(t, "adapter.defaults.yml"),
+			traefikTasksPath:    standardHeader + traefikFixture(t, "adapter.good.yml"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := traefikProject(files)
+			p.Selected[traefikTemplatePath] = false
+			if ds := Analyze(p, Rules()); len(ds) != 0 {
+				t.Fatalf("positive fixture fails the complete catalog with valid role context: %+v", ds)
 			}
 		})
 	}

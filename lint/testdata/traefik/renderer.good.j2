@@ -2,7 +2,17 @@ http:
   routers:
 {% if lookup('role_var', '_traefik_api_enabled', role='example') %}
     example-api:
+      entrypoints:
+        - "websecure"
       rule: "{{ lookup('role_var', '_traefik_api_endpoint', role='example') }}"
       middlewares:
-        {{ traefik_middleware_api.split(',') | to_nice_yaml }}
+{% for item in traefik_middleware_api.split(',') %}
+        - {{ item.strip() | string | to_json }}
+{% endfor %}
+      service: "example"
 {% endif %}
+  services:
+    example:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080"

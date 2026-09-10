@@ -11,7 +11,7 @@ func Rules() []Rule {
 	kinds := []Kind{Generic, Defaults, Tasks, Handlers, Vars, Inventory, Playbook}
 	return []Rule{
 		{ID: "section-spacing", Summary: "Separate section banners from variables", Explanation: "Named three-line section banners need at least one blank line before their variables. Canonical and custom titles share this spacing policy; empty sections and literal scalar contents are ignored. Fixes preserve existing spacing and variable documentation comments.", GoodExample: "################################\n# Settings\n################################\n\nvalue: true\n", BadExample: "################################\n# Settings\n################################\nvalue: true\n", Kinds: []Kind{Generic, Defaults, Vars, Inventory}, Scope: "file", Fixable: true, Check: checkSectionSpacing},
-		{ID: "traefik-api-contract", Summary: "Declare the complete Traefik API contract", Explanation: "Traefik-enabled declarations require the API middleware default/custom pair in order, API enablement and endpoint defaults. Legacy middleware declarations are unsupported even without enablement.", GoodExample: "example_role_traefik_enabled: false\nexample_role_traefik_middleware_default_api: []\nexample_role_traefik_middleware_custom_api: []\nexample_role_traefik_api_enabled: false\nexample_role_traefik_api_endpoint: /api\n", BadExample: "example_role_traefik_enabled: false\n", Kinds: []Kind{Defaults}, Scope: "file", Check: checkTraefikAPIContract},
+		{ID: "traefik-api-contract", Summary: "Declare the complete Traefik API contract", Explanation: "Traefik-enabled declarations require the API middleware default/custom pair in order, API enablement and endpoint defaults. Legacy middleware declarations are unsupported even without enablement.", GoodExample: "example_role_traefik_middleware_default_api: \"{{ traefik_default_middleware_api }}\"\nexample_role_traefik_middleware_custom_api: \"\"\nexample_role_traefik_enabled: false\nexample_role_traefik_api_enabled: false\nexample_role_traefik_api_endpoint: \"PathPrefix(`/api`)\"\n", BadExample: "example_role_traefik_enabled: false\n", Kinds: []Kind{Defaults}, Scope: "file", Check: checkTraefikAPIContract},
 		{ID: "traefik-adapter-contract", Summary: "Forward namespaced Traefik contracts in role includes", Explanation: "Matching include_role vars forward each namespaced Traefik suffix through an owner-targeted role_var call; the owning defaults declare the same contract. Context and forwarding diagnostics stay on their owning selected source.", GoodExample: traefikAdapterGoodExample, BadExample: "- include_role: {name: nginx}\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n", Kinds: []Kind{Defaults, Tasks, Handlers}, Scope: "role defaults and includes", Check: checkTraefikAdapterContract},
 		{ID: "traefik-renderer-contract", Summary: "Consume the API contract in Traefik renderers", Explanation: "Roles declaring Traefik use the shared Docker renderer or consume API middleware, enablement and endpoint in actual copy content or referenced templates. Actual retirement fail paths are exempt; comments and debug text do not establish rendering.", GoodExample: traefikRendererGoodExample, BadExample: "example_role_traefik_enabled: false\n", Kinds: []Kind{Defaults, Tasks, Handlers}, Scope: "role defaults, tasks and referenced templates", Check: checkTraefikRendererContract},
 		{ID: "docker-vars-policy", Summary: "Keep shared Docker suffix policies consistent", Explanation: "Actual docker_vars lookup specs share one policy across Docker resources. Only literal omit:true declarations permit sparse fallback accesses, including implicit Ansible conditions. Invalid required sibling context is reported on the selected dependent source.", GoodExample: "- debug: {msg: ok}\n", BadExample: "- debug: {msg: '{{ _docker_vars._docker_memory | default(0) }}'}\n", Kinds: []Kind{Tasks}, Scope: "shared Docker resources", Check: checkDockerVarsPolicy},
@@ -86,16 +86,16 @@ func checkLookupConditional(_ *Project, s *Source) []Diagnostic {
 }
 
 const traefikAdapterGoodExample = `# roles/example/defaults/main.yml
-example_role_nginx_web_subdomain: nginx
-example_role_nginx_traefik_sso_middleware: default
-example_role_nginx_traefik_middleware_default: []
-example_role_nginx_traefik_middleware_custom: []
-example_role_nginx_traefik_middleware_default_api: []
-example_role_nginx_traefik_middleware_custom_api: []
-example_role_nginx_traefik_certresolver: default
+example_role_nginx_web_subdomain: "nginx"
+example_role_nginx_traefik_sso_middleware: "{{ traefik_default_sso_middleware }}"
+example_role_nginx_traefik_middleware_default: "{{ traefik_default_middleware }}"
+example_role_nginx_traefik_middleware_custom: ""
+example_role_nginx_traefik_middleware_default_api: "{{ traefik_default_middleware_api }}"
+example_role_nginx_traefik_middleware_custom_api: ""
+example_role_nginx_traefik_certresolver: "{{ traefik_default_certresolver }}"
 example_role_nginx_traefik_enabled: true
 example_role_nginx_traefik_api_enabled: false
-example_role_nginx_traefik_api_endpoint: /api
+example_role_nginx_traefik_api_endpoint: ""
 
 ---
 # roles/example/tasks/main.yml
@@ -116,19 +116,35 @@ example_role_nginx_traefik_api_endpoint: /api
 `
 
 const traefikRendererGoodExample = `# roles/example/defaults/main.yml
-example_role_traefik_enabled: false
-example_role_traefik_middleware_default_api: []
-example_role_traefik_middleware_custom_api: []
-example_role_traefik_api_enabled: false
-example_role_traefik_api_endpoint: /api
+example_role_traefik_middleware_default_api: "{{ traefik_default_middleware_api }}"
+example_role_traefik_middleware_custom_api: ""
+example_role_traefik_enabled: true
+example_role_traefik_api_enabled: true
+example_role_traefik_api_endpoint: "PathPrefix(` + "`/api`" + `)"
 
 ---
 # roles/example/tasks/main.yml
-- copy:
+- name: Render API router
+  ansible.builtin.copy:
     dest: /traefik/router.yml
+    mode: "0644"
     content: |
+      http:
+        routers:
       {% if example_role_traefik_api_enabled %}
-      middleware: {{ traefik_middleware_api }}
-      endpoint: {{ example_role_traefik_api_endpoint }}
+          example-api:
+            entrypoints:
+              - "websecure"
+            rule: "{{ example_role_traefik_api_endpoint }}"
+            middlewares:
+      {% for item in traefik_middleware_api.split(',') %}
+              - {{ item.strip() | string | to_json }}
+      {% endfor %}
+            service: "example"
       {% endif %}
+        services:
+          example:
+            loadBalancer:
+              servers:
+                - url: "http://127.0.0.1:8080"
 `
