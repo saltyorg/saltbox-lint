@@ -408,9 +408,38 @@ func traefikUncapturedExpressions(expressions []Expression) []Expression {
 	return result
 }
 
+// Recognize the consumer's direct split/emit loop, with no intervening
+// statements that could capture or rebind its item. Other data flow stays unknown.
+func traefikMiddlewareLoopOutput(expressions []Expression) bool {
+	for i, e := range expressions {
+		ts := e.Tokens
+		if !e.Complete || e.Kind != "statement" || len(ts) != 9 || ts[0].Text != "for" || ts[1].Kind != "name" || ts[2].Text != "in" || ts[3].Text != "traefik_middleware_api" || ts[4].Text != "." || ts[5].Text != "split" || ts[6].Text != "(" || ts[8].Text != ")" || i+2 >= len(expressions) {
+			continue
+		}
+		separator, ok := jinjaStringLiteral(ts[7:8])
+		if !ok || separator != "," {
+			continue
+		}
+		output, end := expressions[i+1], expressions[i+2]
+		if !end.Complete || end.Kind != "statement" || len(end.Tokens) != 1 || end.Tokens[0].Text != "endfor" {
+			continue
+		}
+		// strip() followed by string/to_json preserves the emitted item.
+		value := output.Tokens
+		if len(value) >= 5 && value[1].Text == "." && value[2].Text == "strip" && value[3].Text == "(" && value[4].Text == ")" {
+			output.Tokens = append(slices.Clone(value[:1]), value[5:]...)
+		}
+		if traefikLabelValue(output, ts[1].Text) {
+			return true
+		}
+	}
+	return false
+}
+
 func missingTraefikConsumption(renderer traefikRenderer, role string) []string {
+	expressions := traefikUncapturedExpressions(renderer.Expressions)
 	var outputs, guards, activeGuards []Expression
-	for _, e := range traefikUncapturedExpressions(renderer.Expressions) {
+	for _, e := range expressions {
 		if e.Kind == "output" {
 			outputs = append(outputs, e)
 			guards = append(guards, activeGuards...)
@@ -430,7 +459,7 @@ func missingTraefikConsumption(renderer traefikRenderer, role string) []string {
 		}
 	}
 	var missing []string
-	if !traefikReads(outputs, "traefik_middleware_api") {
+	if !traefikReads(outputs, "traefik_middleware_api") && !traefikMiddlewareLoopOutput(expressions) {
 		missing = append(missing, "traefik_middleware_api")
 	}
 	for _, suffix := range traefikAPISuffixes[2:] {

@@ -538,3 +538,36 @@ func TestTraefikRendererEmitsAfterCapture(t *testing.T) {
 		})
 	}
 }
+
+func TestTraefikRendererEmitsMiddlewareItems(t *testing.T) {
+	loop := "{% for item in traefik_middleware_api.split(',') %}\n  - {{ item.strip() | string | to_json }}\n{% endfor %}\n"
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"emitted items", loop, 0},
+		{"direct item", strings.ReplaceAll(loop, "item.strip() | string | to_json", "item"), 0},
+		{"captured items", "{% set ignored %}" + loop + "{% endset %}", 1},
+		{"discarded items", strings.ReplaceAll(loop, "{{ item.strip() | string | to_json }}", "{% set ignored = item %}"), 1},
+		{"unrelated output", strings.ReplaceAll(loop, "item.strip()", "other.strip()"), 1},
+		{"nested rebinding", strings.ReplaceAll(loop, "  - {{", "{% for item in other %}\n  - {{") + "{% endfor %}\n", 1},
+		{"assigned rebinding", strings.ReplaceAll(loop, "  - {{", "{% set item = other %}\n  - {{"), 1},
+	} {
+		for _, template := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/template=%v", tc.name, template), func(t *testing.T) {
+				content := "{{ example_role_traefik_api_endpoint }}\nmiddlewares:\n" + tc.body
+				tasks := "- copy:\n    dest: /traefik/router.yml\n    content: |\n" + indentFixture(content, "      ")
+				files := map[string]string{traefikDefaultsPath: traefikFixture(t, "api.good.yml")}
+				if template {
+					tasks = "- template: {src: router.yml.j2, dest: /traefik/router.yml}\n"
+					files[traefikTemplatePath] = content
+				}
+				files[traefikTasksPath] = tasks + "  when: example_role_traefik_api_enabled\n"
+				ds := Analyze(traefikProject(files), traefikRules("traefik-renderer-contract"))
+				if len(ds) != tc.want {
+					t.Fatalf("diagnostics=%+v want=%d", ds, tc.want)
+				}
+			})
+		}
+	}
+}
