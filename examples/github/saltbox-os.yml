@@ -1,0 +1,25 @@
+# Replace only the saltbox-lint job in .github/workflows/saltbox-os.yml.
+# This is an illustrative migration template, not a published release claim.
+# Replace RELEASE_COMMIT_SHA with the published Action's full commit SHA and
+# v0.1.0 with the exact stable binary version selected for adoption.
+name: saltbox-os linter migration example
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  saltbox-lint:
+    if: github.event_name == 'pull_request' || !(github.event_name == 'push' && github.actor == 'renovate[bot]')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.14'
+      - name: Test Saltbox facts persistence
+        run: python3 .github/scripts/test_saltbox_facts.py
+      - name: Run Saltbox Lint
+        uses: saltyorg/saltbox-lint@RELEASE_COMMIT_SHA
+        with:
+          version: v0.1.0
+          paths: '.'

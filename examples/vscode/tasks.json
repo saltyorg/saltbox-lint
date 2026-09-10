@@ -1,0 +1,120 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Saltbox Lint: current saved file",
+      "type": "process",
+      "command": "saltbox-lint",
+      "args": [
+        "check",
+        "--root",
+        "${workspaceFolder}",
+        "--format",
+        "concise",
+        "--",
+        "${file}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": {
+        "owner": "saltbox-lint",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+): (error|warning|info|notice) \\[([^\\]]+)\\] (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Saltbox Lint: workspace",
+      "type": "process",
+      "command": "saltbox-lint",
+      "args": [
+        "check",
+        "--root",
+        "${workspaceFolder}",
+        "--format",
+        "concise",
+        "--",
+        "."
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": {
+        "owner": "saltbox-lint",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+): (error|warning|info|notice) \\[([^\\]]+)\\] (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Saltbox Lint: fix current saved file",
+      "type": "process",
+      "command": "saltbox-lint",
+      "args": [
+        "check",
+        "--root",
+        "${workspaceFolder}",
+        "--format",
+        "concise",
+        "--fix",
+        "--",
+        "${file}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": {
+        "owner": "saltbox-lint",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+): (error|warning|info|notice) \\[([^\\]]+)\\] (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}

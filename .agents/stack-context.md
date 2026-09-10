@@ -2,25 +2,30 @@
 
 Generated: 2026-09-10
 
-Bootstrap status: source packages and gates below describe the approved target;
-implementation and verification are pending.
-
 ## Stack
-- Language: Go 1.27.1
-- CLI: Cobra; command factories with explicit input/output streams
-- YAML: goccy/go-yaml syntax trees and source tokens
-- Build: make build (checks before compiling)
-- Test: Go testing, table-driven and golden fixtures in testdata
-- Lint: pinned golangci-lint and actionlint
-- Format: gofmt, checked without rewriting by make check
+- Language: Go 1.27.1; Linux amd64/arm64, CGO disabled for release binaries.
+- CLI: Cobra v1.10.2; factories with explicit I/O and exit-code boundary.
+- YAML: goccy/go-yaml v1.19.2 AST/tokens behind the lint package.
+- Build: make build runs make check before compiling bin/saltbox-lint.
+- Tests: Go testing with table/golden fixtures; race and real shell/editor harnesses.
+- Lint: golangci-lint v2.13.2 standard, actionlint v1.7.12.
+- Format: gofmt checked without rewriting; go mod tidy -diff checks modules.
+- Packaging: GoReleaser v2.18.1; make snapshot checks before local archives.
+
+## Secondary languages
+- Bash: composite Action download/checksum/install and literal-argv runner.
+- YAML/JSON: workflows, packaging, VS Code process tasks and problem matcher.
 
 ## Conventions
-- Flat cmd, lint, and report packages; main wires the CLI.
-- Rules consume parsed sources and return diagnostics, never execute Ansible.
-- Errors gain context and are reported once at the command boundary.
-- Rule metadata owns documentation, source scopes, and fix availability.
-- Source edits are explicit and preserve YAML and Jinja meaning.
+- Flat cmd, lint, report packages; main owns process stdin/signal lifecycle.
+- Rules consume shared analysis and return metadata-backed diagnostics.
+- Paths/spans preserve source identity; renderers adapt columns for consumers.
+- Explicit fixes preserve YAML/Jinja meaning and already-valid source bytes.
+- Consumer repositories remain read-only; examples are adoption templates.
 
 ## CI gates
-- Formatting, module consistency, vet, lint, race tests, workflow validation.
-- Linux binary builds and GoReleaser snapshot packaging.
+- make build: format, module tidiness, vet, golangci-lint, go test -race ./....
+- Same gate: Bash syntax, workflow/example actionlint, GoReleaser config check.
+- make snapshot: same checks, local Linux amd64/arm64 archives/checksums.
+- Exact tool versions live in Makefile; workflow actions are commit-pinned.
+- Tools use ignored bin/tools; checks never rewrite source/module files.
