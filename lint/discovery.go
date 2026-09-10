@@ -146,33 +146,65 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if _, exists := l.project.Sources[relative]; exists {
 		return nil
 	}
+	s, err := l.readSource(absolute, relative)
+	if err != nil {
+		return err
+	}
+	l.project.Sources[relative] = s
+	l.project.Diagnostics = append(l.project.Diagnostics, s.parseDiagnostics...)
+	return nil
+}
+
+func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
+	if err := l.ctx.Err(); err != nil {
+		return nil, err
+	}
 	var data []byte
 	if absolute == l.stdinPath {
 		data = l.stdin
 	} else {
 		resolved, err := filepath.EvalSymlinks(absolute)
 		if err != nil {
-			return fmt.Errorf("resolve source %s: %w", absolute, err)
+			return nil, fmt.Errorf("resolve source %s: %w", absolute, err)
 		}
 		if _, err := relativeSource(l.project.Root, resolved); err != nil {
-			return err
+			return nil, err
 		}
 		info, err := os.Stat(absolute)
 		if err != nil {
-			return fmt.Errorf("inspect source %s: %w", absolute, err)
+			return nil, fmt.Errorf("inspect source %s: %w", absolute, err)
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("source is not a regular file: %s", absolute)
+			return nil, fmt.Errorf("source is not a regular file: %s", absolute)
 		}
 		data, err = os.ReadFile(absolute)
 		if err != nil {
-			return fmt.Errorf("read source %s: %w", absolute, err)
+			return nil, fmt.Errorf("read source %s: %w", absolute, err)
 		}
 	}
-	s, diagnostics := Parse(relative, data)
-	l.project.Sources[relative] = s
-	l.project.Diagnostics = append(l.project.Diagnostics, diagnostics...)
-	return nil
+	s, _ := Parse(relative, data)
+	return s, nil
+}
+
+// Root playbooks can use arbitrary filenames and contain roles without tasks.
+// Inspect their parsed structure before admitting them to directory selection.
+func (l *sourceLoader) addFromDirectory(absolute string, selected bool) error {
+	relative, err := relativeSource(l.project.Root, absolute)
+	if err != nil {
+		return err
+	}
+	kind, _, _ := classify(relative)
+	if selected && kind == Generic {
+		s, err := l.readSource(absolute, relative)
+		if err != nil {
+			return err
+		}
+		if s.Kind != Playbook {
+			return nil
+		}
+		l.project.Sources[relative] = s
+	}
+	return l.add(absolute, selected)
 }
 
 func (l *sourceLoader) directory(dir string, selected bool) error {
@@ -191,7 +223,7 @@ func (l *sourceLoader) directory(dir string, selected bool) error {
 			} else if err != nil {
 				return fmt.Errorf("inspect source %s: %w", absolute, err)
 			}
-			if err := l.add(absolute, selected); err != nil {
+			if err := l.addFromDirectory(absolute, selected); err != nil {
 				return err
 			}
 		}
@@ -217,7 +249,7 @@ func (l *sourceLoader) directory(dir string, selected bool) error {
 		if !directorySource(relative, selected) {
 			return nil
 		}
-		return l.add(absolute, selected)
+		return l.addFromDirectory(absolute, selected)
 	})
 }
 
@@ -235,7 +267,7 @@ func directorySource(name string, selected bool) bool {
 	}
 	kind, _, _ := classify(filepath.ToSlash(name))
 	if selected {
-		return kind != Generic && kind != Template
+		return kind != Template && (kind != Generic || !strings.Contains(filepath.ToSlash(name), "/"))
 	}
 	return kind != Generic
 }

@@ -231,3 +231,25 @@ func TestLoadResourceRoleContext(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRootPlaybooksByStructure(t *testing.T) {
+	root := t.TempDir()
+	gitTest(t, root, "init", "-q")
+	putFile(t, root, "backup.yml", "- hosts: localhost\n  vars_files:\n    - vars.yml\n  roles:\n    - backup\n")
+	putFile(t, root, "maintenance.yaml", "- name: maintenance\n  hosts: all\n  roles: [cleanup]\n")
+	putFile(t, root, "requirements.yml", "roles:\n  - name: third_party\n")
+	putFile(t, root, "config.yml", "settings:\n  hosts: localhost\n")
+	gitTest(t, root, "add", ".")
+	p, err := Load(t.Context(), Options{Paths: []string{root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedPaths(p); !slices.Equal(got, []string{"backup.yml", "maintenance.yaml"}) {
+		t.Fatalf("root playbooks=%v", got)
+	}
+	for _, s := range p.Sources {
+		if s.Kind != Playbook {
+			t.Errorf("playbook kind=%s", s.Kind)
+		}
+	}
+}

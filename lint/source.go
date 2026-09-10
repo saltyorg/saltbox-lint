@@ -60,7 +60,24 @@ func Parse(filename string, data []byte) (*Source, []Diagnostic) {
 		s.Documents = nil
 		s.parseDiagnostics = []Diagnostic{{Path: s.Path, RuleID: "yaml-syntax", Severity: "error", Message: err.Error(), Span: span}}
 	}
+	if s.Kind == Generic && !strings.Contains(s.Path, "/") && rootPlaybook(s.Documents) {
+		s.Kind = Playbook
+	}
 	return s, slices.Clone(s.parseDiagnostics)
+}
+
+func rootPlaybook(documents []*Node) bool {
+	for _, document := range documents {
+		if document.Kind != "sequence" {
+			continue
+		}
+		for _, play := range document.Items {
+			if play.Get("hosts") != nil || play.Get("import_playbook") != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func classify(filename string) (Kind, string, string) {
