@@ -2,6 +2,7 @@ package lint
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,39 @@ func TestParsePreservesScalars(t *testing.T) {
 				t.Errorf("start = %d", n.Span.Start)
 			}
 		})
+	}
+}
+
+func TestYAMLCommentsReportsOnlyLexerRecognizedComments(t *testing.T) {
+	input := `# Title: Example
+flow: ['# quoted', {value: "# flow quoted"}] # inline
+quoted: "start
+################################
+# Docker
+################################
+end"
+block: |- # scalar header
+  # block content
+  text
+# Footer
+value: true
+`
+	source, diagnostics := Parse("roles/example/defaults/main.yml", []byte(input))
+	if len(diagnostics) != 0 {
+		t.Fatalf("parse diagnostics: %+v", diagnostics)
+	}
+	var got []string
+	comments := source.YAMLComments()
+	for _, span := range comments {
+		got = append(got, string(source.Data[span.Start:span.End]))
+	}
+	want := []string{"# Title: Example", "# inline", "# scalar header", "# Footer"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("comments=%q want %q", got, want)
+	}
+	comments[0] = Span{}
+	if source.YAMLComments()[0] == (Span{}) {
+		t.Fatal("YAMLComments returned mutable source storage")
 	}
 }
 

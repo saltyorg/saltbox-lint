@@ -31,6 +31,13 @@ func Parse(filename string, data []byte) (*Source, []Diagnostic) {
 	tokens := lexer.Tokenize(string(s.Data))
 	a := sourceAdapter{Source: s, spans: make(map[*token.Token]Span), originEnds: make(map[*token.Token]int)}
 	err := a.locateTokens(tokens)
+	if err == nil {
+		for _, sourceToken := range tokens {
+			if sourceToken.Type == token.CommentType {
+				s.yamlComments = append(s.yamlComments, a.tokenSpan(sourceToken))
+			}
+		}
+	}
 	var file *ast.File
 	if err == nil {
 		file, err = parser.Parse(tokens, parser.ParseComments)

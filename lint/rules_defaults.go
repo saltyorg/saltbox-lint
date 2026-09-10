@@ -123,13 +123,17 @@ func checkDefaultsSections(_ *Project, source *Source) []Diagnostic {
 		positions[section] = index
 	}
 	lines := sourceLines(source.Data)
+	commentSpans := make(map[Span]bool)
+	for _, span := range source.YAMLComments() {
+		commentSpans[span] = true
+	}
 	seen := make(map[string]sourceLine)
 	previousName := ""
 	previousPosition := -1
 	var diagnostics []Diagnostic
 	for index := 1; index+1 < len(lines); index++ {
 		line := lines[index]
-		if lines[index-1].Text != "################################" || lines[index+1].Text != "################################" || !strings.HasPrefix(line.Text, "# ") {
+		if !commentSpans[lines[index-1].Span] || !commentSpans[line.Span] || !commentSpans[lines[index+1].Span] || lines[index-1].Text != "################################" || lines[index+1].Text != "################################" || !strings.HasPrefix(line.Text, "# ") {
 			continue
 		}
 		section := strings.TrimPrefix(line.Text, "# ")

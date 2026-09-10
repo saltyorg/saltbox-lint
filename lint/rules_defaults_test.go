@@ -144,6 +144,36 @@ func TestDefaultsSectionsRequireOnlyCanonicalUniqueOrder(t *testing.T) {
 	}
 }
 
+func TestDefaultsSectionsIgnoreExactBannersInsideMultilineQuotedScalars(t *testing.T) {
+	quoted := `description: "start
+################################
+# Docker
+################################
+################################
+# Basics
+################################
+################################
+# Basics
+################################
+end"
+flow: ["################################", "# Web", "################################"]
+`
+	if diagnostics := defaultsDiagnostics(t, "roles/example/defaults/main.yml", quoted, "defaults-sections"); len(diagnostics) != 0 {
+		t.Fatalf("quoted banner content diagnosed: %+v", diagnostics)
+	}
+
+	realComments := `description: "# Web"
+################################
+# Docker
+################################
+################################
+# Basics
+################################
+value: true
+`
+	assertSingleDefaultsDiagnostic(t, "roles/example/defaults/main.yml", realComments, "defaults-sections", "# Basics", "before", "Docker")
+}
+
 func TestComputedDefaultsRequireExactImmediateDirective(t *testing.T) {
 	for _, directive := range []string{"# Skip docs", "# Do not edit or override using the inventory"} {
 		input := directive + "\nexample_role_secret_lookup: value\n"

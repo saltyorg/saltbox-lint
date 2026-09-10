@@ -52,7 +52,18 @@ type Source struct {
 	Documents        []*Node
 	parseDiagnostics []Diagnostic
 	lineStarts       []int
+	yamlComments     []Span
 }
+
+// YAMLComments returns exact source spans for comments recognized by the YAML
+// lexer. Quoted and block-scalar hash text is not a YAML comment.
+func (s *Source) YAMLComments() []Span {
+	if s == nil {
+		return nil
+	}
+	return append([]Span(nil), s.yamlComments...)
+}
+
 type RelatedLocation struct {
 	Path, Message string
 	Span          Span

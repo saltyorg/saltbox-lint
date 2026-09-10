@@ -69,6 +69,30 @@ example_role_api_url: "{{ lookup('role_web', role='example', endpoint='api', sch
 	}
 }
 
+func TestRoleWebContractParsesRoleNamedEndpointsAfterExactOwnerPrefix(t *testing.T) {
+	for _, test := range []struct {
+		name, path, owner string
+	}{
+		{"ordinary owner", "roles/example/defaults/main.yml", "example"},
+		{"owner containing role marker", "roles/media_role_admin/defaults/nested/main.yml", "media_role_admin"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prefix := test.owner + "_role_admin_role_api"
+			valid := prefix + "_subdomain: admin\n" +
+				prefix + "_domain: example.com\n" +
+				prefix + "_url: \"{{ lookup('role_web', role='" + test.owner + "', endpoint='admin_role_api', scheme='https') }}\"\n"
+			if diagnostics := defaultsDiagnostics(t, test.path, valid, "role-web-contract"); len(diagnostics) != 0 {
+				t.Fatalf("valid role-named endpoint diagnosed: %+v", diagnostics)
+			}
+
+			invalid := prefix + "_subdomain: admin\n" +
+				prefix + "_domain: example.com\n" +
+				prefix + "_url: https://wrong.example\n"
+			assertSingleDefaultsDiagnostic(t, test.path, invalid, "role-web-contract", prefix+"_url", "role='"+test.owner+"'", "endpoint='admin_role_api'", "scheme='https'")
+		})
+	}
+}
+
 func TestRoleWebContractReplacesDirectComponentCompositionOnce(t *testing.T) {
 	input := `example_role_web_subdomain: example
 example_role_web_domain: example.com

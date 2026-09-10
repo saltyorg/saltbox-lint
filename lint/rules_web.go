@@ -95,20 +95,24 @@ type endpointComponents struct {
 	Subdomain, Domain bool
 }
 
-var endpointComponentName = regexp.MustCompile(`^([a-z][a-z0-9_]*)_role_([a-z][a-z0-9_]*)_(subdomain|domain)$`)
+var endpointComponentName = regexp.MustCompile(`^([a-z][a-z0-9_]*)_(subdomain|domain)$`)
 
 func checkRoleWebContract(_ *Project, source *Source) []Diagnostic {
 	declarations := declarationsByName(source)
 	components := make(map[string]endpointComponents)
+	rolePrefix := source.Role + "_role_"
 	for name := range declarations {
-		match := endpointComponentName.FindStringSubmatch(name)
-		if match == nil || match[1] != source.Role {
+		if !strings.HasPrefix(name, rolePrefix) {
 			continue
 		}
-		endpoint := match[2]
+		match := endpointComponentName.FindStringSubmatch(strings.TrimPrefix(name, rolePrefix))
+		if match == nil {
+			continue
+		}
+		endpoint := match[1]
 		found := components[endpoint]
-		found.Subdomain = found.Subdomain || match[3] == "subdomain"
-		found.Domain = found.Domain || match[3] == "domain"
+		found.Subdomain = found.Subdomain || match[2] == "subdomain"
+		found.Domain = found.Domain || match[2] == "domain"
 		components[endpoint] = found
 	}
 
