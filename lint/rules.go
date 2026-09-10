@@ -11,12 +11,12 @@ func Rules() []Rule {
 	kinds := []Kind{Generic, Defaults, Tasks, Handlers, Vars, Inventory, Playbook}
 	return []Rule{
 		{ID: "traefik-api-contract", Summary: "Declare the complete Traefik API contract", Explanation: "Traefik-enabled declarations require the API middleware default/custom pair in order, API enablement and endpoint defaults. Legacy middleware declarations are unsupported even without enablement.", GoodExample: "example_role_traefik_enabled: false\nexample_role_traefik_middleware_default_api: []\nexample_role_traefik_middleware_custom_api: []\nexample_role_traefik_api_enabled: false\nexample_role_traefik_api_endpoint: /api\n", BadExample: "example_role_traefik_enabled: false\n", Kinds: []Kind{Defaults}, Scope: "file", Check: checkTraefikAPIContract},
-		{ID: "traefik-adapter-contract", Summary: "Forward namespaced Traefik contracts in role includes", Explanation: "Matching include_role vars forward each namespaced Traefik suffix through an owner-targeted role_var call; the owning defaults declare the same contract. Context and forwarding diagnostics stay on their owning selected source.", GoodExample: "- include_role: {name: nginx}\n", BadExample: "- include_role: {name: nginx}\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n", Kinds: []Kind{Defaults, Tasks, Handlers}, Scope: "role defaults and includes", Check: checkTraefikAdapterContract},
-		{ID: "traefik-renderer-contract", Summary: "Consume the API contract in Traefik renderers", Explanation: "Roles declaring Traefik use the shared Docker renderer or consume API middleware, enablement and endpoint in actual copy content or referenced templates. Actual retirement fail paths are exempt; comments and debug text do not establish rendering.", GoodExample: "example_role_enabled: true\n", BadExample: "example_role_traefik_enabled: false\n", Kinds: []Kind{Defaults, Tasks, Handlers}, Scope: "role defaults, tasks and referenced templates", Check: checkTraefikRendererContract},
+		{ID: "traefik-adapter-contract", Summary: "Forward namespaced Traefik contracts in role includes", Explanation: "Matching include_role vars forward each namespaced Traefik suffix through an owner-targeted role_var call; the owning defaults declare the same contract. Context and forwarding diagnostics stay on their owning selected source.", GoodExample: traefikAdapterGoodExample, BadExample: "- include_role: {name: nginx}\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n", Kinds: []Kind{Defaults, Tasks, Handlers}, Scope: "role defaults and includes", Check: checkTraefikAdapterContract},
+		{ID: "traefik-renderer-contract", Summary: "Consume the API contract in Traefik renderers", Explanation: "Roles declaring Traefik use the shared Docker renderer or consume API middleware, enablement and endpoint in actual copy content or referenced templates. Actual retirement fail paths are exempt; comments and debug text do not establish rendering.", GoodExample: traefikRendererGoodExample, BadExample: "example_role_traefik_enabled: false\n", Kinds: []Kind{Defaults, Tasks, Handlers}, Scope: "role defaults, tasks and referenced templates", Check: checkTraefikRendererContract},
 		{ID: "docker-vars-policy", Summary: "Keep shared Docker suffix policies consistent", Explanation: "Actual docker_vars lookup specs share one policy across Docker resources. Only literal omit:true declarations permit sparse fallback accesses, including implicit Ansible conditions. Invalid required sibling context is reported on the selected dependent source.", GoodExample: "- debug: {msg: ok}\n", BadExample: "- debug: {msg: '{{ _docker_vars._docker_memory | default(0) }}'}\n", Kinds: []Kind{Tasks}, Scope: "shared Docker resources", Check: checkDockerVarsPolicy},
 		{ID: "docker-helper-arguments", Summary: "Pass public Docker lifecycle helper arguments", Explanation: "Docker lifecycle include vars use optional var_prefix, never the private _var_prefix fact.", GoodExample: "- include_tasks: /docker/create_docker_container.yml\n  vars: {var_prefix: example}\n", BadExample: "- include_tasks: /docker/create_docker_container.yml\n  vars: {_var_prefix: example}\n", Kinds: []Kind{Tasks, Handlers, Playbook}, Scope: "file", Check: checkDockerHelperArguments},
 		{ID: "network-health-contract", Summary: "Pass explicit network health inputs", Explanation: "Network health includes pass source and target in their own vars; the shared resource cannot read caller-local Docker facts.", GoodExample: "- include_tasks: network_container_health_status.yml\n  vars: {network_container_source: example, network_container_target: gluetun}\n", BadExample: "- include_tasks: network_container_health_status.yml\n", Kinds: []Kind{Tasks, Handlers, Playbook}, Scope: "file", Check: checkNetworkHealthContract},
-		{ID: "cloudflare-auth-contract", Summary: "Read normalized Cloudflare authentication", Explanation: "Runtime expressions use normalized Cloudflare authentication variables instead of raw account members. Literal text and unrelated object attributes are not global account reads.", GoodExample: "value: '{{ cloudflare_api_token }}'\n", BadExample: "value: '{{ cloudflare.api }}'\n", Kinds: kinds, Scope: "file", Check: checkCloudflareAuth},
+		{ID: "cloudflare-auth-contract", Summary: "Read normalized Cloudflare authentication", Explanation: "Runtime expressions use normalized Cloudflare authentication variables instead of raw account members. Literal text and unrelated object attributes are not global account reads.", GoodExample: "value: '{{ cloudflare_scoped_token }}'\n", BadExample: "value: '{{ cloudflare.api }}'\n", Kinds: kinds, Scope: "file", Check: checkCloudflareAuth},
 		{ID: "svm-github-api-resource", Summary: "Keep SVM access in the GitHub fallback resource", Explanation: "Only the exact canonical Saltbox GitHub API resource may read global svm; lexical bindings, attribute names and literal text are not reads.", GoodExample: "value: '{{ github_api_result }}'\n", BadExample: "value: '{{ svm }}'\n", Kinds: kinds, Scope: "project identity", Check: checkSVMResource},
 		{ID: "git-clone-resource", Summary: "Keep Git actions in the shared clone resource", Explanation: "Only the exact canonical Saltbox clone resource may invoke Git. Task and handler lists, nested blocks and action forms share this policy.", GoodExample: "- include_tasks: /resources/tasks/git/clone_git_repo.yml\n", BadExample: "- git: {repo: example}\n", Kinds: []Kind{Tasks, Handlers, Playbook}, Scope: "project identity", Check: checkGitCloneResource},
 		{ID: "ansible-tag-name", Summary: "Use literal kebab-case Ansible tags", Explanation: "Actual task, play, role and include-apply tags must be literal lowercase kebab-case strings. Quote string spellings of YAML typed values.", GoodExample: "- debug: {msg: ok}\n  tags: good-tag\n", BadExample: "- debug: {msg: ok}\n  tags: Bad_tag\n", Kinds: []Kind{Tasks, Handlers, Playbook}, Scope: "file", Check: checkAnsibleTags},
@@ -83,3 +83,51 @@ func checkLookupConditional(_ *Project, s *Source) []Diagnostic {
 	}
 	return ds
 }
+
+const traefikAdapterGoodExample = `# roles/example/defaults/main.yml
+example_role_nginx_web_subdomain: nginx
+example_role_nginx_traefik_sso_middleware: default
+example_role_nginx_traefik_middleware_default: []
+example_role_nginx_traefik_middleware_custom: []
+example_role_nginx_traefik_middleware_default_api: []
+example_role_nginx_traefik_middleware_custom_api: []
+example_role_nginx_traefik_certresolver: default
+example_role_nginx_traefik_enabled: true
+example_role_nginx_traefik_api_enabled: false
+example_role_nginx_traefik_api_endpoint: /api
+
+---
+# roles/example/tasks/main.yml
+- name: Execute nginx role
+  ansible.builtin.include_role:
+    name: nginx
+  vars:
+    nginx_role_web_subdomain: "{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}"
+    nginx_role_traefik_sso_middleware: "{{ lookup('role_var', '_nginx_traefik_sso_middleware', role='example') }}"
+    nginx_role_traefik_middleware_default: "{{ lookup('role_var', '_nginx_traefik_middleware_default', role='example') }}"
+    nginx_role_traefik_middleware_custom: "{{ lookup('role_var', '_nginx_traefik_middleware_custom', role='example') }}"
+    nginx_role_traefik_middleware_default_api: "{{ lookup('role_var', '_nginx_traefik_middleware_default_api', role='example') }}"
+    nginx_role_traefik_middleware_custom_api: "{{ lookup('role_var', '_nginx_traefik_middleware_custom_api', role='example') }}"
+    nginx_role_traefik_certresolver: "{{ lookup('role_var', '_nginx_traefik_certresolver', role='example') }}"
+    nginx_role_traefik_enabled: "{{ lookup('role_var', '_nginx_traefik_enabled', role='example') }}"
+    nginx_role_traefik_api_enabled: "{{ lookup('role_var', '_nginx_traefik_api_enabled', role='example') }}"
+    nginx_role_traefik_api_endpoint: "{{ lookup('role_var', '_nginx_traefik_api_endpoint', role='example') }}"
+`
+
+const traefikRendererGoodExample = `# roles/example/defaults/main.yml
+example_role_traefik_enabled: false
+example_role_traefik_middleware_default_api: []
+example_role_traefik_middleware_custom_api: []
+example_role_traefik_api_enabled: false
+example_role_traefik_api_endpoint: /api
+
+---
+# roles/example/tasks/main.yml
+- copy:
+    dest: /traefik/router.yml
+    content: |
+      {% if example_role_traefik_api_enabled %}
+      middleware: {{ traefik_middleware_api }}
+      endpoint: {{ example_role_traefik_api_endpoint }}
+      {% endif %}
+`

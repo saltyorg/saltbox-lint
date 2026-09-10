@@ -43,9 +43,28 @@ func TestPolicyCatalogCompleteAndExamplesExecute(t *testing.T) {
 				case "traefik-adapter-contract":
 					path = "roles/example/tasks/main.yml"
 				}
-				p := traefikProject(map[string]string{path: input})
-				if len(p.Sources[path].parseDiagnostics) > 0 {
-					t.Fatalf("metadata is invalid YAML: %+v", p.Sources[path].parseDiagnostics)
+				files := map[string]string{path: input}
+				if !bad && (r.ID == "traefik-adapter-contract" || r.ID == "traefik-renderer-contract") {
+					defaults, tasks, ok := strings.Cut(input, "\n---\n")
+					if !ok {
+						t.Fatal("good contract example needs defaults and task documents")
+					}
+					files = map[string]string{traefikDefaultsPath: defaults, traefikTasksPath: tasks}
+				}
+				p := traefikProject(files)
+				if !bad && r.ID == "traefik-adapter-contract" && len(traefikAdapters(p.Sources[traefikTasksPath])) != 1 {
+					t.Fatal("good example does not activate a namespaced adapter")
+				}
+				if !bad && r.ID == "traefik-renderer-contract" {
+					if _, ok := declarationsByName(p.Sources[traefikDefaultsPath])["example_role_traefik_enabled"]; !ok {
+						t.Fatal("good example does not declare Traefik support")
+					}
+				}
+
+				for sourcePath, source := range p.Sources {
+					if len(source.parseDiagnostics) > 0 {
+						t.Fatalf("metadata %s is invalid YAML: %+v", sourcePath, source.parseDiagnostics)
+					}
 				}
 				ds := Analyze(p, []Rule{r})
 				if (len(ds) > 0) != bad {
