@@ -1,0 +1,10 @@
+example_role_nginx_web_subdomain: nginx
+example_role_nginx_traefik_sso_middleware: default
+example_role_nginx_traefik_middleware_default: default
+example_role_nginx_traefik_middleware_custom: custom
+example_role_nginx_traefik_middleware_default_api: default
+example_role_nginx_traefik_middleware_custom_api: custom
+example_role_nginx_traefik_certresolver: default
+example_role_nginx_traefik_enabled: true
+example_role_nginx_traefik_api_enabled: false
+example_role_nginx_traefik_api_endpoint: /api

@@ -1,0 +1,3 @@
+example_role_traefik_enabled: false
+example_role_traefik_api_middleware: legacy
+example_role_traefik_middleware_api: legacy

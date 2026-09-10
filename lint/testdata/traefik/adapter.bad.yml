@@ -1,0 +1,6 @@
+- include_role:
+    name: nginx
+  vars:
+    nginx_role_web_subdomain: "{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}"
+    nginx_role_traefik_api_endpoint: "{{ lookup('role_var', '_nginx_traefik_api_enabled', role='example') }}"
+# nginx_role_traefik_api_enabled: "{{ lookup('role_var', '_nginx_traefik_api_enabled', role='example') }}"

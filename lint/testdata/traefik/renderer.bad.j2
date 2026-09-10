@@ -1,0 +1,6 @@
+{# traefik_middleware_api _traefik_api_enabled _traefik_api_endpoint #}
+http:
+  routers:
+    example:
+      rule: "{{ traefik_host_template }}"
+      middlewares: []

@@ -1,0 +1,5 @@
+example_role_traefik_enabled: false
+example_role_traefik_middleware_default_api: default
+example_role_traefik_middleware_custom_api: custom
+example_role_traefik_api_enabled: false
+example_role_traefik_api_endpoint: /api

@@ -1,0 +1,8 @@
+http:
+  routers:
+{% if lookup('role_var', '_traefik_api_enabled', role='example') %}
+    example-api:
+      rule: "{{ lookup('role_var', '_traefik_api_endpoint', role='example') }}"
+      middlewares:
+        {{ traefik_middleware_api.split(',') | to_nice_yaml }}
+{% endif %}
