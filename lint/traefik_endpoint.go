@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Validate the HTTP rule language from Traefik v3.7.0 pkg/rules/parser.go and
@@ -148,9 +150,14 @@ func checkTraefikEndpointDefaults(s *Source) []Diagnostic {
 		if kind != "string" {
 			err = fmt.Errorf("endpoint must be a string")
 		} else {
-			// Expressions excludes Jinja comments and !unsafe values. Defer actual
-			// template output/statements (including lookups), without evaluating them.
-			if text == "" || len(expressionsForDeclaration(s, declaration)) > 0 {
+			if value.Tag != "!unsafe" {
+				var static bool
+				text, static = traefikEndpointLiteral(text)
+				if !static {
+					continue
+				}
+			}
+			if text == "" {
 				continue
 			}
 			err = validateTraefikEndpoint(text)
@@ -162,4 +169,43 @@ func checkTraefikEndpointDefaults(s *Source) []Diagnostic {
 		}
 	}
 	return ds
+}
+
+// traefikEndpointLiteral applies only Jinja comment elision. Like scanExpressions,
+// it recognizes template delimiters before interpreting their contents, so text
+// inside comments cannot introduce output or statements. Unlike Expressions it
+// retains the distinction between literal text and raw statement wrappers, which
+// this rule defers along with every other template statement/output. It never
+// rescans elided text or evaluates an expression.
+func traefikEndpointLiteral(text string) (string, bool) {
+	var literal []byte
+	for {
+		start := strings.IndexByte(text, '{')
+		if start < 0 {
+			return string(append(literal, text...)), true
+		}
+		literal = append(literal, text[:start]...)
+		text = text[start:]
+		if strings.HasPrefix(text, "{{") || strings.HasPrefix(text, "{%") {
+			return "", false
+		}
+		if !strings.HasPrefix(text, "{#") {
+			literal = append(literal, '{')
+			text = text[1:]
+			continue
+		}
+		end := strings.Index(text[2:], "#}")
+		if end < 0 {
+			return "", false // An incomplete template is not a known literal.
+		}
+		end += 2
+		if strings.HasPrefix(text, "{#-") {
+			literal = bytes.TrimRightFunc(literal, unicode.IsSpace)
+		}
+		trimRight := text[end-1] == '-'
+		text = text[end+2:]
+		if trimRight {
+			text = strings.TrimLeftFunc(text, unicode.IsSpace)
+		}
+	}
 }

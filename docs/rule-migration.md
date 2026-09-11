@@ -102,10 +102,13 @@ expressions, ASCII hosts, and IP addresses/CIDRs for `ClientIP`.
 This is static configuration validation, not request matching or template
 evaluation. Actual Jinja output expressions and statements, including
 lookups and interpolation inside a rule, are deferred without a template
-whitelist. Literal-only Jinja expressions are also deferred. Aliases and
-unknown scalar tags are not resolved. Mentioning `lookup` in ordinary text
-or a Jinja comment does not exempt an invalid literal. `!unsafe` values are
-literal, even if they contain Jinja-looking text. Explicit core YAML tags
+whitelist. Literal-only Jinja expressions and raw statement wrappers are also
+deferred. Aliases and unknown scalar tags are not resolved. For non-unsafe
+strings, Jinja comments are removed before validating the remaining literal,
+respecting explicit whitespace-control markers. A comment after a valid rule
+therefore passes, while `/api` plus a comment still fails. Mentioning `lookup`
+or template statements inside a comment cannot exempt an invalid literal.
+`!unsafe` values are literal, even if they contain Jinja-looking text. Explicit core YAML tags
 retain their effective scalar type. Source bytes remain unchanged.
 
 The authority is Traefik's [`pkg/rules/parser.go`](https://github.com/traefik/traefik/blob/v3.7.0/pkg/rules/parser.go)
