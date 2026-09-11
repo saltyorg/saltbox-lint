@@ -79,6 +79,21 @@ func TestRenderRuleSanitizesControlsAndUsesExplicitColorProfile(t *testing.T) {
 	}
 }
 
+func TestRenderRulePreservesLiteralTildesInExplanation(t *testing.T) {
+	explanation := "keep ~single~ and ~~double~~ plus lone~tail"
+	rule := lint.Rule{ID: "tildes", Summary: "literal prose", Explanation: explanation}
+	for _, profile := range []ColorProfile{ColorNone, ColorANSI} {
+		var out bytes.Buffer
+		if err := RenderRule(&out, rule, HumanOptions{ColorProfile: profile}); err != nil {
+			t.Fatal(err)
+		}
+		plain := charmansi.Strip(out.String())
+		if !strings.Contains(plain, explanation) {
+			t.Fatalf("profile %d changed literal tildes:\n%s", profile, plain)
+		}
+	}
+}
+
 func TestRenderRulePropagatesOutputErrors(t *testing.T) {
 	if err := RenderRule(brokenWriter{}, lint.Rule{ID: "example", Summary: "summary"}, HumanOptions{}); err == nil {
 		t.Fatal("RenderRule ignored output failure")

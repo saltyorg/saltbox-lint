@@ -296,6 +296,24 @@ func TestHumanReportSanitizesTerminalControlsAndKeepsOrder(t *testing.T) {
 	}
 }
 
+func TestHumanReportPreservesLiteralTildesInProse(t *testing.T) {
+	source, _ := lint.Parse("a.yml", []byte("value: bad\n"))
+	project := &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}
+	message := "keep ~single~ and ~~double~~ plus lone~tail"
+	expected := "use ~single~ and ~~double~~ plus lone~tail"
+	diagnostics := []lint.Diagnostic{{Path: source.Path, RuleID: "tildes", Severity: "error", Message: message, Expected: expected, Span: lint.Span{Start: 7, End: 10}}}
+	for _, profile := range []ColorProfile{ColorNone, ColorANSI} {
+		var out bytes.Buffer
+		if err := Render(&out, project, diagnostics, Options{Format: "human", Human: HumanOptions{ColorProfile: profile}}); err != nil {
+			t.Fatal(err)
+		}
+		plain := charmansi.Strip(out.String())
+		if !strings.Contains(plain, message) || !strings.Contains(plain, "Expected: "+expected) {
+			t.Fatalf("profile %d changed literal tildes:\n%s", profile, plain)
+		}
+	}
+}
+
 func TestHumanReportRendersYAMLSyntaxDiagnostics(t *testing.T) {
 	source, diagnostics := lint.Parse("bad.yml", []byte("value: [\n"))
 	if len(diagnostics) == 0 {
