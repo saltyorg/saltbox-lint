@@ -32,6 +32,7 @@ metadata. For a local checkout, run `make build` and use `bin/saltbox-lint`.
 saltbox-lint check .
 saltbox-lint check roles/example/defaults/main.yml
 saltbox-lint check --root . --format concise -- 'roles/example/tasks/file name.yml'
+saltbox-lint check --format human > findings.txt
 saltbox-lint check --format json -- roles/example resources/tasks
 saltbox-lint check --diff -- roles/example/defaults/main.yml
 saltbox-lint check --fix -- roles/example/defaults/main.yml
@@ -65,7 +66,21 @@ writing or reporting failures. The Action preserves those statuses.
 
 ## Output and fixes
 
-`--format human` is the default: locations, excerpts, hints, related context.
+`--format auto` is the default. It selects annotated human output when the
+diagnostic destination is a capable terminal, and concise output for pipes,
+files, buffers, or `TERM=dumb`. In `--diff` mode the diagnostic destination is
+stderr, independently of the patch on stdout. Explicit `--format human` keeps
+the annotated layout when redirected, which is useful for readable exports.
+Human output detects the destination width, uses 80 columns when it cannot, and
+caps the layout at 100 columns.
+
+The persistent `--color auto|always|never` flag controls human findings and
+detailed rule help. `auto` styles capable terminals unless `NO_COLOR` has a
+nonempty value. Explicit `always` and `never` override `NO_COLOR`. Color does
+not select a format: concise, JSON, GitHub annotations, and diff patches remain
+plain even with `--color always`.
+
+`--format human` shows locations, excerpts, hints, and related context.
 `--format concise` emits one primary finding per line:
 
 ```text
@@ -88,6 +103,10 @@ use line ranges; single-line annotations also include columns. Summary appends
 are bounded to 100 findings/64 KiB and explicitly count omitted findings.
 Annotations and JSON still represent the full diagnostic set. File identity and
 cross-repository summary environment details are in [migration guidance](docs/rule-migration.md).
+
+`saltbox-lint rules` keeps its compact one-rule-per-line listing.
+`saltbox-lint rules RULE_ID` uses the same destination-aware width and color
+settings as human findings, with readable plain details when redirected.
 
 Only explicit `check --fix` writes source files. Safe whitespace edits preserve
 YAML structure, comments, scalar styles/tags, exact Jinja string contents and
@@ -128,6 +147,8 @@ editor buffers. Files outside the workspace root are rejected. In WSL or Remote
 SSH, open the repository with that VS Code remote connection and install the
 Linux binary on the remote host. The process tasks pass literal argv and use an
 explicit `--root` matching their problem matcher's workspace-relative paths.
+They retain explicit `--format concise`; this stable editor contract never emits
+ANSI styling, including when the inherited `--color always` flag is supplied.
 No extension or language server is required; no consumer configuration is
 installed automatically.
 

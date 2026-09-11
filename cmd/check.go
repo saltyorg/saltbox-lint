@@ -19,19 +19,21 @@ type checkOptions struct {
 	fix, diff                   bool
 }
 
-func newCheckCommand() *cobra.Command {
+func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 	var opts checkOptions
 	command := &cobra.Command{
 		Use:   "check [paths...]",
 		Short: "Check sources (defaults to the current directory)",
 		Long: "Check YAML sources and their required context. Use '-' with --stdin-filename to check an unsaved buffer.\n" +
 			"Exit status: 0 clean, 1 findings, 2 usage or operational failure.",
-		RunE: func(command *cobra.Command, args []string) error { return runCheck(command, args, opts) },
+		RunE: func(command *cobra.Command, args []string) error {
+			return runCheck(command, args, opts, rootOpts.color)
+		},
 	}
 	flags := command.Flags()
 	flags.StringVar(&opts.root, "root", "", "Source root for identities and context")
 	flags.StringVar(&opts.stdinFilename, "stdin-filename", "", "Working-directory-relative filename for '-' input")
-	flags.StringVar(&opts.format, "format", "human", "Output format: human, concise, json, github")
+	flags.StringVar(&opts.format, "format", "auto", "Output format: auto, human, concise, json, github (auto uses human on a terminal)")
 	flags.BoolVar(&opts.fix, "fix", false, "Apply verified formatting fixes and recheck")
 	flags.BoolVar(&opts.diff, "diff", false, "Print unified formatting changes without writing")
 	command.MarkFlagsMutuallyExclusive("fix", "diff")
@@ -40,7 +42,7 @@ func newCheckCommand() *cobra.Command {
 
 func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options, error) {
 	switch opts.format {
-	case "human", "concise", "json", "github":
+	case "auto", "human", "concise", "json", "github":
 	default:
 		return lint.Options{}, fmt.Errorf("unknown output format %q", opts.format)
 	}
@@ -79,7 +81,7 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 	return load, nil
 }
 
-func runCheck(command *cobra.Command, args []string, opts checkOptions) error {
+func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMode string) error {
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
@@ -87,6 +89,11 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions) error {
 	if err != nil {
 		return err
 	}
+	diagnosticOutput := command.OutOrStdout()
+	if opts.diff {
+		diagnosticOutput = command.ErrOrStderr()
+	}
+	format, human := resolveCheckPresentation(diagnosticOutput, opts.format, colorMode)
 	project, err := lint.Load(command.Context(), load)
 	if err != nil {
 		return err
@@ -104,7 +111,7 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions) error {
 			if err := report.Diff(command.OutOrStdout(), changes); err != nil {
 				return err
 			}
-			if err := report.Render(command.ErrOrStderr(), project, diagnostics, report.Options{Format: opts.format}); err != nil {
+			if err := report.Render(command.ErrOrStderr(), project, diagnostics, report.Options{Format: format, Human: human}); err != nil {
 				return err
 			}
 			if len(diagnostics) > 0 {
@@ -124,7 +131,7 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions) error {
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
-	if err := renderCheck(command.Context(), command.OutOrStdout(), project, diagnostics, opts.format); err != nil {
+	if err := renderCheck(command.Context(), command.OutOrStdout(), project, diagnostics, format, human); err != nil {
 		return err
 	}
 	if len(diagnostics) > 0 {
@@ -133,8 +140,8 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions) error {
 	return nil
 }
 
-func renderCheck(ctx context.Context, out io.Writer, project *lint.Project, diagnostics []lint.Diagnostic, format string) error {
-	opts := report.Options{Format: format}
+func renderCheck(ctx context.Context, out io.Writer, project *lint.Project, diagnostics []lint.Diagnostic, format string, human report.HumanOptions) error {
+	opts := report.Options{Format: format, Human: human}
 	if format != "github" {
 		return report.Render(out, project, diagnostics, opts)
 	}

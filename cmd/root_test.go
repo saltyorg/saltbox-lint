@@ -40,7 +40,7 @@ func TestCheckInvocations(t *testing.T) {
 	}{
 		{"clean", []string{"check", clean}, 0, ""},
 		{"default dot", []string{"check"}, 1, "jinja"},
-		{"finding", []string{"check", bad}, 1, "Fix available:"},
+		{"finding", []string{"check", "--format", "human", bad}, 1, "Fix available:"},
 		{"concise", []string{"check", "--format", "concise", bad}, 1, "error [jinja"},
 		{"root", []string{"check", "--root", root, bad}, 1, "bad.yml:"},
 		{"missing", []string{"check", "missing.yml"}, 2, ""},

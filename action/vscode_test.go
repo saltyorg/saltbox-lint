@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,9 +61,18 @@ func TestVSCodeTasksAndProblemMatcher(t *testing.T) {
 			for i, arg := range task.Args {
 				args[i] = expand.Replace(arg)
 			}
+			for i, arg := range args {
+				if arg == "--" {
+					args = slices.Insert(args, i, "--color", "always")
+					break
+				}
+			}
 			c := exec.CommandContext(t.Context(), binary, args...)
 			c.Dir = expand.Replace(task.Options.Cwd)
 			out, runErr := c.CombinedOutput()
+			if bytes.Contains(out, []byte("\x1b[")) {
+				t.Fatalf("concise editor output contains ANSI styling: %q", out)
+			}
 			fixing := strings.Contains(task.Label, "fix")
 			if fixing {
 				if runErr != nil {

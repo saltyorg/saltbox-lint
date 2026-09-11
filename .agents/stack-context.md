@@ -1,10 +1,12 @@
 # Stack Context
 
-Generated: 2026-09-10
+Generated: 2026-09-11
 
 ## Stack
 - Language: Go 1.27.1; Linux amd64/arm64, CGO disabled for release binaries.
 - CLI: Cobra v1.10.2; factories with explicit I/O and exit-code boundary.
+- Terminal presentation: colorprofile v0.4.3 and x/term v0.2.2; cmd resolves
+  destination capability, width, and color before calling report renderers.
 - YAML: goccy/go-yaml v1.19.2 AST/tokens behind the lint package.
 - Build: make build runs make check before compiling bin/saltbox-lint.
 - Tests: Go testing with table/golden fixtures; race and real shell/editor harnesses.
@@ -20,6 +22,8 @@ Generated: 2026-09-10
 - Flat cmd, lint, report packages; main owns process stdin/signal lifecycle.
 - Rules consume shared analysis and return metadata-backed diagnostics.
 - Paths/spans preserve source identity; renderers adapt columns for consumers.
+- Auto human output is destination-aware; concise/JSON/GitHub/diff bytes remain
+  deterministic and unstyled, and report receives explicit human options.
 - Explicit fixes preserve YAML/Jinja meaning and already-valid source bytes.
 - Consumer repositories remain read-only; examples are adoption templates.
 
