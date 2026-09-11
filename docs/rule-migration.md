@@ -25,7 +25,7 @@ additional role files; repository scope requires shared-resource context.
 | `defaults-sections` | `section-structure` | File: canonical major sections are unique and relatively ordered. |
 | `computed-default-documentation` | `lookup-documentation` | File: a supported documentation exclusion immediately precedes computed `_lookup` defaults. |
 | `docker-empty-layers` | `redundant-docker-layers` | File: redundant empty companion declarations, preserving network and extra-source exceptions. |
-| `traefik-api-contract` | `traefik-api-router-contract` | File: complete API defaults, declaration order, and no legacy API middleware names. |
+| `traefik-api-contract` | `traefik-api-router-contract` | File: complete API defaults, declaration order, valid literal endpoint rules, and no legacy API middleware names. |
 | `traefik-adapter-contract` | `nested-traefik-adapter-contract` | Role: discover namespaced web adapters and validate declaration and forwarding. |
 | `docker-helper-arguments` | `docker-helper-prefix-argument` | File after task normalization: lifecycle helpers accept `var_prefix`. |
 | `traefik-renderer-contract` | `non-docker-traefik-renderer-contract` | Role: a non-Docker renderer consumes the API interface. |
@@ -81,6 +81,36 @@ are not rewritten by formatting fixes.
 The [matched Saltbox/Sandbox acceptance](acceptance.md) records four intentional
 Saltbox findings and a clean Sandbox result at frozen revisions. This mapping
 does not claim every current consumer file passes.
+
+## Traefik API endpoint literals
+
+`traefik-api-contract` validates owning role defaults named
+`<role>_role_traefik_api_endpoint` or
+`<role>_role_<namespace>_traefik_api_endpoint`, even without an enablement
+field. An empty string remains valid. Replace bare paths such as `"/api"`
+with rules such as ``"PathPrefix(`/api`)"``. Non-string static defaults are
+invalid. Diagnostics point to the value and never offer an automatic fix.
+
+The validator follows Traefik **v3.7.0** HTTP matchers and its
+`vulcand/predicate` **v1.3.0** Go expression grammar: matcher calls,
+parentheses, `!`, `&&`, and `||`, with backtick or escaped double-quoted
+string arguments. It checks supported matcher names, argument counts,
+nonempty arguments, leading slashes for `Path`/`PathPrefix`, Go regular
+expressions, ASCII hosts, and IP addresses/CIDRs for `ClientIP`.
+`PathRegexp` does not require a leading slash; `Method` accepts custom methods.
+
+This is static configuration validation, not request matching or template
+evaluation. Actual Jinja output expressions and statements, including
+lookups and interpolation inside a rule, are deferred without a template
+whitelist. Literal-only Jinja expressions are also deferred. Aliases and
+unknown scalar tags are not resolved. Mentioning `lookup` in ordinary text
+or a Jinja comment does not exempt an invalid literal. `!unsafe` values are
+literal, even if they contain Jinja-looking text. Explicit core YAML tags
+retain their effective scalar type. Source bytes remain unchanged.
+
+The authority is Traefik's [`pkg/rules/parser.go`](https://github.com/traefik/traefik/blob/v3.7.0/pkg/rules/parser.go)
+and [`pkg/muxer/http/matcher.go`](https://github.com/traefik/traefik/blob/v3.7.0/pkg/muxer/http/matcher.go),
+with [`vulcand/predicate/parse.go`](https://github.com/vulcand/predicate/blob/v1.3.0/parse.go).
 
 ## Four consumer workflow migrations
 

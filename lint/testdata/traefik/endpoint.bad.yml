@@ -1,0 +1,3 @@
+example_role_traefik_api_endpoint: "/api"
+example_role_nginx_traefik_api_endpoint: "PathPrefix(`api`)"
+example_role_remote_traefik_api_endpoint: false

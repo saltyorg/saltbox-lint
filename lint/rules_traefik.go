@@ -46,7 +46,7 @@ func checkTraefikAPIContract(_ *Project, s *Source) []Diagnostic {
 			ds = append(ds, ansibleDiagnostic(s, "traefik-api-contract", legacy.Key.Span, "legacy API middleware declaration is unsupported", "Use "+prefix+traefikAPISuffixes[0]+" and "+prefix+traefikAPISuffixes[1]+"."))
 		}
 	}
-	return ds
+	return append(ds, checkTraefikEndpointDefaults(s)...)
 }
 
 func traefikRoleSources(p *Project, s *Source, kinds ...Kind) []*Source {
