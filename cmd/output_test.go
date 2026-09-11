@@ -47,6 +47,10 @@ func TestColorPolicyIsIndependentFromFormat(t *testing.T) {
 	if err := os.WriteFile(path, []byte(badJinja), 0600); err != nil {
 		t.Fatal(err)
 	}
+	ordinaryCode, ordinaryJSON, ordinaryStderr := invoke(t, "", "check", "--format", "json", path)
+	if ordinaryCode != 1 || ordinaryStderr != "" {
+		t.Fatalf("ordinary JSON: code=%d stdout=%q stderr=%q", ordinaryCode, ordinaryJSON, ordinaryStderr)
+	}
 
 	t.Setenv("NO_COLOR", "any nonempty value")
 	code, human, stderr := invoke(t, "", "--color", "always", "check", "--format", "human", path)
@@ -56,8 +60,17 @@ func TestColorPolicyIsIndependentFromFormat(t *testing.T) {
 	for _, format := range []string{"auto", "concise", "json", "github"} {
 		t.Run(format+" stays plain", func(t *testing.T) {
 			code, out, stderr := invoke(t, "", "--color", "always", "check", "--format", format, path)
-			if code != 1 || stderr != "" || strings.Contains(out, "\x1b[") {
+			if code != 1 || stderr != "" {
 				t.Fatalf("code=%d stdout=%q stderr=%q", code, out, stderr)
+			}
+			if format == "json" {
+				if out != ordinaryJSON {
+					t.Fatalf("forced color changed JSON bytes:\nordinary: %q\n  forced: %q", ordinaryJSON, out)
+				}
+				return
+			}
+			if strings.Contains(out, "\x1b[") {
+				t.Fatalf("%s output contained styling: %q", format, out)
 			}
 		})
 	}
