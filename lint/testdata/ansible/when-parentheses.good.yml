@@ -5,6 +5,9 @@
     - enabled
     - result.changed
     - values[item.key]
+    - lookup('role_var', '_metrics_enabled', role='traefik')
+    - query('ansible.builtin.vars', 'enabled')
+    - q('ansible.builtin.vars', 'enabled')
     - (value is defined)
     - (not (a or b))
     - ((a) and (b))

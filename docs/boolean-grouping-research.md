@@ -10,9 +10,12 @@ files describe working-tree bytes, not an unmodified HEAD snapshot.
 ## When-only convention
 
 `ansible-when-parentheses` requires an outer round-parenthesis pair around the
-complete `when` condition unless it is a single variable reference. This applies
-to each YAML list item independently. Direct field/item access remains a variable
-reference; operators, calls, tests, filters and computed keys need grouping.
+complete `when` condition unless it is a single variable read. This applies
+to each YAML list item independently. Direct field/item access and standalone
+`lookup(...)`, `query(...)`, and `q(...)` calls are variable reads. The lookup
+arguments do not affect this classification. Negation, operators, tests and
+filters applied outside the call still need grouping, as do other calls and
+computed item keys.
 Already-grouped references and inner precedence groups remain valid.
 
 ```yaml
@@ -29,9 +32,15 @@ Already-grouped references and inner precedence groups remain valid.
     - (items | length > 0)
     - (a == b)
     - (a and (b or c))
-    - (lookup('vars', 'flag'))
+    - lookup('role_var', '_metrics_enabled', role='traefik')
+    - (lookup('vars', 'flag') | bool)
     - (values[index + 1])
 ```
+
+For example, `when: lookup('role_var', '_metrics_enabled', role='traefik')`
+is valid without grouping. Qualified plugin names such as
+`lookup('ansible.builtin.vars', 'flag')` are also accepted. Dotted function
+names are not recognized as lookup entrypoints by the shared call analysis.
 
 The pair must enclose the entire item: `(a) and (b)` needs `((a) and (b))`.
 Native YAML boolean `when` values also need `(true)` or `(false)`, including

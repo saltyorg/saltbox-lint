@@ -56,13 +56,34 @@ func checkWhenParentheses(_ *Project, s *Source) []Diagnostic {
 		if e.Kind != "implicit" || !e.Complete || !nodes[e.node] || kind != "string" || len(e.Tokens) == 0 {
 			continue
 		}
-		if len(stripGrouping(e.Tokens)) != len(e.Tokens) || directVariableReference(e.Tokens) {
+		if len(stripGrouping(e.Tokens)) != len(e.Tokens) || directVariableReference(e.Tokens) || standaloneWhenLookup(e) {
 			continue
 		}
 		span := Span{e.Tokens[0].Span.Start, e.Tokens[len(e.Tokens)-1].Span.End}
 		ds = append(ds, ansibleDiagnostic(s, "ansible-when-parentheses", span, "nontrivial when condition needs enclosing parentheses", "Use ("+strings.TrimSpace(e.text)+") around the complete when condition."))
 	}
 	return ds
+}
+
+// A standalone lookup result is one value read regardless of its arguments.
+// Use actual call spans so a surrounding operation cannot inherit this exemption.
+func standaloneWhenLookup(e Expression) bool {
+	if !e.Complete || len(e.Tokens) == 0 {
+		return false
+	}
+	name := e.Tokens[0].Text
+	switch name {
+	case "lookup", "query", "q":
+	default:
+		return false
+	}
+	span := Span{e.Tokens[0].Span.Start, e.Tokens[len(e.Tokens)-1].Span.End}
+	for _, call := range Calls(e, name) {
+		if call.Span == span {
+			return true
+		}
+	}
+	return false
 }
 
 // Direct field/item access is still a variable reference. Keys can themselves

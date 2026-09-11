@@ -9,7 +9,7 @@ import (
 )
 
 func TestWhenParenthesesConditions(t *testing.T) {
-	for _, condition := range []string{"value is defined", "not enabled", "value | bool", "items | length > 0", "a == b", "a and b", "lookup('vars', 'flag')", "(a) and (b)", "not (a or b)", "values[index + 1]", "values[lookup('vars', 'key')]", "values[key | lower]"} {
+	for _, condition := range []string{"value is defined", "not enabled", "value | bool", "items | length > 0", "a == b", "a and b", "(a) and (b)", "not (a or b)", "values[index + 1]", "values[lookup('vars', 'key')]", "values[key | lower]"} {
 		t.Run(condition, func(t *testing.T) {
 			for _, prefix := range []string{"  when: ", "  when:\n    - "} {
 				input := "- name: Example\n  ansible.builtin.debug: {msg: ok}\n" + prefix + condition + "\n"
@@ -194,5 +194,42 @@ func TestWhenParenthesesConstantItemKeys(t *testing.T) {
 			input := "- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: " + condition + "\n"
 			assertAnsible(t, "tasks/main.yml", input, "ansible-when-parentheses", condition, "("+condition+")")
 		}
+	}
+}
+
+func TestWhenParenthesesDirectLookupReads(t *testing.T) {
+	for _, condition := range []string{
+		"lookup('role_var', '_metrics_enabled', role='traefik')",
+		"lookup('vars', 'flag')",
+		"lookup('ansible.builtin.vars', 'flag')",
+		"query('vars', flag_name)",
+		"q('vars', flag_name)",
+		"lookup('vars', prefix + suffix, default=fallback)",
+		"lookup('vars', query('vars', flag_name))",
+	} {
+		t.Run(condition, func(t *testing.T) {
+			for _, prefix := range []string{"  when: ", "  when:\n    - "} {
+				for _, value := range []string{condition, "(" + condition + ")"} {
+					input := "- name: Read metrics flag\n  ansible.builtin.debug: {msg: ok}\n" + prefix + value + "\n"
+					if ds := ansibleDiagnostics(t, "roles/traefik/tasks/main.yml", input, "ansible-when-parentheses"); len(ds) != 0 {
+						t.Fatal(ds)
+					}
+				}
+			}
+		})
+	}
+	for _, condition := range []string{
+		"not lookup('vars', 'flag')", "lookup('vars', 'flag') | bool",
+		"lookup('vars', 'flag') is defined", "lookup('vars', 'flag') == expected",
+		"lookup('vars', 'flag') and enabled", "enabled or query('vars', 'flag')",
+		"q('vars', 'flag') | length > 0", "lookup('vars', 'flag') or lookup('vars', 'other')",
+		"lookup('vars', 'flag')[0]", "obj.lookup('vars', 'flag')",
+		"ansible.builtin.lookup('vars', 'flag')", "dict(value=lookup('vars', 'flag'))",
+		"'lookup' == value", "value | lookup('vars', 'flag')", "value is lookup('vars', 'flag')",
+	} {
+		t.Run("computed/"+condition, func(t *testing.T) {
+			input := "- name: Check flag\n  ansible.builtin.debug: {msg: ok}\n  when: \"" + condition + "\"\n"
+			assertAnsible(t, "tasks/main.yml", input, "ansible-when-parentheses", condition, "("+condition+")")
+		})
 	}
 }

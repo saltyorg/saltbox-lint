@@ -6,3 +6,4 @@
     - value | bool
     - (a) and (b)
     - values[index + 1]
+    - lookup('role_var', '_metrics_enabled', role='traefik') | bool

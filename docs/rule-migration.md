@@ -12,8 +12,9 @@ and preserves existing spacing and attached variable documentation.
 The two diagnostic-only additions are `ansible-when-parentheses` (group each
 nontrivial structural `when` condition, including literal booleans) and
 `jinja-redundant-conditional-parentheses` (omit a standalone output's whole
-`if/else` result wrapper). Direct variable references may remain ungrouped;
-other Ansible condition fields and generic boolean outputs gain no grouping
+`if/else` result wrapper). Single variable reads, including standalone `lookup`,
+`query` and `q` calls, may remain ungrouped; other Ansible condition fields and
+generic boolean outputs gain no grouping
 requirement. Consumed conditional results retain their needed parentheses.
 See [the two scoped conventions](boolean-grouping-research.md) for examples,
 source observations and exclusions. Historical acceptance results describe
