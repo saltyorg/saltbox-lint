@@ -10,8 +10,8 @@ import (
 // Executable metadata makes every advertised policy earn a pass and a failure.
 func TestPolicyCatalogCompleteAndExamplesExecute(t *testing.T) {
 	rules := Rules()
-	if len(rules) != 32 {
-		t.Fatalf("catalog has %d rules, want 29 migrated policies plus section spacing and two parentheses policies", len(rules))
+	if len(rules) != 33 {
+		t.Fatalf("catalog has %d rules, want 29 migrated policies plus section spacing, two parentheses policies and when lists", len(rules))
 	}
 	seen := map[string]bool{}
 	for _, r := range rules {

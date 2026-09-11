@@ -10,7 +10,8 @@
     - q('ansible.builtin.vars', 'enabled')
     - (value is defined)
     - (not (a or b))
-    - ((a) and (b))
+    - (a)
+    - (b)
 - name: Preserve other conditions
   ansible.builtin.assert:
     that: value is defined

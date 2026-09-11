@@ -3,20 +3,26 @@
 ## Migration catalog: all 40 policies into 29 rules
 
 The original migration contains 29 policies. The standalone catalog now also
-includes `section-spacing` and two scoped parentheses rules, bringing the total
-to 32. The file-level `section-spacing` rule
+includes `section-spacing`, two scoped parentheses rules and `ansible-when-list`,
+bringing the total to 33. The file-level `section-spacing` rule
 requires a blank line between genuine three-line section banners and variables,
 including custom titles. It safely inserts missing separators with `check --fix`
 and preserves existing spacing and attached variable documentation.
 
-The two diagnostic-only additions are `ansible-when-parentheses` (group each
-nontrivial structural `when` condition, including literal booleans) and
+The diagnostic-only additions are `ansible-when-list` (split root conjunctions
+in structural `when` scalars or list items into ordered block-list items),
+`ansible-when-parentheses` (group each nontrivial indivisible structural `when`
+condition, including literal booleans) and
 `jinja-redundant-conditional-parentheses` (omit a standalone output's whole
 `if/else` result wrapper). Single variable reads, including standalone `lookup`,
 `query` and `q` calls, may remain ungrouped; other Ansible condition fields and
 generic boolean outputs gain no grouping
 requirement. Consumed conditional results retain their needed parentheses.
-See [the two scoped conventions](boolean-grouping-research.md) for examples,
+Root conjunctions receive only the list diagnostic; each suggested item obeys
+the parentheses convention. Conjunctions beneath other operators, calls or
+conditional results remain intact. Hints preserve decoded literal contents
+with YAML scalar quoting and never offer automatic edits.
+See [the scoped conventions](boolean-grouping-research.md) for examples,
 source observations and exclusions. Historical acceptance results describe
 their recorded rule snapshots; these additions do not revise those results.
 

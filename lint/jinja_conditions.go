@@ -1,15 +1,18 @@
 package lint
 
 // regionSyntax describes operator roles at one delimiter depth. If/Else are
-// token indices, with -1 for absent operators. Calls contains postfix call
+// token indices, with -1 for absent operators. And records conjunction indices;
+// Or marks a disjunction at this depth. Calls contains postfix call
 // openings, distinguishing keyword-named callees from boolean grouping.
 type regionSyntax struct {
 	If, Else int
+	And      []int
+	Or       bool
 	Calls    map[int]bool
 }
 
 // inspectRegion tracks operand and name-only grammar positions before treating
-// an if/else spelling as an operator. Attribute/filter/test names are operands;
+// a conditional or boolean keyword spelling as an operator. Attribute/filter/test names are operands;
 // a conditional if can only follow a complete value. Else is optional in Jinja.
 // The last if before the first else owns the region: repeated omitted-else
 // conditionals associate to the left, while an else value associates to the right.
@@ -55,7 +58,13 @@ func inspectRegion(tokens []Token, lo, hi int) regionSyntax {
 					syntax.Else = i
 					return syntax
 				}
-			case "and", "or", "in":
+			case "and":
+				syntax.And = append(syntax.And, i)
+				operand = true
+			case "or":
+				syntax.Or = true
+				operand = true
+			case "in":
 				operand = true
 			case "not":
 				if i+1 < hi && tokens[i+1].Text == "in" {
@@ -68,6 +77,7 @@ func inspectRegion(tokens []Token, lo, hi int) regionSyntax {
 				// A comprehension/filter or statement binding is not a conditional
 				// expression. Its nested delimited expressions are visited separately.
 				syntax.If = -1
+				syntax.And = nil
 				return syntax
 			}
 			continue

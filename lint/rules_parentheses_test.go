@@ -9,7 +9,7 @@ import (
 )
 
 func TestWhenParenthesesConditions(t *testing.T) {
-	for _, condition := range []string{"value is defined", "not enabled", "value | bool", "items | length > 0", "a == b", "a and b", "(a) and (b)", "not (a or b)", "values[index + 1]", "values[lookup('vars', 'key')]", "values[key | lower]"} {
+	for _, condition := range []string{"value is defined", "not enabled", "value | bool", "items | length > 0", "a == b", "a or b", "(a) or (b)", "not (a or b)", "values[index + 1]", "values[lookup('vars', 'key')]", "values[key | lower]"} {
 		t.Run(condition, func(t *testing.T) {
 			for _, prefix := range []string{"  when: ", "  when:\n    - "} {
 				input := "- name: Example\n  ansible.builtin.debug: {msg: ok}\n" + prefix + condition + "\n"
@@ -32,36 +32,36 @@ func TestWhenParenthesesConditions(t *testing.T) {
 }
 
 func TestWhenParenthesesStructuralScope(t *testing.T) {
-	task := "- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: a and b\n"
+	task := "- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: a or b\n"
 	for _, path := range []string{"tasks/main.yml", "roles/example/handlers/nested/main.yml", "resources/tasks/example.yml"} {
-		assertAnsible(t, path, task, "ansible-when-parentheses", "a and b", "(a and b)")
+		assertAnsible(t, path, task, "ansible-when-parentheses", "a or b", "(a or b)")
 		for _, branch := range []string{"block", "rescue", "always"} {
 			input := "- name: Parent\n  " + branch + ":\n" + indentText(task, 4)
-			assertAnsible(t, path, input, "ansible-when-parentheses", "a and b", "(a and b)")
+			assertAnsible(t, path, input, "ansible-when-parentheses", "a or b", "(a or b)")
 		}
 	}
 	for _, key := range []string{"pre_tasks", "tasks", "post_tasks", "handlers"} {
-		assertAnsible(t, "saltbox.yml", "- hosts: all\n  "+key+":\n"+indentText(task, 4), "ansible-when-parentheses", "a and b", "(a and b)")
+		assertAnsible(t, "saltbox.yml", "- hosts: all\n  "+key+":\n"+indentText(task, 4), "ansible-when-parentheses", "a or b", "(a or b)")
 	}
 	for _, input := range []string{
-		"- name: Parent\n  block: []\n  when: a and b\n",
-		"- name: Include\n  ansible.builtin.include_role:\n    name: example\n    apply:\n      when: a and b\n",
-		"- name: Include\n  ansible.builtin.include_tasks: other.yml\n  args:\n    apply:\n      when: a and b\n",
+		"- name: Parent\n  block: []\n  when: a or b\n",
+		"- name: Include\n  ansible.builtin.include_role:\n    name: example\n    apply:\n      when: a or b\n",
+		"- name: Include\n  ansible.builtin.include_tasks: other.yml\n  args:\n    apply:\n      when: a or b\n",
 	} {
-		assertAnsible(t, "tasks/main.yml", input, "ansible-when-parentheses", "a and b", "(a and b)")
+		assertAnsible(t, "tasks/main.yml", input, "ansible-when-parentheses", "a or b", "(a or b)")
 	}
-	assertAnsible(t, "saltbox.yml", "- hosts: all\n  roles:\n    - role: example\n      when: a and b\n", "ansible-when-parentheses", "a and b", "(a and b)")
+	assertAnsible(t, "saltbox.yml", "- hosts: all\n  roles:\n    - role: example\n      when: a or b\n", "ansible-when-parentheses", "a or b", "(a or b)")
 	for _, input := range []string{
-		"- name: Example\n  ansible.builtin.assert:\n    that: [a and b]\n  changed_when: a and b\n  failed_when: a and b\n  until: a and b\n",
-		"- name: Example\n  ansible.builtin.set_fact:\n    payload: {when: a and b, apply: {when: a and b}}\n  vars:\n    when: a and b\n",
-		"- name: Example\n  ansible.builtin.debug:\n    msg: '{{ a and b }} {{ a if b and c else d }} {% if a and b %}yes{% endif %}'\n",
+		"- name: Example\n  ansible.builtin.assert:\n    that: [a or b]\n  changed_when: a or b\n  failed_when: a or b\n  until: a or b\n",
+		"- name: Example\n  ansible.builtin.set_fact:\n    payload: {when: a or b, apply: {when: a or b}}\n  vars:\n    when: a or b\n",
+		"- name: Example\n  ansible.builtin.debug:\n    msg: '{{ a or b }} {{ a if b and c else d }} {% if a or b %}yes{% endif %}'\n",
 	} {
 		if ds := ansibleDiagnostics(t, "tasks/main.yml", input, "ansible-when-parentheses"); len(ds) != 0 {
 			t.Fatal(ds)
 		}
 	}
 	for _, path := range []string{"vars.yml", "roles/example/defaults/main.yml", "roles/example/files/settings.yml"} {
-		if ds := ansibleDiagnostics(t, path, "payload: {when: a and b}\n", "ansible-when-parentheses"); len(ds) != 0 {
+		if ds := ansibleDiagnostics(t, path, "payload: {when: a or b}\n", "ansible-when-parentheses"); len(ds) != 0 {
 			t.Fatal(ds)
 		}
 	}
@@ -109,11 +109,11 @@ func TestParenthesesSourcePositionsAndSelection(t *testing.T) {
 		path, input, id, span string
 		line, column          int
 	}{
-		{"tasks/main.yml", "- name: Éxample\r\n  ansible.builtin.debug: {msg: ok}\r\n  when: >-\r\n    café and\r\n    enabled\r\n", "ansible-when-parentheses", "café and\r\n    enabled", 4, 5},
+		{"tasks/main.yml", "- name: Éxample\r\n  ansible.builtin.debug: {msg: ok}\r\n  when: >-\r\n    café or\r\n    enabled\r\n", "ansible-when-parentheses", "café or\r\n    enabled", 4, 5},
 		{"tasks/main.yml", "- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: 'café == ''oui'''\n", "ansible-when-parentheses", "café == ''oui''", 3, 10},
 		{"vars.yml", "value: >-\r\n  {{ (café\r\n      if enabled\r\n      else other) }}\r\n", "jinja-redundant-conditional-parentheses", "(", 2, 6},
 	} {
-		p := ansibleProject(t, "saltbox", map[string]string{tc.path: tc.input, "roles/other/tasks/main.yml": "- name: Example\n  ansible.builtin.debug: {msg: '{{ (a if c else b) }}'}\n  when: a and b\n"})
+		p := ansibleProject(t, "saltbox", map[string]string{tc.path: tc.input, "roles/other/tasks/main.yml": "- name: Example\n  ansible.builtin.debug: {msg: '{{ (a if c else b) }}'}\n  when: a or b\n"})
 		rules := dockerRules("ansible-when-parentheses", "jinja-redundant-conditional-parentheses")
 		full := Analyze(p, rules)
 		p.Selected = map[string]bool{tc.path: true}
@@ -221,7 +221,7 @@ func TestWhenParenthesesDirectLookupReads(t *testing.T) {
 	for _, condition := range []string{
 		"not lookup('vars', 'flag')", "lookup('vars', 'flag') | bool",
 		"lookup('vars', 'flag') is defined", "lookup('vars', 'flag') == expected",
-		"lookup('vars', 'flag') and enabled", "enabled or query('vars', 'flag')",
+		"lookup('vars', 'flag') or enabled", "enabled or query('vars', 'flag')",
 		"q('vars', 'flag') | length > 0", "lookup('vars', 'flag') or lookup('vars', 'other')",
 		"lookup('vars', 'flag')[0]", "obj.lookup('vars', 'flag')",
 		"ansible.builtin.lookup('vars', 'flag')", "dict(value=lookup('vars', 'flag'))",

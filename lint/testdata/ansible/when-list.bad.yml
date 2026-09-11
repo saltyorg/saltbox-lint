@@ -1,0 +1,10 @@
+- name: Check readiness
+  ansible.builtin.debug:
+    msg: ready
+  when: (remote_docker_controller_service_running is defined) and remote_docker_controller_service_running
+- name: Check grouped readiness
+  ansible.builtin.debug:
+    msg: ready
+  when:
+    - (a and (b and c))
+    - lookup('vars', flag_name) and (other is defined)

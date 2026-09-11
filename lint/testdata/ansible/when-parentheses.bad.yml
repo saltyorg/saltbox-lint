@@ -4,6 +4,6 @@
   when:
     - value is defined
     - value | bool
-    - (a) and (b)
+    - (a) or (b)
     - values[index + 1]
     - lookup('role_var', '_metrics_enabled', role='traefik') | bool

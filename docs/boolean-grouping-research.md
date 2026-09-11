@@ -1,16 +1,49 @@
-# Scoped parentheses conventions
+# Scoped when and parentheses conventions
 
-These are two separate formatting policies shared by Saltbox and Sandbox.
+These are three separate formatting policies shared by Saltbox and Sandbox.
 The observations below were checked read-only on 2026-09-11 against Saltbox
 HEAD `a243b198eb32ffe39f6f85afc34e35d9632fe0b1` and its working tree.
 `inventories/group_vars/all.yml`, `roles/arr_db/defaults/main.yml`, and
 `roles/gluetun/defaults/main.yml` already had local changes; references to those
 files describe working-tree bytes, not an unmodified HEAD snapshot.
 
-## When-only convention
+## When-only conventions
+
+`ansible-when-list` requires separate block-list items when a scalar `when`
+condition or an existing list item has logical `and` as its root operation.
+Outer conjunction groups are removed and nested conjunctions are flattened:
+`a and (b and c)` becomes three items in the same order. This preserves guard
+conditions before the expressions they protect:
+
+```yaml
+- name: Check remote controller readiness
+  ansible.builtin.debug:
+    msg: ready
+  when:
+    - (remote_docker_controller_service_running is defined)
+    - remote_docker_controller_service_running
+```
+
+The scalar form `(remote_docker_controller_service_running is defined) and
+remote_docker_controller_service_running`, observed in
+[Remote tasks:66](/srv/git/saltbox/roles/remote/tasks/main.yml:66), needs this list.
+`a and (b or c)` becomes `a` and `(b or c)` list items. `(a) and (b)` becomes
+`(a)` and `(b)`, preserving already-valid operand groups.
+
+Only root conjunctions split. `(a and b) or c`, `a and b or c`,
+`not (a and b)`, `(a and b) | bool`, `(a and b) == c`,
+`lookup('vars', a and b)` and conditional-result branches stay together;
+apply the parentheses convention below to each indivisible condition.
+There is no distribution through `or`, no reordering, and no runtime evaluation.
+Strings and attribute/filter/test names spelling `and` or `or` are not operators.
+Each finding includes a YAML-valid block-list suggestion using decoded operand
+text and appropriate scalar quoting. Preserve other existing list items when
+applying the hint.
 
 `ansible-when-parentheses` requires an outer round-parenthesis pair around the
-complete `when` condition unless it is a single variable read. This applies
+complete indivisible `when` condition unless it is a single variable read.
+A root conjunction belongs to `ansible-when-list` and receives no competing
+whole-condition parentheses finding. This applies
 to each YAML list item independently. Direct field/item access and standalone
 `lookup(...)`, `query(...)`, and `q(...)` calls are variable reads. The lookup
 arguments do not affect this classification. Negation, operators, tests and
@@ -31,7 +64,8 @@ Already-grouped references and inner precedence groups remain valid.
     - (value | bool)
     - (items | length > 0)
     - (a == b)
-    - (a and (b or c))
+    - a
+    - (b or c)
     - lookup('role_var', '_metrics_enabled', role='traefik')
     - (lookup('vars', 'flag') | bool)
     - (values[index + 1])
@@ -42,7 +76,7 @@ is valid without grouping. Qualified plugin names such as
 `lookup('ansible.builtin.vars', 'flag')` are also accepted. Dotted function
 names are not recognized as lookup entrypoints by the shared call analysis.
 
-The pair must enclose the entire item: `(a) and (b)` needs `((a) and (b))`.
+The pair must enclose the entire indivisible item: `(a) or (b)` needs `((a) or (b))`.
 Native YAML boolean `when` values also need `(true)` or `(false)`, including
 list items and explicitly tagged booleans. Other non-string values are outside
 this formatting rule. Unsafe values, unresolved aliases, template-dependent
@@ -57,13 +91,13 @@ Actual consumer examples show the intended boundary:
 | [Clone Git Repo:30](/srv/git/saltbox/resources/tasks/git/clone_git_repo.yml:30) | `_git_repo_dest_stat.stat.exists` | Already valid list item. |
 | [Add DNS Record:19](/srv/git/saltbox/resources/roles/dns/tasks/cloudflare/subtasks/add_dns_record.yml:19) | `dns_proxy \| bool` | `(dns_proxy \| bool)` |
 | [Add DNS Record:17](/srv/git/saltbox/resources/roles/dns/tasks/cloudflare/subtasks/add_dns_record.yml:17) | `dns_record not in ['@', dns_zone]` | `(dns_record not in ['@', dns_zone])` |
-| [Stop Saltbox Docker Containers:19](/srv/git/saltbox/resources/tasks/docker/stop_saltbox_docker_containers.yml:19) | `stop_docker_service_running and stop_docker_containers_docker_controller_service_running` | Enclose the entire conjunction. |
+| [Stop Saltbox Docker Containers:19](/srv/git/saltbox/resources/tasks/docker/stop_saltbox_docker_containers.yml:19) | `stop_docker_service_running and stop_docker_containers_docker_controller_service_running` | Use two block-list items in the same order. |
 
 Only structural Ansible `when` owners participate: tasks, handlers, blocks,
 include `apply` mappings, and play/role entries recognized by task analysis.
 `changed_when`, `failed_when`, `until`, `assert.that`, payload keys named `when`,
 inline Jinja conditions, statement `if`/`elif`, and boolean outputs/defaults do
-not acquire a grouping requirement from this policy.
+not acquire list or grouping requirements from these when policies.
 
 ## Standalone conditional-result parentheses
 
@@ -75,8 +109,8 @@ standalone output's whole `if/else` result:
 ```
 
 Its hint is `{{ a if condition else b }}`. It removes no condition or branch
-pairs and imposes no grouping convention on the condition. Both new rules are
-diagnostic-only; neither offers an automatic fix.
+pairs and imposes no grouping convention on the condition. All three rules are
+diagnostic-only; none offers an automatic fix.
 
 The read-only source audit observed three standalone whole-result wrappers:
 [HTTP middleware:292](/srv/git/saltbox/inventories/group_vars/all.yml:292),

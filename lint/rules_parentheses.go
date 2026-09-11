@@ -56,13 +56,17 @@ func checkWhenParentheses(_ *Project, s *Source) []Diagnostic {
 		if e.Kind != "implicit" || !e.Complete || !nodes[e.node] || kind != "string" || len(e.Tokens) == 0 {
 			continue
 		}
-		if len(stripGrouping(e.Tokens)) != len(e.Tokens) || directVariableReference(e.Tokens) || standaloneWhenLookup(e) {
+		if len(rootConjunction(e.Tokens)) > 0 || whenConditionGroupedOrRead(e) {
 			continue
 		}
 		span := Span{e.Tokens[0].Span.Start, e.Tokens[len(e.Tokens)-1].Span.End}
 		ds = append(ds, ansibleDiagnostic(s, "ansible-when-parentheses", span, "nontrivial when condition needs enclosing parentheses", "Use ("+strings.TrimSpace(e.text)+") around the complete when condition."))
 	}
 	return ds
+}
+
+func whenConditionGroupedOrRead(e Expression) bool {
+	return len(stripGrouping(e.Tokens)) != len(e.Tokens) || directVariableReference(e.Tokens) || standaloneWhenLookup(e)
 }
 
 // A standalone lookup result is one value read regardless of its arguments.
