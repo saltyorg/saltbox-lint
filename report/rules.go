@@ -54,7 +54,7 @@ func RenderRule(w io.Writer, rule lint.Rule, opts HumanOptions) error {
 		b.WriteString("\n\n")
 	}
 	output := strings.TrimRight(b.String(), "\n") + "\n"
-	_, err = io.WriteString(w, output)
+	_, err = io.WriteString(r.output, output)
 	return err
 }
 

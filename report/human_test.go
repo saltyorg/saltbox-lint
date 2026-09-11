@@ -243,7 +243,7 @@ func TestHumanReportRendersYAMLSyntaxDiagnostics(t *testing.T) {
 	if err := Render(&out, &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 1}}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "yaml-syntax") || !strings.Contains(out.String(), "value: [") {
+	if !strings.Contains(out.String(), "yaml-syntax") || !strings.Contains(out.String(), "sequence end") || !strings.Contains(out.String(), "token") || !strings.Contains(out.String(), ": [") {
 		t.Fatalf("syntax diagnostic was not rendered:\n%s", &out)
 	}
 }

@@ -1,8 +1,8 @@
 package report
 
 import (
-	"github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/glamour/v2/ansi"
+	"charm.land/lipgloss/v2"
 )
 
 type humanStyles struct {
@@ -10,15 +10,15 @@ type humanStyles struct {
 	rule, label, fix             lipgloss.Style
 }
 
-func newHumanStyles(renderer *lipgloss.Renderer) humanStyles {
+func newHumanStyles() humanStyles {
 	return humanStyles{
-		error:   renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("1")),
-		warning: renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("3")),
-		notice:  renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
-		info:    renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("4")),
-		rule:    renderer.NewStyle().Bold(true),
-		label:   renderer.NewStyle().Bold(true),
-		fix:     renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("2")),
+		error:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1")),
+		warning: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3")),
+		notice:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
+		info:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4")),
+		rule:    lipgloss.NewStyle().Bold(true),
+		label:   lipgloss.NewStyle().Bold(true),
+		fix:     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2")),
 	}
 }
 

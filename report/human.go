@@ -6,15 +6,15 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/glamour/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/saltyorg/saltbox-lint/lint"
 )
 
 const (
 	defaultHumanWidth = 80
 	maximumHumanWidth = 100
+	minimumTextWidth  = 20
 )
 
 // ColorProfile describes the terminal color capability already resolved by
@@ -40,6 +40,7 @@ type humanRenderer struct {
 	width    int
 	styles   humanStyles
 	markdown *glamour.TermRenderer
+	output   io.Writer
 	lines    map[string][]sourceLine
 }
 
@@ -64,7 +65,7 @@ func human(w io.Writer, p *lint.Project, ds []Diagnostic, opts HumanOptions) err
 	b.WriteString("\n")
 	b.WriteString(r.summary(ds))
 	b.WriteByte('\n')
-	_, err = io.WriteString(w, b.String())
+	_, err = io.WriteString(r.output, b.String())
 	return err
 }
 
@@ -74,32 +75,28 @@ func newHumanRenderer(w io.Writer, p *lint.Project, opts HumanOptions) (*humanRe
 		width = defaultHumanWidth
 	}
 	width = min(width, maximumHumanWidth)
-	profile := termenvProfile(opts.ColorProfile)
-	lip := lipgloss.NewRenderer(w, termenv.WithProfile(profile))
-	lip.SetColorProfile(profile)
-	lip.SetHasDarkBackground(false)
 	markdown, err := glamour.NewTermRenderer(
 		glamour.WithStyles(markdownStyles()),
-		glamour.WithColorProfile(profile),
-		glamour.WithWordWrap(width),
+		glamour.WithWordWrap(max(width, minimumTextWidth)),
 		glamour.WithPreservedNewLines(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create human markdown renderer: %w", err)
 	}
-	return &humanRenderer{project: p, width: width, styles: newHumanStyles(lip), markdown: markdown, lines: make(map[string][]sourceLine)}, nil
+	output := &colorprofile.Writer{Forward: w, Profile: outputProfile(opts.ColorProfile)}
+	return &humanRenderer{project: p, width: width, styles: newHumanStyles(), markdown: markdown, output: output, lines: make(map[string][]sourceLine)}, nil
 }
 
-func termenvProfile(profile ColorProfile) termenv.Profile {
+func outputProfile(profile ColorProfile) colorprofile.Profile {
 	switch profile {
 	case ColorANSI:
-		return termenv.ANSI
+		return colorprofile.ANSI
 	case ColorANSI256:
-		return termenv.ANSI256
+		return colorprofile.ANSI256
 	case ColorTrueColor:
-		return termenv.TrueColor
+		return colorprofile.TrueColor
 	default:
-		return termenv.Ascii
+		return colorprofile.NoTTY
 	}
 }
 
