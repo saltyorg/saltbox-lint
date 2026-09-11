@@ -184,6 +184,7 @@ func traefikEndpointLiteral(text string) (string, bool) {
 		if start < 0 {
 			return string(append(literal, text...)), true
 		}
+		segmentStart := len(literal)
 		literal = append(literal, text[:start]...)
 		text = text[start:]
 		if strings.HasPrefix(text, "{{") || strings.HasPrefix(text, "{%") {
@@ -200,7 +201,10 @@ func traefikEndpointLiteral(text string) (string, bool) {
 		}
 		end += 2
 		if strings.HasPrefix(text, "{#-") {
-			literal = bytes.TrimRightFunc(literal, unicode.IsSpace)
+			// Jinja trims only the immediately preceding literal segment,
+			// never whitespace across an earlier comment delimiter.
+			segment := bytes.TrimRightFunc(literal[segmentStart:], unicode.IsSpace)
+			literal = literal[:segmentStart+len(segment)]
 		}
 		trimRight := text[end-1] == '-'
 		text = text[end+2:]
