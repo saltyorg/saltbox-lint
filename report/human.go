@@ -14,7 +14,6 @@ import (
 const (
 	defaultHumanWidth = 80
 	maximumHumanWidth = 100
-	minimumTextWidth  = 20
 )
 
 // ColorProfile describes the terminal color capability already resolved by
@@ -77,7 +76,7 @@ func newHumanRenderer(w io.Writer, p *lint.Project, opts HumanOptions) (*humanRe
 	width = min(width, maximumHumanWidth)
 	markdown, err := glamour.NewTermRenderer(
 		glamour.WithStyles(markdownStyles()),
-		glamour.WithWordWrap(max(width, minimumTextWidth)),
+		glamour.WithWordWrap(width),
 		glamour.WithPreservedNewLines(),
 	)
 	if err != nil {

@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 
@@ -276,10 +277,38 @@ func TestHumanReportRendersYAMLSyntaxDiagnostics(t *testing.T) {
 		t.Fatal("fixture should be invalid YAML")
 	}
 	var out bytes.Buffer
-	if err := Render(&out, &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 1}}); err != nil {
+	if err := Render(&out, &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 20}}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "yaml-syntax") || !strings.Contains(out.String(), "sequence end") || !strings.Contains(out.String(), "token") || !strings.Contains(out.String(), ": [") {
 		t.Fatalf("syntax diagnostic was not rendered:\n%s", &out)
+	}
+}
+
+func TestHumanReportHonorsNarrowProseWidth(t *testing.T) {
+	source, _ := lint.Parse("a.yml", []byte("value: bad\n"))
+	project := &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}
+	diagnostics := []lint.Diagnostic{{Path: source.Path, RuleID: "narrow", Severity: "error", Message: "alpha beta gamma", Span: lint.Span{Start: 7, End: 10}}}
+	var out bytes.Buffer
+	if err := Render(&out, project, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 8}}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out.String(), "\n")
+	location := slices.Index(lines, "a.yml:1:8")
+	if location < 0 {
+		t.Fatalf("location missing:\n%s", &out)
+	}
+	end := slices.Index(lines[location+1:], "")
+	if end < 0 {
+		t.Fatalf("prose terminator missing:\n%s", &out)
+	}
+	prose := lines[location+1 : location+1+end]
+	if len(prose) < 2 {
+		t.Fatalf("narrow prose did not wrap:\n%s", &out)
+	}
+	for _, line := range prose {
+		if width := charmansi.StringWidth(line); width > 8 {
+			t.Fatalf("prose width = %d, want <= 8: %q", width, line)
+		}
 	}
 }
