@@ -85,6 +85,12 @@ func directVariableReference(tokens []Token) bool {
 			}
 			key := tokens[i+1 : end]
 			literal := len(key) == 1 && (key[0].Kind == "string" || key[0].Kind == "number")
+			if len(key) == 1 && key[0].Kind == "name" {
+				switch key[0].Text {
+				case "true", "false", "none", "True", "False", "None":
+					literal = true
+				}
+			}
 			if !literal && !directVariableReference(key) {
 				return false
 			}

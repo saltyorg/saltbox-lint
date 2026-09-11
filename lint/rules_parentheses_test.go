@@ -177,3 +177,22 @@ func TestWhenParenthesesNativeBooleans(t *testing.T) {
 		}
 	}
 }
+
+func TestWhenParenthesesConstantItemKeys(t *testing.T) {
+	for _, key := range []string{"true", "false", "none", "True", "False", "None"} {
+		for _, condition := range []string{"values[" + key + "]", "values[" + key + "].enabled", "values[keys[" + key + "]]"} {
+			t.Run(condition, func(t *testing.T) {
+				for _, prefix := range []string{"  when: ", "  when:\n    - "} {
+					input := "- name: Example\n  ansible.builtin.debug: {msg: ok}\n" + prefix + condition + "\n"
+					if ds := ansibleDiagnostics(t, "tasks/main.yml", input, "ansible-when-parentheses"); len(ds) != 0 {
+						t.Fatal(ds)
+					}
+				}
+			})
+		}
+		for _, condition := range []string{"values[" + key + " or fallback]", "values[keys[" + key + "] + 1]"} {
+			input := "- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: " + condition + "\n"
+			assertAnsible(t, "tasks/main.yml", input, "ansible-when-parentheses", condition, "("+condition+")")
+		}
+	}
+}
