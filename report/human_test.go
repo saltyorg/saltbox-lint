@@ -240,6 +240,31 @@ func TestHumanSourceExcerptUsesOneViewportForAdjacentIndentation(t *testing.T) {
 	}
 }
 
+func TestHumanSourceExcerptLabelsMarkedSpanOutsideSharedViewport(t *testing.T) {
+	first := strings.Repeat("x", 50) + "START"
+	second := "END" + strings.Repeat("y", 10)
+	data := first + "\n" + second + "\n"
+	source, _ := lint.Parse("a.yml", []byte(data))
+	start := strings.Index(data, "START")
+	end := strings.Index(data, "END") + len("END")
+	project := &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}
+	diagnostics := []lint.Diagnostic{{Path: source.Path, RuleID: "offscreen", Severity: "error", Message: "multiline span", Span: lint.Span{Start: start, End: end}}}
+
+	var out bytes.Buffer
+	if err := Render(&out, project, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 20}}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out.String(), "\n")
+	finalLine := slices.Index(lines, "2 | …")
+	if finalLine < 0 || finalLine+1 >= len(lines) {
+		t.Fatalf("offscreen final source line missing:\n%s", &out)
+	}
+	marker := lines[finalLine+1]
+	if strings.Contains(marker, "^") || !strings.Contains(marker, "< marked span") {
+		t.Fatalf("offscreen span received a source caret instead of an explicit label: %q\n%s", marker, &out)
+	}
+}
+
 func TestHumanReportSanitizesTerminalControlsAndKeepsOrder(t *testing.T) {
 	path := "a\x1b[31m.yml"
 	source := &lint.Source{Path: path, Data: []byte("value: \x1b]8;;bad\aevil\x1b]8;;\a\n")}

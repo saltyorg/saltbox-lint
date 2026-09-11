@@ -24,9 +24,11 @@ type displayCluster struct {
 }
 
 type croppedLine struct {
-	text        string
-	start       int
-	left, right bool
+	text                     string
+	start                    int
+	left, right              bool
+	visibleStart, visibleEnd int
+	hasVisible               bool
 }
 
 type sourceViewport struct {
@@ -94,23 +96,41 @@ func (r *humanRenderer) renderExcerpt(b *strings.Builder, location Location) {
 		cropped := cropDisplay(line, viewport)
 		fmt.Fprintf(b, "%*d | %s\n", digits, index, cropped.text)
 		if marked {
-			markerStart = max(markerStart, cropped.start) - cropped.start
-			markerEnd = max(markerEnd, cropped.start) - cropped.start
+			visibleStart, visibleEnd, visible := cropped.visibleMarker(markerStart, markerEnd)
+			if !visible {
+				direction := "marked span >"
+				if markerEnd <= cropped.start || (cropped.hasVisible && markerEnd <= cropped.visibleStart) {
+					direction = "< marked span"
+				}
+				fmt.Fprintf(b, "%*s | %s\n", digits, "", direction)
+				previous = index
+				continue
+			}
+			markerStart = visibleStart - cropped.start
+			markerEnd = visibleEnd - cropped.start
 			if cropped.left {
 				markerStart++
 				markerEnd++
 			}
-			displayWidth := charmansi.StringWidth(cropped.text)
-			sourceEnd := displayWidth
-			if cropped.right {
-				sourceEnd--
-			}
-			markerStart = clamp(markerStart, 0, sourceEnd)
-			markerEnd = clamp(markerEnd, markerStart+1, max(markerStart+1, sourceEnd))
 			fmt.Fprintf(b, "%*s | %s%s\n", digits, "", strings.Repeat(" ", markerStart), strings.Repeat("^", markerEnd-markerStart))
 		}
 		previous = index
 	}
+}
+
+func (line croppedLine) visibleMarker(start, end int) (int, int, bool) {
+	if !line.hasVisible {
+		return 0, 0, false
+	}
+	visibleStart := max(start, line.visibleStart)
+	visibleEnd := min(end, line.visibleEnd)
+	if visibleStart < visibleEnd {
+		return visibleStart, visibleEnd, true
+	}
+	if start == line.visibleEnd && !line.right {
+		return start, start + 1, true
+	}
+	return 0, 0, false
 }
 
 func excerptViewport(lines []sourceLine, indexes []int, width, focus, focusLine int) sourceViewport {
@@ -188,11 +208,11 @@ func displayOffset(line sourceLine, absolute int) int {
 func cropDisplay(line sourceLine, viewport sourceViewport) croppedLine {
 	clusters := displayClusters(line.text)
 	if len(clusters) == 0 {
-		return croppedLine{start: viewport.start}
+		return croppedLine{start: viewport.start, hasVisible: viewport.start == 0}
 	}
 	total := clusters[len(clusters)-1].cellEnd
 	if viewport.start == 0 && total <= viewport.end {
-		return croppedLine{text: joinClusters(clusters)}
+		return croppedLine{text: joinClusters(clusters), visibleEnd: total, hasVisible: true}
 	}
 	selected := make([]displayCluster, 0, len(clusters))
 	for _, cluster := range clusters {
@@ -214,7 +234,13 @@ func cropDisplay(line sourceLine, viewport sourceViewport) croppedLine {
 	if right {
 		b.WriteRune('…')
 	}
-	return croppedLine{text: b.String(), start: viewport.start, left: left, right: right}
+	cropped := croppedLine{text: b.String(), start: viewport.start, left: left, right: right}
+	if len(selected) > 0 {
+		cropped.visibleStart = selected[0].cellStart
+		cropped.visibleEnd = selected[len(selected)-1].cellEnd
+		cropped.hasVisible = true
+	}
+	return cropped
 }
 
 func displayWidth(line sourceLine) int {
