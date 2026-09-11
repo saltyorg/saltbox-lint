@@ -1,0 +1,16 @@
+- name: Read direct flags
+  ansible.builtin.debug:
+    msg: ok
+  when:
+    - enabled
+    - result.changed
+    - values[item.key]
+    - (value is defined)
+    - (not (a or b))
+    - ((a) and (b))
+- name: Preserve other conditions
+  ansible.builtin.assert:
+    that: value is defined
+  changed_when: a and b
+  failed_when: value is undefined
+  until: result is succeeded

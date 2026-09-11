@@ -3,10 +3,21 @@
 ## Migration catalog: all 40 policies into 29 rules
 
 The original migration contains 29 policies. The standalone catalog now also
-includes `section-spacing`, bringing the total to 30. This new file-level rule
+includes `section-spacing` and two scoped parentheses rules, bringing the total
+to 32. The file-level `section-spacing` rule
 requires a blank line between genuine three-line section banners and variables,
 including custom titles. It safely inserts missing separators with `check --fix`
 and preserves existing spacing and attached variable documentation.
+
+The two diagnostic-only additions are `ansible-when-parentheses` (group each
+nontrivial structural `when` condition, including literal booleans) and
+`jinja-redundant-conditional-parentheses` (omit a standalone output's whole
+`if/else` result wrapper). Direct variable references may remain ungrouped;
+other Ansible condition fields and generic boolean outputs gain no grouping
+requirement. Consumed conditional results retain their needed parentheses.
+See [the two scoped conventions](boolean-grouping-research.md) for examples,
+source observations and exclusions. Historical acceptance results describe
+their recorded rule snapshots; these additions do not revise those results.
 
 This table records the accepted migration design. Runtime rule metadata in `lint.Rules()` is the
 authority for the implemented catalog. File scope includes source

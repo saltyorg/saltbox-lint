@@ -1,0 +1,5 @@
+standalone: "{{ a if condition else b }}"
+filtered: "{{ (a if condition else b) | string }}"
+addend: "{{ (a if condition else b) + suffix }}"
+argument: "{{ dict(value=(a if condition else b)) }}"
+precedence: "{{ a if b and (c or d) else e }}"

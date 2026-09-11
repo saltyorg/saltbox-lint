@@ -1,0 +1,5 @@
+standalone: "{{ (a if condition else b) }}"
+multiline: >-
+  {{ (a
+      if condition
+      else b) }}

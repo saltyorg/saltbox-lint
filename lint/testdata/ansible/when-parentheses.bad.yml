@@ -1,0 +1,8 @@
+- name: Check nontrivial conditions
+  ansible.builtin.debug:
+    msg: ok
+  when:
+    - value is defined
+    - value | bool
+    - (a) and (b)
+    - values[index + 1]
