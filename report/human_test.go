@@ -203,6 +203,42 @@ func TestHumanSourceExcerptCropsLongLinesAroundFinding(t *testing.T) {
 	}
 }
 
+func TestHumanSourceExcerptUsesOneViewportForAdjacentIndentation(t *testing.T) {
+	first := "key: " + strings.Repeat("x", 40) + "BAD"
+	second := strings.Repeat(" ", 25) + "context"
+	source, _ := lint.Parse("a.yml", []byte(first+"\n"+second+"\n"))
+	start := strings.Index(first, "BAD")
+	project := &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}
+	diagnostics := []lint.Diagnostic{{Path: source.Path, RuleID: "indent", Severity: "error", Message: "bad indentation", Span: lint.Span{Start: start, End: start + len("BAD")}}}
+
+	var out bytes.Buffer
+	if err := Render(&out, project, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 40}}); err != nil {
+		t.Fatal(err)
+	}
+	var firstDisplay, secondDisplay string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, "1 | ") {
+			firstDisplay = strings.TrimPrefix(line, "1 | ")
+		}
+		if strings.Contains(line, "2 | ") {
+			secondDisplay = strings.TrimPrefix(line, "2 | ")
+		}
+	}
+	if !strings.HasPrefix(firstDisplay, "…") || !strings.HasPrefix(secondDisplay, "…") {
+		t.Fatalf("adjacent lines did not use the same cropped origin:\n%s", &out)
+	}
+	firstIndex := strings.Index(firstDisplay, "BAD")
+	secondIndex := strings.Index(secondDisplay, "context")
+	if firstIndex < 0 || secondIndex < 0 {
+		t.Fatalf("cropped lines lost inspected tokens:\n%s", &out)
+	}
+	firstColumn := charmansi.StringWidth(firstDisplay[:firstIndex])
+	secondColumn := charmansi.StringWidth(secondDisplay[:secondIndex])
+	if got, want := firstColumn-secondColumn, strings.Index(first, "BAD")-strings.Index(second, "context"); got != want {
+		t.Fatalf("displayed indentation delta = %d, want %d:\n%s", got, want, &out)
+	}
+}
+
 func TestHumanReportSanitizesTerminalControlsAndKeepsOrder(t *testing.T) {
 	path := "a\x1b[31m.yml"
 	source := &lint.Source{Path: path, Data: []byte("value: \x1b]8;;bad\aevil\x1b]8;;\a\n")}

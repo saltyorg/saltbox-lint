@@ -29,6 +29,10 @@ type croppedLine struct {
 	left, right bool
 }
 
+type sourceViewport struct {
+	start, end int
+}
+
 func (r *humanRenderer) sourceLines(path string) ([]sourceLine, bool) {
 	if lines, ok := r.lines[path]; ok {
 		return lines, true
@@ -79,6 +83,7 @@ func (r *humanRenderer) renderExcerpt(b *strings.Builder, location Location) {
 	indexes := excerptIndexes(startLine, endLine, len(lines))
 	digits := len(fmt.Sprint(indexes[len(indexes)-1]))
 	focus := displayOffset(lines[startLine-1], location.Span.Start)
+	viewport := excerptViewport(lines, indexes, max(4, r.width-digits-3), focus, startLine)
 	previous := -1
 	for _, index := range indexes {
 		if previous >= 0 && index > previous+1 {
@@ -86,7 +91,7 @@ func (r *humanRenderer) renderExcerpt(b *strings.Builder, location Location) {
 		}
 		line := lines[index-1]
 		marked, markerStart, markerEnd := markerForLine(line, location.Span)
-		cropped := cropDisplay(line, max(4, r.width-digits-3), focus, markerStart, markerEnd)
+		cropped := cropDisplay(line, viewport)
 		fmt.Fprintf(b, "%*d | %s\n", digits, index, cropped.text)
 		if marked {
 			markerStart = max(markerStart, cropped.start) - cropped.start
@@ -106,6 +111,21 @@ func (r *humanRenderer) renderExcerpt(b *strings.Builder, location Location) {
 		}
 		previous = index
 	}
+}
+
+func excerptViewport(lines []sourceLine, indexes []int, width, focus, focusLine int) sourceViewport {
+	maximumWidth := 0
+	for _, index := range indexes {
+		maximumWidth = max(maximumWidth, displayWidth(lines[index-1]))
+	}
+	if maximumWidth <= width {
+		return sourceViewport{end: width}
+	}
+	budget := max(1, width-2)
+	focusWidth := displayWidth(lines[focusLine-1])
+	start := max(0, focus-budget/3)
+	start = min(start, max(0, focusWidth-budget))
+	return sourceViewport{start: start, end: start + budget}
 }
 
 func excerptIndexes(start, end, total int) []int {
@@ -165,66 +185,44 @@ func displayOffset(line sourceLine, absolute int) int {
 	return clusters[len(clusters)-1].cellEnd
 }
 
-func cropDisplay(line sourceLine, width, focus, markerStart, markerEnd int) croppedLine {
+func cropDisplay(line sourceLine, viewport sourceViewport) croppedLine {
 	clusters := displayClusters(line.text)
 	if len(clusters) == 0 {
-		return croppedLine{}
+		return croppedLine{start: viewport.start}
 	}
 	total := clusters[len(clusters)-1].cellEnd
-	if total <= width {
+	if viewport.start == 0 && total <= viewport.end {
 		return croppedLine{text: joinClusters(clusters)}
 	}
-	if markerEnd <= markerStart {
-		markerStart = focus
-	}
-	budget := max(1, width-2)
-	start := max(0, markerStart-budget/3)
-	start = min(start, max(0, total-budget))
-	end := min(total, start+budget)
-	left := start > 0
-	right := end < total
-	if !left || !right {
-		budget = max(1, width-1)
-		start = max(0, markerStart-budget/3)
-		start = min(start, max(0, total-budget))
-		end = min(total, start+budget)
-	}
 	selected := make([]displayCluster, 0, len(clusters))
-	actualStart := total
 	for _, cluster := range clusters {
-		if cluster.cellStart < start || cluster.cellEnd > end {
+		if cluster.cellStart < viewport.start || cluster.cellEnd > viewport.end {
 			continue
-		}
-		if len(selected) == 0 {
-			actualStart = cluster.cellStart
 		}
 		selected = append(selected, cluster)
 	}
-	if len(selected) == 0 {
-		for _, cluster := range clusters {
-			if markerStart >= cluster.cellStart && markerStart < cluster.cellEnd {
-				selected = append(selected, cluster)
-				actualStart = cluster.cellStart
-				break
-			}
-		}
-	}
-	if len(selected) == 0 {
-		selected = append(selected, clusters[len(clusters)-1])
-		actualStart = selected[0].cellStart
-	}
-	actualEnd := selected[len(selected)-1].cellEnd
-	left = actualStart > 0
-	right = actualEnd < total
+	left := viewport.start > 0 && total > 0
+	right := total > viewport.end
 	var b strings.Builder
 	if left {
 		b.WriteRune('…')
+	}
+	if len(selected) > 0 {
+		b.WriteString(strings.Repeat(" ", selected[0].cellStart-viewport.start))
 	}
 	b.WriteString(joinClusters(selected))
 	if right {
 		b.WriteRune('…')
 	}
-	return croppedLine{text: b.String(), start: actualStart, left: left, right: right}
+	return croppedLine{text: b.String(), start: viewport.start, left: left, right: right}
+}
+
+func displayWidth(line sourceLine) int {
+	clusters := displayClusters(line.text)
+	if len(clusters) == 0 {
+		return 0
+	}
+	return clusters[len(clusters)-1].cellEnd
 }
 
 func displayClusters(text string) []displayCluster {
