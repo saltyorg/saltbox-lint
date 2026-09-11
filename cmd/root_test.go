@@ -40,7 +40,7 @@ func TestCheckInvocations(t *testing.T) {
 	}{
 		{"clean", []string{"check", clean}, 0, ""},
 		{"default dot", []string{"check"}, 1, "jinja"},
-		{"finding", []string{"check", bad}, 1, "Expected:"},
+		{"finding", []string{"check", bad}, 1, "Fix available:"},
 		{"concise", []string{"check", "--format", "concise", bad}, 1, "error [jinja"},
 		{"root", []string{"check", "--root", root, bad}, 1, "bad.yml:"},
 		{"missing", []string{"check", "missing.yml"}, 2, ""},
@@ -222,12 +222,19 @@ func TestDiffReportsOriginalDiagnosticsOnStderr(t *testing.T) {
 					t.Fatalf("stdout must be empty without fixes: %q", out)
 				}
 				for _, rule := range tt.rules {
-					if !strings.Contains(stderr, "["+rule+"]") {
+					needle := "[" + rule + "]"
+					if format == "human" {
+						needle = "ERROR  " + rule
+					}
+					if !strings.Contains(stderr, needle) {
 						t.Errorf("stderr missing %s: %q", rule, stderr)
 					}
 				}
-				if format == "human" && !strings.Contains(stderr, "Expected:") {
+				if format == "human" && !tt.patch && !strings.Contains(stderr, "Expected:") {
 					t.Errorf("missing human hint: %q", stderr)
+				}
+				if format == "human" && tt.patch && !strings.Contains(stderr, "Fix available:") {
+					t.Errorf("missing human fix availability: %q", stderr)
 				}
 				if format == "concise" && strings.Contains(stderr, "Expected:") {
 					t.Errorf("concise format ignored: %q", stderr)

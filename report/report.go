@@ -13,6 +13,7 @@ type Options struct {
 	Format  string
 	Summary io.Writer
 	GitHub  GitHub
+	Human   HumanOptions
 }
 
 // Render writes diagnostics to w; it never reads or changes source files.
@@ -20,9 +21,9 @@ func Render(w io.Writer, p *lint.Project, ds []lint.Diagnostic, opts Options) er
 	records := diagnostics(p, ds)
 	switch opts.Format {
 	case "", "human":
-		return human(w, p, records, false)
+		return human(w, p, records, opts.Human)
 	case "concise":
-		return human(w, p, records, true)
+		return concise(w, p, records)
 	case "json":
 		return jsonReport(w, records)
 	case "github":
