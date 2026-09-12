@@ -182,18 +182,7 @@ func (s *Source) Position(offset int) Position {
 }
 
 func (s *Source) offset(pos *token.Position) int {
-	if pos == nil || pos.Line < 1 {
-		return 0
-	}
-	if pos.Line > len(s.lineStarts) {
-		return len(s.Data)
-	}
-	offset := s.lineStarts[pos.Line-1]
-	for col := 1; col < pos.Column && offset < len(s.Data) && s.Data[offset] != '\n'; col++ {
-		_, size := utf8.DecodeRune(s.Data[offset:])
-		offset += size
-	}
-	return offset
+	return yamlindex.RuneOffset(string(s.Data), s.lineStarts, pos)
 }
 
 // sourceAdapter keeps parser-library objects out of the shared source model.
@@ -203,62 +192,20 @@ type sourceAdapter struct {
 	originEnds map[*token.Token]int
 }
 
-// The lexer reports rune coordinates, and tags/block folding can also shift
-// those coordinates. Map ordered token text against bytes instead. Double-quote
-// origins normalize Unicode escapes, so those bounds come from raw quote syntax.
-// Only whitespace may occur between tokens; never search past other syntax.
 func (s *sourceAdapter) locateTokens(tokens token.Tokens) error {
-	cursor := 0
-	for _, t := range tokens {
-		if t.Type == token.DoubleQuoteType {
-			span, ok := doubleQuotedSpan(s.Data, cursor)
-			if !ok {
-				return fmt.Errorf("cannot locate double-quoted YAML scalar at byte %d", cursor)
-			}
-			s.spans[t] = span
-			cursor = span.End
-			s.originEnds[t] = cursor
+	locations, err := yamlindex.LocateTokens(string(s.Data), tokens)
+	if err != nil {
+		return err
+	}
+	for i, t := range tokens {
+		if t.Origin == "" && t.Type != token.DoubleQuoteType {
 			continue
 		}
-		if t.Origin == "" {
-			continue
-		}
-		origin := []byte(t.Origin)
-		gap := bytes.Index(s.Data[cursor:], origin)
-		if gap < 0 || len(bytes.TrimSpace(s.Data[cursor:cursor+gap])) != 0 {
-			return fmt.Errorf("cannot locate original YAML token at %v", t.Position)
-		}
-		start := cursor + gap
-		left := len(origin) - len(bytes.TrimLeft(origin, " \t\r\n"))
-		right := len(bytes.TrimRight(origin, " \t\r\n"))
-		s.spans[t] = Span{start + left, start + max(left, right)}
-		cursor = start + len(origin)
-		s.originEnds[t] = cursor
+		location := locations[i]
+		s.spans[t] = Span{location.Start, location.End}
+		s.originEnds[t] = location.OriginEnd
 	}
 	return nil
-}
-
-// doubleQuotedSpan finds boundaries only. The YAML lexer remains responsible
-// for validating escapes and decoding their values. An escaped byte cannot be a
-// closing quote; skipping it handles escaped quotes, backslashes and newlines
-// without interpreting Unicode escapes or relying on normalized token lengths.
-func doubleQuotedSpan(data []byte, cursor int) (Span, bool) {
-	start := cursor
-	for start < len(data) && strings.ContainsRune(" \t\r\n", rune(data[start])) {
-		start++
-	}
-	if start >= len(data) || data[start] != '"' {
-		return Span{}, false
-	}
-	for end := start + 1; end < len(data); end++ {
-		switch data[end] {
-		case '\\':
-			end++
-		case '"':
-			return Span{start, end + 1}, true
-		}
-	}
-	return Span{}, false
 }
 
 func (s *sourceAdapter) tokenSpan(t *token.Token) Span {

@@ -4,10 +4,6 @@
 package yamlindex
 
 import (
-	"fmt"
-	"strings"
-	"unicode/utf8"
-
 	"github.com/goccy/go-yaml/lexer"
 	"github.com/goccy/go-yaml/token"
 )
@@ -31,7 +27,7 @@ func Scan(source string) (*Index, error) { return FromTokens(source, lexer.Token
 // FromTokens snapshots tokens from an existing lexical pass. Call it before
 // parsing, because the parser can insert tokens and change linked token state.
 func FromTokens(source string, tokens token.Tokens) (*Index, error) {
-	spans, err := locate(source, tokens)
+	spans, err := locateTokens(source, tokens, trimmedOrigins)
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +54,8 @@ func FromTokens(source string, tokens token.Tokens) (*Index, error) {
 		}
 		entry := scalar{}
 		if target := targets[i]; target < len(tokens) {
-			entry = spans[target]
-			entry.value = tokens[target].Value
+			location := spans[target]
+			entry = scalar{value: tokens[target].Value, start: location.Start, end: location.End}
 		}
 		index.scalars[position] = entry
 	}
@@ -74,74 +70,4 @@ func (s *Index) Source() string { return s.source }
 func (s *Index) ScalarRange(line, column int, value string) (start, end int, ok bool) {
 	entry, ok := s.scalars[coordinate{line, column}]
 	return entry.start, entry.end, ok && entry.value == value && entry.end > entry.start
-}
-
-func locate(source string, tokens token.Tokens) ([]scalar, error) {
-	spans := make([]scalar, len(tokens))
-	lineStarts := []int{0}
-	for offset, b := range source {
-		if b == '\n' {
-			lineStarts = append(lineStarts, offset+1)
-		}
-	}
-	cursor := 0
-	for i, t := range tokens {
-		if t.Type == token.DoubleQuoteType {
-			start, end, ok := doubleQuotedRange(source, cursor)
-			if !ok {
-				return nil, fmt.Errorf("cannot locate double-quoted YAML scalar at byte %d", cursor)
-			}
-			spans[i] = scalar{start: start, end: end}
-			cursor = end
-			continue
-		}
-		lexeme := strings.Trim(t.Origin, " \t\r\n")
-		if lexeme != "" {
-			gap := strings.Index(source[cursor:], lexeme)
-			if gap < 0 || strings.TrimSpace(source[cursor:cursor+gap]) != "" {
-				return nil, fmt.Errorf("cannot locate original YAML token at %v", t.Position)
-			}
-			start := cursor + gap
-			cursor = start + len(lexeme)
-			spans[i] = scalar{start: start, end: cursor}
-			continue
-		}
-		start := offset(source, lineStarts, t.Position)
-		spans[i] = scalar{start: start, end: start}
-	}
-	return spans, nil
-}
-
-func doubleQuotedRange(source string, cursor int) (int, int, bool) {
-	start := cursor
-	for start < len(source) && strings.ContainsRune(" \t\r\n", rune(source[start])) {
-		start++
-	}
-	if start >= len(source) || source[start] != '"' {
-		return 0, 0, false
-	}
-	for end := start + 1; end < len(source); end++ {
-		switch source[end] {
-		case '\\':
-			end++
-		case '"':
-			return start, end + 1, true
-		}
-	}
-	return 0, 0, false
-}
-
-func offset(source string, lineStarts []int, position *token.Position) int {
-	if position == nil || position.Line < 1 {
-		return 0
-	}
-	if position.Line > len(lineStarts) {
-		return len(source)
-	}
-	start := lineStarts[position.Line-1]
-	for col := 1; col < position.Column && start < len(source) && source[start] != '\n'; col++ {
-		_, size := utf8.DecodeRuneInString(source[start:])
-		start += size
-	}
-	return start
 }

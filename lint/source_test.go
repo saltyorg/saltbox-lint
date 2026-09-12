@@ -388,10 +388,27 @@ func TestRepeatedEscapedAndDecodedQuotedValuesKeepDistinctSpans(t *testing.T) {
 	}
 }
 
-func TestDoubleQuotedBoundsRejectMissingBoundaries(t *testing.T) {
-	for _, data := range []string{`other "later"`, `"unfinished`, `"escaped\"`, " \t\n"} {
-		if span, ok := doubleQuotedSpan([]byte(data), 0); ok || span != (Span{}) {
-			t.Errorf("unverified boundary accepted for %q: %+v", data, span)
+func TestParseRetainsCompleteBlockOriginsAndEmptyFallback(t *testing.T) {
+	for _, tt := range []struct {
+		data  string
+		key   string
+		want  Span
+		value string
+	}{
+		{"x: >-\r\n  same\r\n  same\r\ny: |\n  hi\n\n", "x", Span{3, 23}, "same same"},
+		{"x: >-\r\n  same\r\n  same\r\ny: |\n  hi\n\n", "y", Span{26, 34}, "hi\n"},
+		{"x: |\n\ny:\n", "x", Span{3, 4}, ""},
+	} {
+		source, ds := Parse("input.yml", []byte(tt.data))
+		if len(ds) != 0 {
+			t.Fatal(ds)
+		}
+		n := source.Documents[0].Get(tt.key)
+		if n.Span != tt.want || n.Value != tt.value {
+			t.Errorf("%q: span=%+v value=%q, want %+v %q", tt.key, n.Span, n.Value, tt.want, tt.value)
+		}
+		if string(source.Data) != tt.data {
+			t.Fatal("source bytes changed")
 		}
 	}
 }
