@@ -3,6 +3,7 @@ package lint
 import (
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -26,33 +27,39 @@ func scalarActionArguments(s *Source, n *Node, start int, module string) map[str
 	for _, token := range tokens {
 		token.Start += start
 		token.End += start
-		raw := n.Value[token.Start:token.End]
-		equal := strings.IndexByte(raw, '=')
+		decoded, mapped, ok := decodeActionToken(n.Value[token.Start:token.End], positions[token.Start:token.End])
+		if !ok {
+			// An unsupported escape may affect the key or separator too. No
+			// lower-priority value can reliably stand in for this unknown token.
+			return nil
+		}
+		equal := -1
+		for i := 1; i < len(decoded); i++ {
+			if decoded[i] == '=' && decoded[i-1] != '\\' {
+				equal = i
+				break
+			}
+		}
 		if equal <= 0 {
 			continue
 		}
-		key := raw[:equal]
+		key := strings.TrimSpace(decoded[:equal])
 		// A literal payload or template containing '=' is not a named argument.
-		if !actionArgumentKey(key) || !actionAcceptsArgument(module, key) {
+		if !actionArgumentKey(key) || !actionAcceptsArgument(module, decoded[:equal]) {
 			continue
 		}
-		valueStart, valueEnd := token.Start+equal+1, token.End
-		for valueStart < valueEnd && space(n.Value[valueStart]) {
-			valueStart++
-		}
-		for valueEnd > valueStart && space(n.Value[valueEnd-1]) {
-			valueEnd--
-		}
-		value, mapped, ok := decodeActionValue(n.Value[valueStart:valueEnd], positions[valueStart:valueEnd])
-		// Even an unsupported higher-priority value must hide a lower-priority
-		// mapping/default value; reporting that fallback as fact would fabricate it.
-		arguments[key] = nil
-		if !ok {
-			continue
-		}
-		span := mapSpan(positions, Span{valueStart, valueEnd})
+		value := strings.TrimLeftFunc(decoded[equal+1:], unicode.IsSpace)
+		valueStart := len(decoded) - len(value)
+		value = strings.TrimRightFunc(value, unicode.IsSpace)
+		valueEnd := valueStart + len(value)
+		span := mapSpan(mapped, Span{valueStart, valueEnd})
 		if valueStart == valueEnd {
-			span = Span{positions[valueStart-1].End, positions[valueStart-1].End}
+			span = Span{mapped[valueStart-1].End, mapped[valueStart-1].End}
+		}
+		mapped = mapped[valueStart:valueEnd]
+		if len(value) > 1 && (value[0] == '\'' || value[0] == '"') && value[len(value)-1] == value[0] && value[len(value)-2] != '\\' {
+			value = value[1 : len(value)-1]
+			mapped = mapped[1 : len(mapped)-1]
 		}
 		arguments[key] = &Node{Kind: "string", Value: value, Style: "plain", Tag: n.Tag, Span: span, scalarOrigin: n, scalarMap: mapped}
 	}
@@ -151,10 +158,11 @@ func actionArgumentTokens(text string) ([]Span, bool) {
 	return tokens, true
 }
 
-// Ansible decodes recognized Python escapes before removing one matching pair
-// of quotes. Keep every decoded byte mapped to its complete original escape.
+// Ansible decodes recognized Python escapes across each complete token before
+// finding the separator, trimming, and removing one matching pair of quotes.
+// Keep every decoded byte mapped to its complete original escape.
 // Named Unicode escapes are declined rather than guessed or shell-decoded.
-func decodeActionValue(raw string, positions []Span) (string, []Span, bool) {
+func decodeActionToken(raw string, positions []Span) (string, []Span, bool) {
 	var decoded strings.Builder
 	var mapped []Span
 	for i := 0; i < len(raw); {
@@ -194,12 +202,7 @@ func decodeActionValue(raw string, positions []Span) (string, []Span, bool) {
 		}
 		i = end
 	}
-	value := decoded.String()
-	if len(value) > 1 && (value[0] == '\'' || value[0] == '"') && value[len(value)-1] == value[0] && value[len(value)-2] != '\\' {
-		value = value[1 : len(value)-1]
-		mapped = mapped[1 : len(mapped)-1]
-	}
-	return value, mapped, true
+	return decoded.String(), mapped, true
 }
 
 // Membership and source occurrence order come from the original scalar's

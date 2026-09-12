@@ -200,6 +200,7 @@ func TestTraefikScalarActionRendererArguments(t *testing.T) {
 		want         int
 	}{
 		{"copy output", "action: copy dest=/router.yml content='{{ traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 0},
+		{"decoded argument key and separator", "action: copy con\\x74ent\\x3d'{{ traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 0},
 		{"action escape creates output", "action: copy content='\\x7b\\x7b traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 0},
 		{"labels output", "action: community.docker.docker_container labels={{ docker_labels_common }}", 0},
 		{"sibling cannot supply content", "action: copy content=literal other='{{ traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 1},
@@ -216,6 +217,25 @@ func TestTraefikScalarActionRendererArguments(t *testing.T) {
 				traefikTemplatePath: traefikFixture(t, "renderer.good.j2"),
 			})
 			if ds := Analyze(p, traefikRules("traefik-renderer-contract")); len(ds) != tc.want {
+				t.Fatalf("diagnostics=%+v, want=%d", ds, tc.want)
+			}
+		})
+	}
+}
+
+func TestTraefikScalarDecodedNameOverridesAdapterFallback(t *testing.T) {
+	for _, tc := range []struct {
+		tail string
+		want int
+	}{
+		{`name\x3dother`, 0},
+		{`na\x6de=other`, 0},
+		{`name=nginx\t`, 2},
+	} {
+		t.Run(tc.tail, func(t *testing.T) {
+			tasks := "- action: include_role " + tc.tail + "\n  args: {name: nginx}\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n"
+			p := traefikProject(map[string]string{traefikDefaultsPath: "example_role_nginx_web_subdomain: nginx\n", traefikTasksPath: tasks})
+			if ds := Analyze(p, traefikRules("traefik-adapter-contract")); len(ds) != tc.want {
 				t.Fatalf("diagnostics=%+v, want=%d", ds, tc.want)
 			}
 		})

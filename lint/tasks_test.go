@@ -70,6 +70,52 @@ func TestTaskActionArgumentPrecedence(t *testing.T) {
 	}
 }
 
+func TestTaskScalarArgumentsDecodeBeforeAssignment(t *testing.T) {
+	for _, tc := range []struct {
+		tail, value string
+		span        Span
+	}{
+		{`name\x3dother`, "other", Span{31, 36}},
+		{`na\x6de=other`, "other", Span{31, 36}},
+		{`name=nginx\t`, "nginx", Span{28, 33}},
+		{`name=\tnginx\t`, "nginx", Span{30, 35}},
+		{`\tname\t=other`, "other", Span{32, 37}},
+		{`name=\vnginx\f`, "nginx", Span{30, 35}},
+		{`name=\t'other'\t`, "other", Span{30, 37}},
+		{`name\=literal name\x3dother`, "other", Span{45, 50}},
+	} {
+		t.Run(tc.tail, func(t *testing.T) {
+			s, ds := Parse("tasks/main.yml", []byte("- action: include_role "+tc.tail+"\n  args: {name: nginx}\n"))
+			if len(ds) != 0 {
+				t.Fatal(ds)
+			}
+			arg := TasksIn(s)[0].argument("name")
+			if arg == nil || arg.Value != tc.value || arg.Span != tc.span {
+				t.Fatalf("value=%+v, want %q at %+v", arg, tc.value, tc.span)
+			}
+		})
+	}
+}
+
+func TestTaskDecodedArgumentPreservesExpressionSpans(t *testing.T) {
+	input := "- action: copy con\\x74ent\\x3d\\t'{{ target }}'\\t other='{{ sibling }}'\n"
+	s, ds := Parse("tasks/main.yml", []byte(input))
+	if len(ds) != 0 {
+		t.Fatal(ds)
+	}
+	value := TasksIn(s)[0].argument("content")
+	if value == nil || value.Value != "{{ target }}" || value.Span != (Span{31, 45}) {
+		t.Fatalf("content=%+v", value)
+	}
+	declaration := defaultDeclaration{Value: value}
+	for _, expressions := range [][]Expression{expressionsForDeclaration(s, declaration), newDeclarationExpressionQuery(s).expressions(declaration)} {
+		assertExpressionTokens(t, expressions, "target")
+		if got := expressions[0].Tokens[0].Span; got != (Span{35, 41}) {
+			t.Fatalf("token span=%+v", got)
+		}
+	}
+}
+
 func TestTaskScalarArgumentsPreserveCommandAndIncludeData(t *testing.T) {
 	input := "- action: command printf name=nginx chdir=/tmp\n- action: include_tasks file='setup tasks.yml' apply=unused\n- set_fact:\n    payload:\n      - action: include_role name=nginx\n"
 	s, ds := Parse("tasks/main.yml", []byte(input))
