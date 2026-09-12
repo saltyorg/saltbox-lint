@@ -1,8 +1,10 @@
 # VS Code extension implementation record
 
-Local implementation and qualification are recorded below. Large-file editor
-latency misses the 500 ms target; other native platforms, remote hosts, publication
-and final independent integration review remain pending.
+Local implementation is ready for independent review. Existing-CLI memory
+qualification remains **blocked** by unresolved Sandbox RSS increases. Large-file
+editor latency also misses the separately dispositioned 500 ms target. Other
+native platforms, remote hosts, publication and final integration review remain
+pending.
 
 Plan: [portable extension implementation](superpowers/plans/2026-09-12-vscode-extension.md).
 Baseline: `ef533311fc48a5001d497d99e462f0968bbceb16`.
@@ -56,6 +58,12 @@ otherwise unreachable endpoint conflict.
   delimiter removal while retaining final-newline state. Do not relocate gaps or
   synthesize trailing spaces. That narrow case needs a manual newline/gap adjustment
   or a future explicit policy change.
+- Use a narrow opt-in Windows editor-process Job Object seam at main entry.
+  `SALTBOX_LINT_EDITOR_PROCESS=1` enables native kill-on-job-close containment;
+  the seam is a no-op on Linux/macOS. Failure reports stderr and exits 2 before
+  CLI/Git/input work; the OS closes successful job handles at process exit.
+  The cost is that restricted or nested-job hosts fail closed and require native
+  qualification or a revised supported containment mechanism.
 - Retain the independently reviewed CLI implementation with the disclosed TDD
   deviation. Replaying code cannot change its actual history; the cost is the
   missing pre-implementation failing-test feedback for that stage.
@@ -168,6 +176,69 @@ Targeted ten-pair allocation results are unchanged: shared analysis 15,108
 allocations/op, shared fix planning 5,864, fix records 13. Median times changed
 1.035→1.054 ms, 415→425 μs and 8.35→8.41 μs respectively; raw spread is retained.
 These microbenchmarks do not replace full command measurements.
+
+
+### RSS review follow-up: qualification remains blocked
+
+The existing-CLI memory acceptance gate is **blocked**. The implementation can
+be reviewed locally, but the unresolved default-process RSS increases have not
+received performance or publication acceptance. No specific production defect
+or justified production fix has been identified.
+
+The review requested exactly two alternating AB/BA pairs per Sandbox palette
+using the original frozen binaries, environment, corpus and real PTY sink.
+All eight diagnostic runs were retained and all four output/exit pairs matched.
+An external observer sampled status every 20 ms and smaps_rollup every 60 ms:
+
+| Palette / pair / binary | Kernel peak MiB | Anonymous MiB at sampled RSS peak | File-backed MiB at sampled RSS peak |
+| --- | ---: | ---: | ---: |
+| dark / 0 / A | 222.9 | 183.5 | 40.2 |
+| dark / 0 / B | 225.2 | 178.2 | 40.4 |
+| dark / 1 / B | 285.5 | 244.7 | 40.2 |
+| dark / 1 / A | 256.7 | 217.0 | 40.2 |
+| light / 0 / A | 262.4 | 215.6 | 40.1 |
+| light / 0 / B | 261.9 | 219.4 | 40.2 |
+| light / 1 / B | 232.6 | 192.3 | 40.0 |
+| light / 1 / A | 214.2 | 174.8 | 40.2 |
+
+The variable residency is predominantly anonymous, late in the process lifetime;
+file-backed residency remains near 40 MiB and shared-memory residency is zero.
+This is a location/category attribution, not proof of an allocation cause.
+The observer consumed 45–68 ms CPU per run, including 27–46 ms reading proc data;
+its startup and discrete intervals can miss short peaks, and page-table reads
+can perturb the program. Kernel peak, status and smaps values are separate,
+non-simultaneous observations and need not match exactly. These runs do not
+replace the original formal memory or timing results.
+
+One separately identified, matched A/B lifecycle probe then used Sandbox light,
+where the original paired RSS signal was strongest. Identical instrumentation
+was added only to isolated source copies, built with the same Go version, CGO
+setting, trimpath, version and disabled VCS metadata. It sampled load, analysis,
+renderer creation, joined workers, renderer closure and command return. One
+explicit diagnostic-only collection followed closure, keeping project and
+diagnostics alive to compare equivalent roots:
+
+| Lifecycle measurement | Baseline A | Candidate B |
+| --- | ---: | ---: |
+| Heap allocation after renderer close, MiB | 321.73 | 293.21 |
+| Total allocation through command render, MiB | 924.32 | 924.16 |
+| Natural GC cycles through command render | 77 | 78 |
+| Heap allocation after diagnostic collection, MiB | 12.88 | 12.92 |
+| Goroutines after collection | 3 | 3 |
+
+This instrumented pair's large closing heap is mostly transient/uncollected.
+Sampled heap profiles primarily contain source/YAML data, runtime allocations,
+read buffers and static initializers. Their sampled totals are not precise heap
+comparisons; the table uses ReadMemStats. The probe changes GC timing, adds
+logging/profiling allocations and keeps specified roots alive. It does not
+explain the original default-process directional RSS shift or demonstrate
+performance equivalence. No collection, tuning or instrumentation was added to
+production. No further measurements were run to seek favorable values.
+
+The original measurements remain authoritative. Final independent review and
+controller/user adjudication of the open memory gate are still required; the
+separately dispositioned 500 ms editor target does not waive this constraint.
+The existing `39d9740` source and all eight VSIX identities remain unchanged.
 
 ## New formatter and real editor latency
 
