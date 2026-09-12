@@ -398,6 +398,42 @@ export async function runRegressions(): Promise<void> {
     },
   );
   await run(
+    "I6 installed parent save preserves nested document diagnostics",
+    async () => {
+      const nested = vscode.Uri.joinPath(roots[0].uri, "roles/example");
+      const index = vscode.workspace.workspaceFolders!.length;
+      await updateFolders(index, 0, { uri: nested });
+      try {
+        const document = await open(
+          vscode.Uri.joinPath(nested, "defaults/main.yml"),
+          jinja,
+        );
+        const parent = await vscode.workspace.openTextDocument(
+          vscode.Uri.joinPath(roots[0].uri, "independent.yml"),
+        );
+        // Establish initial watcher quiescence before populating both saved scans.
+        await pause(500);
+        await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
+        await vscode.commands.executeCommand("saltboxLint.checkDocument");
+        const before = diagnostics(document.uri);
+        assert.ok(before.some((d) => d.code === "jinja-layout"));
+        await replace(parent, jinja + "# scoped parent refresh\n");
+        await parent.save();
+        await waitFor(
+          () => diagnostics(parent.uri).some((d) => d.code === "jinja-layout"),
+          "affected parent refresh completed",
+        );
+        assert.deepEqual(
+          diagnostics(document.uri),
+          before,
+          "installed parent save cleared nested diagnostics",
+        );
+      } finally {
+        await updateFolders(index, 1);
+      }
+    },
+  );
+  await run(
     "I5 a retained quick fix cannot bind to a replacement report",
     async () => {
       const folder = vscode.Uri.joinPath(roots[0].uri, "roles/example/tasks");

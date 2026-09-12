@@ -1,0 +1,22 @@
+---
+plain: hello
+quoted: 'hello'
+boolean: true
+string_boolean: 'yes'
+integer: 12
+floating: 1.25
+nothing: null
+empty: {}
+list: [1, 'two', true]
+anchor: &defaults {name: 'example', enabled: true}
+alias: *defaults
+merged: {<<: *defaults, extra: value}
+unsafe: !unsafe '{{ untouched }}'
+expr: "{{ value
+ | upper }}"
+trim: "{{- value
+ | upper -}}"
+quote: 'He said "hello"'
+literal: |-
+  first
+    {{ literal_data }}

@@ -4,7 +4,14 @@ import {
   downloadAndUnzipVSCode,
   resolveCliArgsFromVSCodeExecutablePath,
 } from "@vscode/test-electron";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -125,6 +132,7 @@ const options = {
     userData,
     "--skip-welcome",
     "--skip-release-notes",
+    ...(process.env.SALTBOX_TEST_LOGS ? ["--log", "trace"] : []),
     ...(vsix ? ["--extensions-dir", extensionsDir] : ["--disable-extensions"]),
     ...(process.env.SALTBOX_TEST_DISABLED === "1"
       ? ["--disable-extension", "saltyorg.saltbox-lint"]
@@ -162,5 +170,11 @@ try {
   if (vsix) cli(["--uninstall-extension", "saltyorg.saltbox-lint"]);
   rmSync(extensionsDir, { recursive: true, force: true });
   rmSync(controller, { recursive: true, force: true });
+  if (process.env.SALTBOX_TEST_LOGS && existsSync(join(userData, "logs")))
+    cpSync(join(userData, "logs"), process.env.SALTBOX_TEST_LOGS, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+    });
   rmSync(userData, { recursive: true, force: true });
 }

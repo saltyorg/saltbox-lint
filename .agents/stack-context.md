@@ -11,7 +11,7 @@ Generated: 2026-09-12
 - Go testing covers table/golden fixtures, race safety and real shell/editor/terminal harnesses.
 - extension/: TypeScript 5.9.3, esbuild 0.28.2, stable VS Code APIs/types 1.100.0 and Node 24.20.0 build pin; no runtime Node dependencies.
 - Editor protocol/coordinates, canonical identities, bounded subprocess scheduling, diagnostics rendering and VS Code orchestration are separate modules. Windows editor-only invocations self-assign to a kill-on-close Job; POSIX uses extension-owned process groups.
-- Secondary languages: Bash for the Action installer/runner; YAML/JSON for workflows, packaging and VS Code tasks; pinned JavaScript/TypeScript under tools/oracles for explicit offline evidence regeneration with Node 24.20.0 (outside normal Go gates).
+- Secondary languages: opt-in Python qualification tools use pinned Ansible/Jinja loader-only comparisons and Linux PTY/resource measurements; Bash for the Action installer/runner; YAML/JSON for workflows, packaging and VS Code tasks; pinned JavaScript/TypeScript under tools/oracles for explicit offline evidence regeneration with Node 24.20.0 (outside normal Go gates).
 
 ## Conventions
 - Flat cmd, lint, report, highlight and yamlindex packages separate commands, analysis, policy and display; main owns process stdin/signals.

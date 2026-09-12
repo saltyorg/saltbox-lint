@@ -56,6 +56,14 @@ export async function run(): Promise<void> {
     console.log("PASS installed extension disabled");
     return;
   }
+  if (process.env.SALTBOX_TEST_PROFILE === "1") {
+    const { runProfile } = await import("./profile.ts");
+    return runProfile();
+  }
+  if (process.env.SALTBOX_TEST_QUALIFICATION === "1") {
+    const { runQualification } = await import("./qualification.ts");
+    return runQualification();
+  }
   if (process.env.SALTBOX_TEST_REGRESSIONS === "1") {
     const { runRegressions } = await import("./regressions.ts");
     return runRegressions();
