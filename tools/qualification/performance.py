@@ -130,7 +130,8 @@ def run(output):
                 records.write(json.dumps(row) + "\n")
                 records.flush()
                 pair[label] = result
-            parity = all(pair["A"][key] == pair["B"][key] for key in ("exit", "outputs"))
+            parity = not any(pair[label].get("measurement_error") for label in "AB") and all(
+                pair["A"][key] == pair["B"][key] for key in ("exit", "outputs"))
             if not parity:
                 failures.append({"workload": work["name"], "pair": item["pair"], "reason": "output parity"})
             print(work["name"], item["pair"], "parity", parity, flush=True)
@@ -142,7 +143,7 @@ def run(output):
                     work = {"pty": False, "args": [*declaration["microbench_args"], "-test.bench=" + micro["pattern"]]}
                     prefix = out / f'micro-{micro["name"]}-p{pair}-{label}'
                     result = measure(identity["path"], work, env, declaration["cwd"], prefix)
-                    if result["exit"] != 0:
+                    if result.get("measurement_error") or result["exit"] != 0:
                         failures.append({"workload": micro["name"], "pair": pair, "binary": label, "reason": "benchmark exit"})
                     records.write(json.dumps({"workload": "micro-" + micro["name"], "pair": pair,
                                               "binary": label, **result}) + "\n")
@@ -152,7 +153,7 @@ def run(output):
             for sample in range(declaration["formatting_samples"]):
                 prefix = out / f'format-{work["name"]}-{sample}'
                 result = measure(declaration["binaries"]["B"]["path"], work, env, declaration["cwd"], prefix)
-                if result["exit"] != 0:
+                if result.get("measurement_error") or result["exit"] != 0:
                     failures.append({"workload": work["name"], "sample": sample, "reason": "formatter exit"})
                 records.write(json.dumps({"workload": "format-" + work["name"], "sample": sample,
                                           "binary": "B", **result}) + "\n")

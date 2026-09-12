@@ -1,5 +1,7 @@
 """Real process boundary checks; no VS Code or consumer fixture required."""
 import json
+import contextlib
+import io
 import os
 import pathlib
 import sys
@@ -8,6 +10,11 @@ import subprocess
 import time
 import tempfile
 import unittest
+import signal
+from unittest import mock
+
+import performance
+import process_measurement
 
 from performance import measure
 from process_measurement import SUPERVISOR
@@ -97,6 +104,101 @@ sys.stderr.write('separate stderr\n')
             self.assertEqual(result["exit"], 127)
             self.assertEqual(pathlib.Path(str(prefix) + ".stdout").read_bytes(), b"")
             self.assertIn(b"qualification exec failed", pathlib.Path(str(prefix) + ".stderr").read_bytes())
+
+    def test_malformed_ready_retains_streams_and_stops_owned_processes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            peer = root / "broken_supervisor.py"
+            peer.write_text("""
+import json, os, pathlib, socket, sys, time
+control = socket.socket(fileno=int(sys.argv[1]))
+pid = os.fork()
+if pid == 0:
+    time.sleep(30)
+    os._exit(0)
+pathlib.Path(__file__).with_suffix('.pids').write_text(json.dumps([os.getpid(), pid]))
+os.write(1, b'partial stdout\\n')
+os.write(2, b'partial stderr\\n')
+control.sendall(b'not json\\n')
+time.sleep(30)
+""")
+            prefix = root / "sample"
+            pids = []
+            try:
+                with mock.patch.object(process_measurement, "SUPERVISOR", peer):
+                    try:
+                        result = measure(sys.executable, {"pty": False, "args": ["-c", "pass"]},
+                                         dict(os.environ), directory, prefix)
+                    except Exception:
+                        result = {}
+                pids = json.loads(peer.with_suffix('.pids').read_text())
+                stdout = pathlib.Path(str(prefix) + ".stdout")
+                stderr = pathlib.Path(str(prefix) + ".stderr")
+                self.assertEqual(stdout.read_bytes() if stdout.exists() else b"", b"partial stdout\n")
+                self.assertEqual(stderr.read_bytes() if stderr.exists() else b"", b"partial stderr\n")
+                self.assertTrue(result.get("measurement_error"))
+                self.assertIsNone(result["peak_rss_kib"])
+                self.assertIsNone(result["wall_seconds"])
+                for pid in pids:
+                    status = pathlib.Path(f"/proc/{pid}/stat")
+                    self.assertTrue(not status.exists() or status.read_text().split(') ', 1)[1].startswith('Z'),
+                                    "protocol failure left an owned process running")
+            finally:
+                if peer.with_suffix('.pids').exists():
+                    pids = json.loads(peer.with_suffix('.pids').read_text())
+                for pid in pids:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_failed_supervisor_attempts_are_flushed_to_series_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            peer = root / "failed_supervisor.py"
+            peer.write_text("import os\nos.write(2, b'startup failure\\n')\nraise SystemExit(3)\n")
+            manifest = root / "manifest.json"
+            manifest.write_text("[]")
+            declaration = {"harness_sha256": performance.digest(pathlib.Path(performance.__file__).read_bytes()),
+                           "measurement_modules": {}, "manifest": str(manifest),
+                           "manifest_sha256": performance.digest(manifest.read_bytes()),
+                           "binaries": {label: {"path": sys.executable,
+                               "sha256": performance.digest(pathlib.Path(sys.executable).read_bytes())} for label in "AB"},
+                           "workloads": [{"name": "failure", "pty": False, "args": ["-c", "pass"]}],
+                           "formatting": [], "microbenchmarks": [], "environment": {}, "cwd": directory,
+                           "schedule": [{"workload": "failure", "pair": 0, "order": "AB"}]}
+            (root / "declaration.json").write_text(json.dumps(declaration))
+            with mock.patch.object(process_measurement, "SUPERVISOR", peer), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(Exception):
+                    performance.run(directory)
+            rows = [json.loads(line) for line in (root / "samples.jsonl").read_text().splitlines()]
+            self.assertEqual(len(rows), 2, "failed scheduled attempts were dropped")
+            self.assertTrue(all(row["measurement_error"] for row in rows))
+            self.assertTrue((root / "failures.json").exists())
+
+    def test_malformed_result_after_go_keeps_partial_streams(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            peer = root / "broken_result.py"
+            peer.write_text("""
+import os, socket, sys
+control = socket.socket(fileno=int(sys.argv[1]))
+stream = control.makefile('rwb', buffering=0)
+stream.write(b'{"ready": true}\\n')
+assert stream.readline() == b'go\\n'
+os.write(1, b'partial output\\n')
+os.write(2, b'partial error\\n')
+stream.write(b'broken result\\n')
+raise SystemExit(3)
+""")
+            prefix = root / "sample"
+            with mock.patch.object(process_measurement, "SUPERVISOR", peer):
+                result = measure(sys.executable, {"pty": False, "args": ["-c", "pass"]},
+                                 dict(os.environ), directory, prefix)
+            self.assertTrue(result["measurement_error"])
+            self.assertIsNone(result["exit"])
+            self.assertEqual(pathlib.Path(str(prefix) + ".stdout").read_bytes(), b"partial output\n")
+            self.assertEqual(pathlib.Path(str(prefix) + ".stderr").read_bytes(), b"partial error\n")
 
 
 if __name__ == "__main__":

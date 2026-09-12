@@ -15,11 +15,14 @@ for name in dict.fromkeys(row["workload"] for row in rows):
     series = {}
     for label in dict.fromkeys(row["binary"] for row in selected):
         records = [row for row in selected if row["binary"] == label]
-        entry = {"samples": len(records), "exits": dict(collections.Counter(row["exit"] for row in records))}
+        entry = {"samples": len(records), "measurement_failures": sum(bool(row.get("measurement_error")) for row in records), "exits": dict(collections.Counter(row["exit"] for row in records))}
         for metric in ("wall_seconds", "first_output_seconds", "cpu_user_seconds", "cpu_system_seconds", "peak_rss_kib"):
-            values = sorted(row[metric] for row in records if row[metric] is not None)
+            values = sorted(row[metric] for row in records if row.get(metric) is not None)
+            if not values:
+                entry[metric] = None
+                continue
             entry[metric] = {"median": statistics.median(values), "p95": values[math.ceil(len(values) * .95) - 1],
-                             "min": min(values), "max": max(values), "stdev": statistics.stdev(values)}
+                             "min": min(values), "max": max(values), "stdev": statistics.stdev(values) if len(values) > 1 else None}
         if "format_status" in records[0]:
             entry["status_counts"] = dict(collections.Counter(row.get("format_status", "error") for row in records))
         series[label] = entry
@@ -39,11 +42,13 @@ for name in dict.fromkeys(row["workload"] for row in rows):
         for pair in range(10):
             a = next(row for row in selected if row["pair"] == pair and row["binary"] == "A")
             b = next(row for row in selected if row["pair"] == pair and row["binary"] == "B")
-            pairs.append({"pair": pair, "parity": a["exit"] == b["exit"] and a["outputs"] == b["outputs"],
-                          "wall_ratio": b["wall_seconds"] / a["wall_seconds"]})
+            pairs.append({"pair": pair, "parity": not (a.get("measurement_error") or b.get("measurement_error")) and a["exit"] == b["exit"] and a["outputs"] == b["outputs"],
+                          "wall_ratio": b["wall_seconds"] / a["wall_seconds"] if a["wall_seconds"] and b["wall_seconds"] is not None else None})
         series["pairs"] = pairs
         series["all_bytes_equal"] = all(pair["parity"] for pair in pairs)
-        series["median_paired_wall_ratio"] = statistics.median(pair["wall_ratio"] for pair in pairs)
+        ratios = [pair["wall_ratio"] for pair in pairs if pair["wall_ratio"] is not None]
+        series["valid_paired_wall_samples"] = len(ratios)
+        series["median_paired_wall_ratio"] = statistics.median(ratios) if ratios else None
     result[name] = series
 (root / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
 print(json.dumps(result, indent=2))
