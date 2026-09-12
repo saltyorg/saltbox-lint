@@ -28,7 +28,7 @@ func TestRenderersShareFindings(t *testing.T) {
 			}
 			switch format {
 			case "human":
-				if !strings.Contains(out.String(), "😀x") || !strings.Contains(out.String(), "Expected: Use true.") || !strings.Contains(out.String(), "context") {
+				if !strings.Contains(out.String(), "😀x") || !strings.Contains(out.String(), "+++ suggested/a.yml") || !strings.Contains(out.String(), "context") {
 					t.Fatal(out.String())
 				}
 			case "concise":

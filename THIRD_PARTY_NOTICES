@@ -1,0 +1,26 @@
+THIRD-PARTY SOFTWARE NOTICES
+
+Saltbox Lint embeds third-party syntax grammars, themes, and a WebAssembly
+regular-expression engine for syntax highlighting. The release archive carries
+the complete applicable notices and license texts at these paths:
+
+- third_party/nuri/LICENSE
+  Nuri's MIT license and FrostyBee copyright notice.
+- third_party/nuri/THIRD-PARTY-NOTICE
+  Nuri's complete dependency and embedded-resource notices, including
+  Oniguruma, wazero, Go x/term and x/sys, TextMate grammars, and themes.
+- highlight/assets/licenses/ansible-LICENSE
+  Red Hat Ansible extension grammar license.
+- highlight/assets/licenses/jinjahtml-LICENSE
+  Jinja HTML grammar license.
+- highlight/assets/licenses/yaml-tmbundle-README.mdown
+  YAML TextMate grammar license notice.
+- highlight/assets/licenses/one-dark-pro-LICENSE
+  One Dark Pro theme license.
+- highlight/assets/licenses/one-light-LICENSE
+  Atom One Light theme license.
+
+Source versions, commit identifiers, hashes, and local Nuri patch descriptions
+are preserved in highlight/ASSETS.md, highlight/assets/SHA256SUMS.json,
+highlight/assets/ansible-sha256.json, and third_party/nuri/{PATCHES.md,
+provenance.lock.json,UPSTREAM-SHA256.json,FORMAT-CHANGES.json}.

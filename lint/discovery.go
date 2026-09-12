@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"iter"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,12 +49,14 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 			}
 			return nil, fmt.Errorf("discover Git sources in %s: %w", root, err)
 		}
-		l.gitFiles = map[string]bool{}
+		l.gitFiles = []string{}
 		for item := range strings.SplitSeq(string(output), "\x00") {
 			if item != "" {
-				l.gitFiles[filepath.Clean(filepath.FromSlash(item))] = true
+				l.gitFiles = append(l.gitFiles, filepath.Clean(filepath.FromSlash(item)))
 			}
 		}
+		slices.Sort(l.gitFiles)
+		l.gitFiles = slices.Compact(l.gitFiles)
 	}
 	if opts.StdinFilename != "" {
 		l.stdinPath, err = absoluteTarget(opts.StdinFilename)
@@ -124,7 +127,7 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 type sourceLoader struct {
 	ctx       context.Context
 	project   *Project
-	gitFiles  map[string]bool
+	gitFiles  []string
 	stdinPath string
 	stdin     []byte
 }
@@ -162,6 +165,8 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	var data []byte
 	if absolute == l.stdinPath {
 		data = l.stdin
+		s, _ := Parse(relative, data)
+		return s, nil
 	} else {
 		resolved, err := filepath.EvalSymlinks(absolute)
 		if err != nil {
@@ -182,54 +187,37 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 			return nil, fmt.Errorf("read source %s: %w", absolute, err)
 		}
 	}
-	s, _ := Parse(relative, data)
+	s, _ := parseOwnedSource(relative, data)
 	return s, nil
 }
 
-// Root playbooks can use arbitrary filenames and contain roles without tasks.
-// Inspect their parsed structure before admitting them to directory selection.
-func (l *sourceLoader) addFromDirectory(absolute string, selected bool) error {
-	relative, err := relativeSource(l.project.Root, absolute)
+func (l *sourceLoader) directory(dir string, selected bool) error {
+	relative, err := relativeSource(l.project.Root, dir)
 	if err != nil {
 		return err
 	}
-	kind, _, _ := classify(relative)
-	if selected && kind == Generic {
-		s, err := l.readSource(absolute, relative)
-		if err != nil {
-			return err
+	var paths []string
+	var discoveryErr error
+	if l.gitFiles != nil {
+		for name := range gitDirectoryCandidates(l.gitFiles, filepath.FromSlash(relative)) {
+			if directorySource(filepath.ToSlash(name), selected) {
+				paths = append(paths, filepath.Join(l.project.Root, name))
+			}
 		}
-		if s.Kind != Playbook {
-			return nil
-		}
-		l.project.Sources[relative] = s
+	} else {
+		paths, discoveryErr = l.walkDirectory(dir, selected)
 	}
-	return l.add(absolute, selected)
-}
-
-func (l *sourceLoader) directory(dir string, selected bool) error {
-	if _, err := relativeSource(l.project.Root, dir); err != nil {
+	if err := l.directorySources(paths, selected); err != nil {
 		return err
 	}
-	if l.gitFiles != nil {
-		for _, name := range sortedKeys(l.gitFiles) {
-			absolute := filepath.Join(l.project.Root, name)
-			if !within(dir, absolute) || !directorySource(filepath.ToSlash(name), selected) {
-				continue
-			}
-			// Tracked files deleted from the worktree are not source inputs.
-			if _, err := os.Stat(absolute); os.IsNotExist(err) {
-				continue
-			} else if err != nil {
-				return fmt.Errorf("inspect source %s: %w", absolute, err)
-			}
-			if err := l.addFromDirectory(absolute, selected); err != nil {
-				return err
-			}
-		}
-		return l.ctx.Err()
-	}
-	return filepath.WalkDir(dir, func(absolute string, entry fs.DirEntry, err error) error {
+	// A walk error follows all candidates discovered before it, including any
+	// earlier read error. Read completion order must not change that precedence.
+	return discoveryErr
+}
+
+func (l *sourceLoader) walkDirectory(dir string, selected bool) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(dir, func(absolute string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("discover sources in %s: %w", dir, err)
 		}
@@ -249,8 +237,85 @@ func (l *sourceLoader) directory(dir string, selected bool) error {
 		if !directorySource(relative, selected) {
 			return nil
 		}
-		return l.addFromDirectory(absolute, selected)
+		paths = append(paths, absolute)
+		return nil
 	})
+	return paths, err
+}
+
+func (l *sourceLoader) directorySources(paths []string, selected bool) error {
+	results := readSourceBatch(paths, func(absolute string) (*Source, error) {
+		// Tracked files deleted from the worktree are not source inputs.
+		if l.gitFiles != nil {
+			if _, err := os.Stat(absolute); os.IsNotExist(err) {
+				return nil, nil
+			} else if err != nil {
+				return nil, fmt.Errorf("inspect source %s: %w", absolute, err)
+			}
+		}
+		relative, err := relativeSource(l.project.Root, absolute)
+		if err != nil {
+			return nil, err
+		}
+		if err := l.ctx.Err(); err != nil {
+			return nil, err
+		}
+		kind, _, _ := classify(relative)
+		if source := l.project.Sources[relative]; source != nil && (!selected || kind != Generic) {
+			return source, nil
+		}
+		source, err := l.readSource(absolute, relative)
+		if err != nil {
+			return nil, err
+		}
+		// Arbitrarily named root playbooks are admitted by parsed structure.
+		if selected && kind == Generic && source.Kind != Playbook {
+			return nil, nil
+		}
+		return source, nil
+	})
+	for _, result := range results {
+		if result.err != nil {
+			return result.err
+		}
+		source := result.source
+		if source == nil {
+			continue
+		}
+		if selected {
+			l.project.Selected[source.Path] = true
+		}
+		if _, exists := l.project.Sources[source.Path]; !exists {
+			l.project.Diagnostics = append(l.project.Diagnostics, source.parseDiagnostics...)
+		}
+		l.project.Sources[source.Path] = source
+	}
+	return l.ctx.Err()
+}
+
+// Git paths are sorted once. A directory visits only its own prefix range,
+// retaining an exact indexed path when a tracked file became a directory.
+func gitDirectoryCandidates(files []string, dir string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		if dir == "." {
+			for _, name := range files {
+				if !yield(name) {
+					return
+				}
+			}
+			return
+		}
+		if index, found := slices.BinarySearch(files, dir); found && !yield(files[index]) {
+			return
+		}
+		prefix := dir + string(filepath.Separator)
+		start, _ := slices.BinarySearch(files, prefix)
+		for _, name := range files[start:] {
+			if !strings.HasPrefix(name, prefix) || !yield(name) {
+				return
+			}
+		}
+	}
 }
 
 func supportedSource(name string) bool {
@@ -327,7 +392,6 @@ func relativeSource(root, absolute string) (string, error) {
 	}
 	return filepath.ToSlash(relative), nil
 }
-func within(root, absolute string) bool { _, err := relativeSource(root, absolute); return err == nil }
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for key := range m {

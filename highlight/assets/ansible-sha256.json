@@ -1,0 +1,19 @@
+{
+  "./syntaxes/ansible/generated/jinja-braces.tmLanguage": "9aa376503c2b8e0cc41535a06fd33791ea3560833b83e61fa1a0fed4cc2d9031",
+  "./syntaxes/ansible/generated/jinja-conditionals.tmLanguage": "8f357eb0e2741ffde3b63c6f67390fb67d0d2df7fad5a7a2f47be63a60e7d7d0",
+  "./syntaxes/ansible/generated/jinja-double-quote-escape.tmLanguage": "24de61d0fe78712892d6044ec1e3b34f69d029a6844b9cae153d21176b0fcea3",
+  "./syntaxes/ansible/generated/jinja-extras.tmLanguage": "33cdbfd3b774053ee1de11884579f0024a84380d9559caf5e7d8029d5858b0a0",
+  "./syntaxes/ansible/generated/jinja-single-quote-escape.tmLanguage": "bc2aa7f9109d08560b35deeed6ed7d7eda20592e8f8ec7726b4001d5fc95e2f8",
+  "./syntaxes/ansible/generated/keywords.tmLanguage": "1caa97444dcde3c7314ab36c67a25c06df459bf573b473060f72eec42c26d563",
+  "./syntaxes/external/YAML.tmLanguage": "0622eed4a56ee6a5ad94df05ace4e63a41248ce978fe799def5604f52ce328fb",
+  "./syntaxes/external/jinja.tmLanguage.json": "1e9a432ff046507d5b45f428604b2078de00fddfd7bb6e16b903a217aa365671",
+  "grammars/injection.ansible.jinja-braces.json": "92772679ea945ac4bf2c3b613473693e49dc53504c39fd75018a0ca1ca5a4cfb",
+  "grammars/injection.ansible.jinja-conditionals.json": "c2b7a50671e289204c5f334c214d965b5b8b17cd423e0ccfb6bae2432323cb62",
+  "grammars/injection.ansible.jinja-double-quote-escape.json": "f43fd092615afe905bcf0950a5408d4ee20566100f4d62f0a6eeb0fc1dcbd3f9",
+  "grammars/injection.ansible.jinja-extras.json": "1feb5c1672401741d99316ceddf86a970d5047f2d93f899a677fa91898e35ff9",
+  "grammars/injection.ansible.jinja-single-quote-escape.json": "185a31cee56a230c25bd6d57fd9bf8463dded4cc80082e6a9e45c7462b6a3559",
+  "grammars/injection.ansible.keywords.json": "037361d0b8a2bbb175a0bf57c3e6ec3a35eafd64398e418bbe10709413de5254",
+  "grammars/source.ansible-jinja.json": "a4e4e6de1362ab6e016cbe6b63bead98d16b5690b77b132777fcfd594fde963a",
+  "grammars/source.ansible.json": "52e46cd7cfa2c8563fcec55b61b77e6468e9cf2f28131560beab0eb161a7cb76",
+  "package.json": "8aeee07bb22518b5ad939a8bb740b80695a91bae36b0246b1fc974a25d6d77cd"
+}

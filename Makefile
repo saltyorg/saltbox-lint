@@ -10,7 +10,7 @@ ACTIONLINT := $(TOOLS)/actionlint-$(ACTIONLINT_VERSION)/actionlint
 GORELEASER := $(TOOLS)/goreleaser-$(GORELEASER_VERSION)/goreleaser
 VERSION ?= dev
 
-.PHONY: tools check format-check build snapshot
+.PHONY: tools catalog check format-check build snapshot
 
 tools: $(GOLANGCI) $(ACTIONLINT) $(GORELEASER)
 
@@ -23,6 +23,11 @@ $(ACTIONLINT):
 $(GORELEASER):
 	GOBIN='$(dir $(GORELEASER))' go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
 
+# Refreshes the tracked embedded catalog through Saltbox's managed Ansible
+# wrappers. Ordinary checks, builds, and snapshots use the frozen catalog.
+catalog:
+	go run ./tools/catalog
+
 format-check:
 	@set -o pipefail; files="$$(git ls-files --cached --others --exclude-standard -z -- '*.go' | while IFS= read -r -d '' path; do if [[ -e "$$path" || -L "$$path" ]]; then printf '%s\0' "$$path"; fi; done | xargs -0 -r gofmt -l)" || exit $$?; if [[ -n "$$files" ]]; then printf 'Run gofmt on:\n%s\n' "$$files"; exit 1; fi
 
@@ -33,6 +38,7 @@ check: tools format-check
 	go vet ./...
 	$(GOLANGCI) run
 	go test -race ./...
+	go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
 	bash -n action/install.sh action/run.sh
 	$(ACTIONLINT) -shellcheck= -pyflakes= .github/workflows/*.yml examples/github/*.yml
 	$(GORELEASER) check

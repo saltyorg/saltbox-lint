@@ -73,8 +73,8 @@ func TestRenderRuleSanitizesControlsAndUsesExplicitColorProfile(t *testing.T) {
 	}
 	plain := charmansi.Strip(got)
 	for _, line := range strings.Split(plain, "\n") {
-		if charmansi.StringWidth(line) > maximumHumanWidth {
-			t.Fatalf("width cap was not applied to line %q", line)
+		if charmansi.StringWidth(line) > 200 {
+			t.Fatalf("requested width was not applied to line %q", line)
 		}
 	}
 }

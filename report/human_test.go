@@ -41,11 +41,11 @@ func TestHumanReportAnnotatesFindingsAndSummarizes(t *testing.T) {
 		"ERROR  example-rule",
 		"roles/demo/tasks/main.yml:2:8",
 		"value must be enabled",
-		"1 | before: true",
-		"2 | value: wrong",
+		"1 1 │   before: true",
+		"2   │ - value: wrong",
+		"  2 │ + value: true",
 		"|        ^^^^^",
-		"3 | after: true",
-		"Expected: Use true.",
+		"3 3 │   after: true",
 		"Fix available: replace value",
 		"Related:",
 		"roles/demo/defaults/main.yml:1:8: default declared here",
@@ -73,6 +73,9 @@ func TestHumanReportSuppressesDuplicateExpectedAndHonorsActualEdits(t *testing.T
 	got := out.String()
 	if strings.Contains(got, "Expected:") {
 		t.Fatalf("duplicate expected text was rendered:\n%s", got)
+	}
+	if strings.Count(got, "Fix: This rule requires a manual change.") != 2 {
+		t.Fatalf("manual and empty-fix findings need explicit availability: %s", got)
 	}
 	if strings.Contains(got, "not really") || strings.Count(got, "Fix available:") != 1 {
 		t.Fatalf("only a diagnostic with an actual edit should appear fixable:\n%s", got)
@@ -141,7 +144,7 @@ func TestHumanSourceExcerptHandlesInsertionEOFAndLongMultilineSpans(t *testing.T
 	}{
 		{name: "insertion", span: lint.Span{Start: 4, End: 4}, want: []string{"a.yml:2:1", "2 | two", "| ^"}},
 		{name: "end of file", span: lint.Span{Start: len(data), End: len(data)}, want: []string{"a.yml:8:6", "8 | eight", "|      ^"}},
-		{name: "long multiline", span: lint.Span{Start: 4, End: len(data) - 1}, want: []string{"1 | one", "… 2 lines omitted …", "8 | eight"}},
+		{name: "long multiline", span: lint.Span{Start: 4, End: len(data) - 1}, want: []string{"1 | one", "4 | four", "5 | five", "8 | eight"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -163,48 +166,43 @@ func TestHumanSourceExcerptHandlesInsertionEOFAndLongMultilineSpans(t *testing.T
 						sourceLines++
 					}
 				}
-				if sourceLines != 6 {
-					t.Fatalf("source excerpt has %d lines, want 6:\n%s", sourceLines, &out)
+				if sourceLines != 8 {
+					t.Fatalf("source excerpt has %d lines, want 8:\n%s", sourceLines, &out)
 				}
 			}
 		})
 	}
 }
 
-func TestHumanSourceExcerptCropsLongLinesAroundFinding(t *testing.T) {
-	for _, line := range []string{
-		"0123456789abcdefghijTARGETklmnopqrstuvwxyz",
-		strings.Repeat("界", 20) + "👩‍💻TARGET" + strings.Repeat("界", 20),
-	} {
+func TestHumanSourceExcerptWrapsLongLinesAroundFinding(t *testing.T) {
+	for _, line := range []string{"0123456789abcdefghijTARGETklmnopqrstuvwxyz", strings.Repeat("界", 20) + "👩‍💻TARGET" + strings.Repeat("界", 20)} {
 		source, _ := lint.Parse("a.yml", []byte(line+"\n"))
 		start := strings.Index(line, "TARGET")
 		project := &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}
-		diagnostics := []lint.Diagnostic{{Path: source.Path, RuleID: "crop", Severity: "error", Message: "bad", Span: lint.Span{Start: start, End: start + len("TARGET")}}}
 		var out bytes.Buffer
-		if err := Render(&out, project, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 24}}); err != nil {
+		if err := Render(&out, project, []lint.Diagnostic{{Path: source.Path, RuleID: "wrap", Message: "bad", Span: lint.Span{Start: start, End: start + 6}}}, Options{Human: HumanOptions{Width: 24}}); err != nil {
 			t.Fatal(err)
 		}
-		lines := strings.Split(out.String(), "\n")
-		for i, rendered := range lines {
-			if !strings.Contains(rendered, "1 | ") {
-				continue
+		var recovered strings.Builder
+		carets := 0
+		for _, rendered := range strings.Split(out.String(), "\n") {
+			if strings.HasPrefix(rendered, "1 | ") || strings.HasPrefix(rendered, "  ↪ ") {
+				recovered.WriteString(strings.TrimPrefix(strings.TrimPrefix(rendered, "1 | "), "  ↪ "))
+				if charmansi.StringWidth(rendered) > 24 {
+					t.Fatalf("row too wide: %q", rendered)
+				}
 			}
-			if !strings.Contains(rendered, "…") || !strings.Contains(rendered, "TARGET") {
-				t.Fatalf("finding was not retained in cropped line: %q", rendered)
+			if strings.HasPrefix(rendered, "  | ") {
+				carets += strings.Count(rendered, "^")
 			}
-			if width := charmansi.StringWidth(rendered); width > 24 {
-				t.Fatalf("cropped line width = %d, want <= 24: %q", width, rendered)
-			}
-			sourceText := strings.TrimPrefix(rendered, "1 | ")
-			markerText := strings.TrimPrefix(lines[i+1], "  | ")
-			if charmansi.StringWidth(sourceText[:strings.Index(sourceText, "TARGET")]) != strings.Index(markerText, "^") {
-				t.Fatalf("cropped marker does not begin below TARGET:\n%s\n%s", rendered, lines[i+1])
-			}
+		}
+		if recovered.String() != line || carets != 6 {
+			t.Fatalf("source or marker lost: %q carets %d\n%s", recovered.String(), carets, &out)
 		}
 	}
 }
 
-func TestHumanSourceExcerptUsesOneViewportForAdjacentIndentation(t *testing.T) {
+func TestHumanSourceExcerptRetainsAdjacentIndentation(t *testing.T) {
 	first := "key: " + strings.Repeat("x", 40) + "BAD"
 	second := strings.Repeat(" ", 25) + "context"
 	source, _ := lint.Parse("a.yml", []byte(first+"\n"+second+"\n"))
@@ -225,22 +223,12 @@ func TestHumanSourceExcerptUsesOneViewportForAdjacentIndentation(t *testing.T) {
 			secondDisplay = strings.TrimPrefix(line, "2 | ")
 		}
 	}
-	if !strings.HasPrefix(firstDisplay, "…") || !strings.HasPrefix(secondDisplay, "…") {
-		t.Fatalf("adjacent lines did not use the same cropped origin:\n%s", &out)
-	}
-	firstIndex := strings.Index(firstDisplay, "BAD")
-	secondIndex := strings.Index(secondDisplay, "context")
-	if firstIndex < 0 || secondIndex < 0 {
-		t.Fatalf("cropped lines lost inspected tokens:\n%s", &out)
-	}
-	firstColumn := charmansi.StringWidth(firstDisplay[:firstIndex])
-	secondColumn := charmansi.StringWidth(secondDisplay[:secondIndex])
-	if got, want := firstColumn-secondColumn, strings.Index(first, "BAD")-strings.Index(second, "context"); got != want {
-		t.Fatalf("displayed indentation delta = %d, want %d:\n%s", got, want, &out)
+	if !strings.HasPrefix(firstDisplay, "key: ") || secondDisplay != second {
+		t.Fatalf("indentation was not retained: first %q second %q", firstDisplay, secondDisplay)
 	}
 }
 
-func TestHumanSourceExcerptLabelsMarkedSpanOutsideSharedViewport(t *testing.T) {
+func TestHumanSourceExcerptMarksEveryWrappedSpan(t *testing.T) {
 	first := strings.Repeat("x", 50) + "START"
 	second := "END" + strings.Repeat("y", 10)
 	data := first + "\n" + second + "\n"
@@ -255,13 +243,15 @@ func TestHumanSourceExcerptLabelsMarkedSpanOutsideSharedViewport(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(out.String(), "\n")
-	finalLine := slices.Index(lines, "2 | …")
+	finalLine := slices.Index(lines, "2 | "+second)
 	if finalLine < 0 || finalLine+1 >= len(lines) {
-		t.Fatalf("offscreen final source line missing:\n%s", &out)
+		t.Fatalf("final source line missing:\n%s", &out)
 	}
-	marker := lines[finalLine+1]
-	if strings.Contains(marker, "^") || !strings.Contains(marker, "< marked span") {
-		t.Fatalf("offscreen span received a source caret instead of an explicit label: %q\n%s", marker, &out)
+	if lines[finalLine+1] != "  | ^^^" {
+		t.Fatalf("wrong final caret: %q", lines[finalLine+1])
+	}
+	if strings.Contains(out.String(), "marked span") {
+		t.Fatal("wrapped span unexpectedly hidden")
 	}
 }
 

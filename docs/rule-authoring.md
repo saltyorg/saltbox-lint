@@ -78,7 +78,17 @@ adding a new task policy.
    as a diagnostic with no fix. Keep automated regressions in `lint/testdata`.
    `examples.yaml` is optional local scratch input; preserve it and keep it out
    of Git and test dependencies.
-6. Run the focused test through RED/GREEN, then `make check` and `make build`.
+6. For an exact manual suggestion, attach `Preview{Edits: ...}` using original
+   byte spans on the primary source. Keep this separate from `Fix`: previews
+   never enter `PlanFixes`, patches, fix counts, JSON or GitHub annotations. Do
+   not duplicate existing `Fix.Edits` into Preview. The reporter validates and
+   reconstructs a full candidate through `PreviewChange`, then shows a compact
+   comparison. Do not build previews by parsing Expected prose or inventing
+   replacements for ambiguous syntax. Decline unsupported shapes and retain
+   Expected guidance. Test exact candidate bytes, source preservation, valid
+   YAML, removal of the targeted finding, and unchanged fix authority. Shared
+   file-wide formatting proposals are deduplicated by the renderer.
+7. Run the focused test through RED/GREEN, then `make check` and `make build`.
    Request independent specification and code-quality review. Record deliberate
    differences from the frozen legacy corpus instead of weakening a rule to
    obtain a clean result. Consumer validation is read-only and never executes

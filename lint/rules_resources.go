@@ -146,7 +146,15 @@ func checkCloudflareAuth(_ *Project, s *Source) []Diagnostic {
 	for _, e := range RuntimeExpressions(s) {
 		for _, access := range memberAccesses(e, "cloudflare") {
 			if slices.Contains([]string{"api", "email", "scoped_token"}, access.Name) {
-				ds = append(ds, ansibleDiagnostic(s, "cloudflare-auth-contract", access.Span, "runtime source reads raw Cloudflare account fields", "Use normalized cloudflare_api_key, cloudflare_email or cloudflare_scoped_token authentication variables."))
+				d := ansibleDiagnostic(s, "cloudflare-auth-contract", access.Span, "runtime source reads raw Cloudflare account fields", "Use normalized cloudflare_api_key, cloudflare_email or cloudflare_scoped_token authentication variables.")
+				if e.mapped && !access.Method && (e.node == nil || e.node.Tag == "" && e.node.Anchor == "") {
+					name := access.Name
+					if name == "api" {
+						name = "api_key"
+					}
+					d.Preview = editPreview(access.Span, "cloudflare_"+name)
+				}
+				ds = append(ds, d)
 			}
 		}
 	}

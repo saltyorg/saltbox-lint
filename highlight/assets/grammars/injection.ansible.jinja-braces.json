@@ -1,0 +1,99 @@
+{
+  "injectTo": [
+    "source.ansible"
+  ],
+  "injectionSelector": "L:string -meta.embedded.inline.jinja",
+  "name": "Grammar for Jinja2 expressions surrounded by double curly braces",
+  "patterns": [
+    {
+      "include": "#jinja-raw"
+    },
+    {
+      "include": "#jinja-expression"
+    },
+    {
+      "include": "#jinja-statement"
+    },
+    {
+      "include": "#jinja-comment"
+    }
+  ],
+  "repository": {
+    "jinja-comment": {
+      "begin": "\\{#-?",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.begin.jinja"
+        }
+      },
+      "contentName": "comment.block.jinja",
+      "end": "-?#\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.end.jinja"
+        }
+      },
+      "patterns": [
+        {
+          "include": "source.ansible-jinja#comments"
+        }
+      ]
+    },
+    "jinja-expression": {
+      "begin": "\\{\\{-?",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.begin.jinja"
+        }
+      },
+      "contentName": "meta.embedded.inline.jinja",
+      "end": "-?\\}\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.jinja"
+        }
+      },
+      "patterns": [
+        {
+          "include": "source.ansible-jinja#expression"
+        }
+      ]
+    },
+    "jinja-raw": {
+      "begin": "\\{%-?\\s*raw\\s*-?%\\}",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.begin.jinja"
+        }
+      },
+      "contentName": "comment.block.jinja.raw",
+      "end": "\\{%-?\\s*endraw\\s*-?%\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.jinja"
+        }
+      }
+    },
+    "jinja-statement": {
+      "begin": "\\{%-?",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.begin.jinja"
+        }
+      },
+      "contentName": "meta.embedded.inline.jinja",
+      "end": "-?%\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.jinja"
+        }
+      },
+      "patterns": [
+        {
+          "include": "source.ansible-jinja#expression"
+        }
+      ]
+    }
+  },
+  "scopeName": "injection.ansible.jinja-braces"
+}

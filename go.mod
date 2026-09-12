@@ -8,10 +8,15 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/frostybee/nuri v1.0.1
 	github.com/goccy/go-yaml v1.19.2
 	github.com/rivo/uniseg v0.4.7
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/sys v0.47.0
+	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/frostybee/nuri => ./third_party/nuri
 
 require (
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
@@ -30,11 +35,11 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 )

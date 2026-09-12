@@ -1,0 +1,46 @@
+{
+  "tool": "gofmt (go1.27.1)",
+  "changes": "formatting only; original upstream hashes remain in UPSTREAM-SHA256.json",
+  "files": {
+    "internal/fidelity/compare.go": {
+      "before_sha256": "81557b86ea59261875a07f2672c3500e538a6123c78458191f09c44b57e76bf0",
+      "after_sha256": "908258a5976abb1fac18c58e44c01d0bba59dee1879e1c533c32f8905dcb65a2"
+    },
+    "internal/fidelity/score.go": {
+      "before_sha256": "d14fe932470004be37fad6be7fce1192ede691dcde19c98874d2bbd163fbb4b5",
+      "after_sha256": "44178e899f3d18d554afb80aba24f795caf6a981a25aaaec7efa367490df5f9f"
+    },
+    "internal/grammar/capture.go": {
+      "before_sha256": "fcf161c46aa8dccab2a9d5a5682ad8bde14bbd34ac127d5a471127b7950afcee",
+      "after_sha256": "9394736e86de7f860675d31df4164f7984f2c2552d364c1ef2c4ffe3ec4f14bf"
+    },
+    "internal/grammar/rules.go": {
+      "before_sha256": "89c78c17f15524519b0aa2a95e04bc5a19db5aa8579a9b01e6257228b20b2d4f",
+      "after_sha256": "2882c70d8c40d2180fc29982410c1ce3a0d7f3373aa678feef696c797b9c9bab"
+    },
+    "internal/oniguruma/engine.go": {
+      "before_sha256": "8cabd4ed21ea397859467498a95f00bc345f5b8b628c4f6442edf3c037ab0239",
+      "after_sha256": "48da1c95c917737f32c23ff2a89c45b11af24476984183a0f7118003d3527d27"
+    },
+    "internal/registry/repository.go": {
+      "before_sha256": "1f2349eb5631d85a72179dc2a229a11196b08bc7f57cab3b89c3cb19dc588841",
+      "after_sha256": "56e5b4c996579ce36bbcfdbaa78a3acaef8e75b8d7bb931f1334133f59500976"
+    },
+    "languages.go": {
+      "before_sha256": "15702d17f626cfa115d7501df5194c35a9fcd4df18ed12bd41dd57173339d738",
+      "after_sha256": "a611c79433e0d0f7ab17c01a57f50af58be462c466ccae919e68e682bdf1310e"
+    },
+    "renderer/ansi.go": {
+      "before_sha256": "83b08b3e6d71582163e0c6391a1c85c8e300969d93a9e19c0ece8c9bfd7380c2",
+      "after_sha256": "b6b2cda33af260b9c639b036eeb2394c028114cfdd6b9c6de6c1604f8eaaedf2"
+    },
+    "renderer/palette.go": {
+      "before_sha256": "ea5203b5e0bd7ce4d4e29f7f616885dd8e14240a7ed223638629274c78e434f5",
+      "after_sha256": "e706146ca2e164b5d7c32514ee7044439bf962cc1a97b416f206dd083533fbed"
+    },
+    "theme/theme.go": {
+      "before_sha256": "5b7a3d5980085c9d0b23aac6a48d0dda02dfeb8c9a9f097bc57fe0b3c2109caa",
+      "after_sha256": "5018a2e0dc179f56cc3d4dcc475be5275161527a7a72e5e64d11342b649478e5"
+    }
+  }
+}

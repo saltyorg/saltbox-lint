@@ -27,7 +27,7 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 		Long: "Check YAML sources and their required context. Use '-' with --stdin-filename to check an unsaved buffer.\n" +
 			"Exit status: 0 clean, 1 findings, 2 usage or operational failure.",
 		RunE: func(command *cobra.Command, args []string) error {
-			return runCheck(command, args, opts, rootOpts.color)
+			return runCheck(command, args, opts, rootOpts.color, rootOpts.theme)
 		},
 	}
 	flags := command.Flags()
@@ -81,7 +81,7 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 	return load, nil
 }
 
-func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMode string) error {
+func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMode, themeMode string) error {
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMod
 	if opts.diff {
 		diagnosticOutput = command.ErrOrStderr()
 	}
-	format, human := resolveCheckPresentation(diagnosticOutput, opts.format, colorMode)
+	format, human := resolveCheckPresentation(command.Context(), diagnosticOutput, opts.format, colorMode, themeMode)
 	project, err := lint.Load(command.Context(), load)
 	if err != nil {
 		return err

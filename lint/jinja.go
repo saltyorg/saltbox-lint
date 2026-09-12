@@ -40,6 +40,12 @@ type Call struct {
 // Expressions scans parsed scalar values, never YAML comments or unsafe values.
 // Statement tags remain distinct from output expressions for policy consumers.
 func Expressions(source *Source) []Expression {
+	return expressionsMatching(source, nil)
+}
+
+// Filtering precedes scanning, while traversal from the source documents still
+// enforces source membership and unsafe ancestors. Nil includes every scalar.
+func expressionsMatching(source *Source, include func(*Node) bool) []Expression {
 	if source == nil || len(source.parseDiagnostics) > 0 {
 		return nil
 	}
@@ -49,9 +55,14 @@ func Expressions(source *Source) []Expression {
 		if n == nil || n.Tag == "!unsafe" {
 			return
 		}
-		if n.Kind == "string" {
-			spans, ok := scalarPositions(source, n)
-			for _, e := range scanExpressions(n.Value) {
+		if n.Kind == "string" && (include == nil || include(n)) {
+			expressions := scanExpressions(n.Value)
+			var spans []Span
+			var ok bool
+			if len(expressions) > 0 {
+				spans, ok = scalarPositions(source, n)
+			}
+			for _, e := range expressions {
 				e.node = n
 				e.mapped = ok
 				if ok {

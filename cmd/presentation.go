@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +14,6 @@ import (
 
 const (
 	defaultOutputWidth = 80
-	maximumOutputWidth = 100
 )
 
 type descriptorWriter interface {
@@ -29,28 +29,30 @@ func validateColorMode(mode string) error {
 	}
 }
 
-func resolveCheckPresentation(w io.Writer, requestedFormat, colorMode string) (string, report.HumanOptions) {
+func resolveCheckPresentation(ctx context.Context, w io.Writer, requestedFormat, colorMode, themeMode string) (string, report.HumanOptions) {
 	if requestedFormat != "auto" {
 		if requestedFormat == "human" {
-			return requestedFormat, resolveHumanOptions(w, colorMode)
+			return requestedFormat, resolveHumanOptions(ctx, w, colorMode, themeMode)
 		}
 		return requestedFormat, report.HumanOptions{}
 	}
 	if !isCapableTerminal(w) {
 		return "concise", report.HumanOptions{}
 	}
-	return "human", resolveHumanOptions(w, colorMode)
+	return "human", resolveHumanOptions(ctx, w, colorMode, themeMode)
 }
 
-func resolveHumanOptions(w io.Writer, colorMode string) report.HumanOptions {
+func resolveHumanOptions(ctx context.Context, w io.Writer, colorMode, themeMode string) report.HumanOptions {
 	fd, terminal := terminalDescriptor(w)
 	width := defaultOutputWidth
 	if terminal {
 		if detected, _, err := term.GetSize(fd); err == nil && detected > 0 {
-			width = min(detected, maximumOutputWidth)
+			width = detected
 		}
 	}
-	return report.HumanOptions{Width: width, ColorProfile: resolveColorProfile(terminal, colorMode, os.Environ())}
+	profile := resolveColorProfile(terminal, colorMode, os.Environ())
+	eligible := themeQueryEligible("human", terminal, profile, os.Getenv("NO_COLOR"))
+	return report.HumanOptions{Width: width, ColorProfile: profile, Theme: resolveTheme(ctx, themeMode, eligible, queryControllingTerminal), Context: ctx}
 }
 
 func isCapableTerminal(w io.Writer) bool {

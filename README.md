@@ -8,7 +8,8 @@ Python, templates, or lookups. Licensed under [GPLv3](LICENSE).
 ## Install
 
 Linux amd64 and arm64 are supported, including WSL and Linux Remote SSH hosts.
-Release archives contain `saltbox-lint`, this README, and the license. Choose an
+Release archives contain `saltbox-lint`, this README, the project license, and
+the applicable third-party notices and licenses. Choose an
 exact published stable tag, download its matching architecture archive and
 `checksums.txt`, verify the archive's exact checksum entry, then put the binary
 on your PATH. Archive names are `saltbox-lint_VERSION_linux_ARCH.tar.gz`, with
@@ -66,13 +67,14 @@ writing or reporting failures. The Action preserves those statuses.
 
 ## Output and fixes
 
-`--format auto` is the default. It selects annotated human output when the
+`--format auto` is the default. It selects human output when the
 diagnostic destination is a capable terminal, and concise output for pipes,
 files, buffers, or `TERM=dumb`. In `--diff` mode the diagnostic destination is
 stderr, independently of the patch on stdout. Explicit `--format human` keeps
-the annotated layout when redirected, which is useful for readable exports.
-Human output detects the destination width, uses 80 columns when it cannot, and
-caps the layout at 100 columns.
+the same layout when redirected, which is useful for readable exports.
+Human output uses the full detected destination width, with an 80-column fallback
+when detection is unavailable. Long source lines wrap visually without changing
+the source or suggested edits.
 
 The persistent `--color auto|always|never` flag controls human findings and
 detailed rule help. `auto` styles capable terminals unless `NO_COLOR` has a
@@ -80,7 +82,52 @@ nonempty value. Explicit `always` and `never` override `NO_COLOR`. Color does
 not select a format: concise, JSON, GitHub annotations, and diff patches remain
 plain even with `--color always`.
 
-`--format human` shows locations, excerpts, hints, and related context.
+The persistent `--theme auto|dark|light` flag selects One Dark Pro or One Light.
+`auto` asks a colored terminal for its background once, with a short timeout and
+a dark fallback. Explicit choices bypass detection. Detection uses the terminal
+separately from source stdin; redirected output and `NO_COLOR` never trigger a
+query.
+
+`--format human` groups findings by file beneath the Saltbox Lint banner. Each
+file heading has heavy rules above and below it; findings within a file use light
+dividers. When a rule supplies an exact suggestion, it shows a comparison: `-`
+is current source and `+` is suggested source, with original/suggested line numbers. Color
+adds subtle removed/added backgrounds while preserving syntax colors. Identical
+shared formatting proposals appear once, with references from later findings.
+A suggestion is **not permission to apply it**: only findings marked **Fix
+available** participate in `--fix`. Manual suggestions, such as tag renames and
+conditional rewrites, remain manual. Where no exact suggestion is available,
+the report retains the marked source excerpt and Expected guidance. Related
+locations, every changed line, and every marked source line remain visible.
+Comparisons show two unchanged context lines around each hunk and label gaps;
+excerpts show one context line around marked spans. Wrapped rows use `↪` and
+blank line-number cells, keeping the `+`/`-` marker. Whitespace and grapheme
+boundaries are preserved, and fix guidance is separated from code by a blank
+line. Human comparisons are presentation, not patches; use `check --diff` for
+the safe formatting patch.
+
+Source highlighting classifies semantic context from complete documents with a
+frozen catalog that approximates the Ansible language server's module, argument,
+and keyword classifications. Embedded Ansible/Jinja TextMate rules scan only
+the stateful source prefix needed for displayed/context lines. Immutable
+document checkpoints resume scanning after validated edits and reuse unchanged
+lines only when the complete grammar state converges. Both themes display the
+same Ansible semantic categories using their own theme rules and TextMate fallback palettes; the imported theme files
+remain unchanged. Filters and tests remain owned by the Jinja grammar. Explicit
+collections in the document and already loaded role metadata influence module
+lookup. User editor customizations, language-server execution, and undiscovered
+adjacent metadata are outside this renderer. Invalid YAML or unsupported
+highlighting still renders its findings with lexical or plain source text.
+
+Human file groups render through a bounded worker pool capped by available Go
+parallelism, eight workers, and the number of affected files. The writer retains
+diagnostic order while streaming the title, findings, and summary. Findings
+stream in fragments of at most 64 KiB and flush at finding boundaries; at most
+four queued fragments per scheduled file and four files per worker bound queued
+payload to 8 MiB. Lexical line reuse and document checkpoints share a 64 MiB
+retained-cache ceiling per report. These bounds exclude source/semantic
+documents, active rendering and grammar resources; they are not total RSS limits.
+
 `--format concise` emits one primary finding per line:
 
 ```text
@@ -158,9 +205,15 @@ Prerequisites: Go from `go.mod`, GNU make, Git, bash and Linux Action
 utilities above. `make tools` installs pinned developer tools under ignored
 `bin/tools`; Go's build/module caches can also be populated. `make check` checks
 formatting without rewriting files, verifies module tidiness with `go mod tidy
--diff`, runs vet, standard golangci-lint checks, race tests (including Action and
-editor integrations), Bash syntax checks, actionlint for workflows/examples,
-and GoReleaser configuration validation. CI uses the same gates.
+-diff`, runs vet, standard golangci-lint checks, race tests (including the patched
+Nuri module, Action and editor integrations), Bash syntax checks, actionlint for
+workflows/examples, and GoReleaser configuration validation. CI uses the same gates.
+
+The production highlighter uses embedded Ansible/Jinja grammars, dark/light
+themes, and a frozen Ansible module catalog. Normal checks and builds require no
+Ansible or Python runtime. Maintainers can explicitly refresh the catalog with
+`make catalog`, which uses the Saltbox-managed `ansible-doc` and
+`ansible-galaxy` wrappers without running modules, roles, or playbooks.
 
 `make build` completes `make check` before building `bin/saltbox-lint` with
 CGO disabled. `make snapshot` completes the same gate and creates local Linux
@@ -170,4 +223,5 @@ publishes through GoReleaser only when an exact stable version tag is explicitly
 pushed in a future authorized release. Defining this workflow is not a release.
 
 See [rule authoring](docs/rule-authoring.md), [the 40-to-29 migration mapping](docs/rule-migration.md),
-[primary-source research](docs/research.md), and [contributor instructions](AGENTS.md).
+[primary-source research](docs/research.md), [terminal rendering results](docs/terminal-rendering-results.md),
+and [contributor instructions](AGENTS.md).

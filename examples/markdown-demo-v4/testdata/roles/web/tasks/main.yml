@@ -1,0 +1,155 @@
+---
+
+- name: Validate web configuration
+  ansible.builtin.assert:
+    that:
+      - web_config is mapping
+  tags:
+    - web
+- name: Create web data directory
+  ansible.builtin.file:
+    path: "{{ web_data_path }}"
+    state: directory
+  tags:
+    - web
+- name: Create web config directory
+  ansible.builtin.file:
+    path: "{{ web_config_path }}"
+    state: directory
+  tags:
+    - web
+- name: Create web cache directory
+  ansible.builtin.file:
+    path: "{{ web_cache_path }}"
+    state: directory
+  tags:
+    - web
+- name: Create web log directory
+  ansible.builtin.file:
+    path: "{{ web_log_path }}"
+    state: directory
+  tags:
+    - web
+- name: Render web environment
+  ansible.builtin.template:
+    src: web.env.j2
+    dest: "{{ web_config_path }}/web.env"
+  tags:
+    - web
+- name: Render web configuration
+  ansible.builtin.template:
+    src: web.yml.j2
+    dest: "{{ web_config_path }}/web.yml"
+  tags:
+    - web
+- name: Inspect web network
+  ansible.builtin.command:
+    cmd: docker network inspect saltbox
+    changed_when: false
+  tags:
+    - web
+- name: Pull web image
+  community.docker.docker_image:
+    name: "{{ web_image }}"
+    source: pull
+  tags:
+    - web
+- name: Remove legacy web container
+  community.docker.docker_container:
+    name: web-old
+    state: absent
+  tags:
+    - web
+- name: Start web container
+  community.docker.docker_container:
+    name: "{{ web_name }}"
+    state: started
+  tags:
+    - web
+- name: Wait for web port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ web_role_http_port }}"
+  tags:
+    - web
+- name: Check web health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ web_role_http_port }}/health"
+    status_code: 200
+  tags:
+    - web
+- name: Record web version
+  ansible.builtin.set_fact:
+    web_running_version: "{{ web_version }}"
+    cacheable: true
+  tags:
+    - web
+- name: Announce web endpoint
+  ansible.builtin.debug:
+    msg: "Web is available at {{ web_role_url }}"
+    verbosity: 1
+  tags:
+    - web
+- name: Verify web response
+  ansible.builtin.assert:
+    that:
+      - web_status.status == 200
+  tags:
+    - web
+- name: Show web configuration
+  ansible.builtin.debug:
+    msg: "{{ web_config }}"
+  when: (web_config is defined) and web_enabled
+  tags:
+    - web
+- name: Load web defaults
+  ansible.builtin.include_vars:
+    file: defaults.yml
+    name: web_defaults
+  tags:
+    - web
+- name: Merge web defaults
+  ansible.builtin.set_fact:
+    web_config: "{{ web_defaults | combine(web_config) }}"
+    cacheable: true
+  tags:
+    - web
+- name: Write web credentials
+  ansible.builtin.copy:
+    content: "{{ web_credentials }}"
+    dest: "{{ web_config_path }}/credentials"
+  tags:
+    - web
+- name: Set web ownership
+  ansible.builtin.file:
+    path: "{{ web_data_path }}"
+    owner: "{{ user.name }}"
+  tags:
+    - web
+- name: Set web permissions
+  ansible.builtin.file:
+    path: "{{ web_config_path }}"
+    mode: "0755"
+  tags:
+    - web
+- name: Flush web handlers
+  ansible.builtin.meta:
+    flush_handlers: true
+    noop: false
+  tags:
+    - web
+################################
+# Restart
+################################
+- name: Restart web container
+  ansible.builtin.debug:
+    msg: "Restarting {{ web_name }}"
+  tags:
+    - restart_web
+    - web
+  when:
+    - web_role_enabled
+
+- name: Confirm web restart
+  ansible.builtin.debug:
+    msg: "{{ web_name }} restarted"

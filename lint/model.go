@@ -1,6 +1,8 @@
 // Package lint analyzes Saltbox and Sandbox sources without executing them.
 package lint
 
+import "github.com/saltyorg/saltbox-lint/yamlindex"
+
 // Span is a half-open range of UTF-8 byte offsets in the original source.
 type Span struct{ Start, End int }
 
@@ -53,6 +55,7 @@ type Source struct {
 	parseDiagnostics []Diagnostic
 	lineStarts       []int
 	yamlComments     []Span
+	sourceIndex      *yamlindex.Index
 }
 
 // YAMLComments returns exact source spans for comments recognized by the YAML
@@ -76,10 +79,17 @@ type Fix struct {
 	Message string
 	Edits   []Edit
 }
+
+// Preview is a display-only suggestion. It never authorizes automatic edits.
+// Every edit targets the diagnostic primary source, using its original bytes.
+type Preview struct {
+	Edits []Edit
+}
 type Diagnostic struct {
 	Path, RuleID, Severity, Message, Expected string
 	Span                                      Span
 	Related                                   []RelatedLocation
+	Preview                                   *Preview
 	Fix                                       *Fix
 }
 type Rule struct {

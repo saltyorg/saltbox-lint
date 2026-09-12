@@ -1,0 +1,6 @@
+- !!str debug:
+    !!str msg: hello
+- &module debug:
+    &option msg: hello
+- "\u0064ebug":
+    !!str "m\u0073g": hello

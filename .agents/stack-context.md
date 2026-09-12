@@ -1,35 +1,32 @@
 # Stack Context
 
-Generated: 2026-09-11
+Generated: 2026-09-12
 
 ## Stack
-- Language: Go 1.27.1; Linux amd64/arm64, CGO disabled for release binaries.
-- CLI: Cobra v1.10.2; factories with explicit I/O and exit-code boundary.
-- Terminal presentation: colorprofile v0.4.3 and x/term v0.2.2; cmd resolves
-  destination capability, width, and color before calling report renderers.
-- YAML: goccy/go-yaml v1.19.2 AST/tokens behind the lint package.
-- Build: make build runs make check before compiling bin/saltbox-lint.
-- Tests: Go testing with table/golden fixtures; race and real shell/editor harnesses.
-- Lint: golangci-lint v2.13.2 standard, actionlint v1.7.12.
-- Format: gofmt checked without rewriting; go mod tidy -diff checks modules.
-- Packaging: GoReleaser v2.18.1; make snapshot checks before local archives.
-
-## Secondary languages
-- Bash: composite Action download/checksum/install and literal-argv runner.
-- YAML/JSON: workflows, packaging, VS Code process tasks and problem matcher.
+- Go 1.27.1; Linux amd64/arm64, CGO disabled for release binaries.
+- Cobra v1.10.2; command factories own explicit I/O and exit-code boundaries.
+- colorprofile v0.4.3, x/term v0.2.2 and uniseg v0.4.7 provide destination-aware terminal presentation and grapheme wrapping.
+- goccy/go-yaml v1.19.2 validates lint sources; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
+- Embedded Ansible/Jinja TextMate grammars and authentic themes use locally patched Nuri v1.0.1; semantic data uses a frozen catalog.
+- Go testing covers table/golden fixtures, race safety and real shell/editor/terminal harnesses.
+- Secondary languages: Bash for the Action installer/runner; YAML/JSON for workflows, packaging and VS Code tasks.
 
 ## Conventions
-- Flat cmd, lint, report packages; main owns process stdin/signal lifecycle.
-- Rules consume shared analysis and return metadata-backed diagnostics.
-- Paths/spans preserve source identity; renderers adapt columns for consumers.
-- Auto human output is destination-aware; concise/JSON/GitHub/diff bytes remain
-  deterministic and unstyled, and report receives explicit human options.
-- Explicit fixes preserve YAML/Jinja meaning and already-valid source bytes.
-- Consumer repositories remain read-only; examples are adoption templates.
+- Flat cmd, lint, report, highlight and yamlindex packages separate commands, analysis, policy and display; main owns process stdin/signals.
+- Rules consume shared analysis and return metadata-backed diagnostics. Paths/spans retain source identity; renderers adapt columns for consumers.
+- Loading uses ordered Git candidates and bounded read/parse batches. The coordinator publishes selected/context sources deterministically before sequential rule evaluation.
+- Display retains full-source semantic context in both palettes; evidence APIs honor imported theme enablement. Preview indexes are immutable and require exact source matches.
+- Each renderer retains one original semantic document; suggested variants remain ephemeral and never authorize source writes.
+- TextMate display scans required prefixes. Validated edits resume immutable raw-token checkpoints and reuse suffixes only at complete grammar-state convergence.
+- Per-report lexical line and document caches share a 64 MiB retained-data ceiling; pinned readers remain charged. This excludes total process RSS.
+- Ordered reporting caps workers by GOMAXPROCS, eight and file count; four-file lookahead and four queued 64 KiB fragments per file bound queued payload to 8 MiB.
+- Workers join before highlighter close. Cancellation and output errors stop production. Adjacent equivalent ANSI styles coalesce with row/gutter resets preserved.
+- Human source wraps at full destination width without hiding changed/marked lines. Auto format is destination-aware; concise/JSON/GitHub/diff remain deterministic and unstyled.
+- Explicit fixes preserve YAML/Jinja meaning and already-valid bytes. Consumer repositories remain read-only; examples are adoption templates.
 
 ## CI gates
-- make build: format, module tidiness, vet, golangci-lint, go test -race ./....
-- Same gate: Bash syntax, workflow/example actionlint, GoReleaser config check.
-- make snapshot: same checks, local Linux amd64/arm64 archives/checksums.
-- Exact tool versions live in Makefile; workflow actions are commit-pinned.
-- Tools use ignored bin/tools; checks never rewrite source/module files.
+- make check: non-mutating gofmt/module-tidiness checks, vet, pinned golangci-lint and root plus patched Nuri race suites; Bash syntax, workflow/example actionlint and GoReleaser validation.
+- make build runs that gate before the CGO-free binary; make snapshot runs it before local Linux amd64/arm64 archives/checksums with third-party notices/licenses.
+- Makefile pins golangci-lint v2.13.2, actionlint v1.7.12 and GoReleaser v2.18.1; workflow actions are commit-pinned. Tools live under ignored bin/tools.
+- make catalog is the explicit managed-wrapper refresh. Normal gates use embedded data and require no Saltbox Ansible venv.
+- See docs/terminal-rendering-results.md for measured adoption/defer decisions and delivery evidence status.

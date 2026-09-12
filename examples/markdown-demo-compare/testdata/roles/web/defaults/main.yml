@@ -1,0 +1,16 @@
+---
+# Web role defaults
+web_domain: example.test
+web_subdomain: web
+
+# User-facing settings
+################################
+# Settings
+################################
+web_role_enabled: true
+web_role_http_port: 8080
+web_role_healthcheck_path: /health
+web_role_url: "https://{{ web_subdomain }}.{{ web_domain }}"
+
+# Image settings
+web_image: ghcr.io/example/web:latest

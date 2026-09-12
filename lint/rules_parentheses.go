@@ -48,7 +48,11 @@ func checkWhenParentheses(_ *Project, s *Source) []Diagnostic {
 	var ds []Diagnostic
 	for n := range nodes {
 		if kind, value := EffectiveScalar(n); kind == "bool" {
-			ds = append(ds, ansibleDiagnostic(s, "ansible-when-parentheses", scalarTextSpan(s, n, 0, len(n.Value)), "literal when condition needs enclosing parentheses", "Use ("+value+") around the complete when condition."))
+			d := ansibleDiagnostic(s, "ansible-when-parentheses", scalarTextSpan(s, n, 0, len(n.Value)), "literal when condition needs enclosing parentheses", "Use ("+value+") around the complete when condition.")
+			if undecoratedScalar(s, n) {
+				d.Preview = editPreview(d.Span, "("+value+")")
+			}
+			ds = append(ds, d)
 		}
 	}
 	for _, e := range RuntimeExpressions(s) {
@@ -60,7 +64,11 @@ func checkWhenParentheses(_ *Project, s *Source) []Diagnostic {
 			continue
 		}
 		span := Span{e.Tokens[0].Span.Start, e.Tokens[len(e.Tokens)-1].Span.End}
-		ds = append(ds, ansibleDiagnostic(s, "ansible-when-parentheses", span, "nontrivial when condition needs enclosing parentheses", "Use ("+strings.TrimSpace(e.text)+") around the complete when condition."))
+		d := ansibleDiagnostic(s, "ansible-when-parentheses", span, "nontrivial when condition needs enclosing parentheses", "Use ("+strings.TrimSpace(e.text)+") around the complete when condition.")
+		if e.mapped {
+			d.Preview = parenthesesPreview(s, e.node, span)
+		}
+		ds = append(ds, d)
 	}
 	return ds
 }
@@ -151,7 +159,14 @@ func checkConditionalResultParentheses(_ *Project, s *Source) []Diagnostic {
 			opening, closing := strings.Index(expected, "("), strings.LastIndex(expected, ")")
 			expected = expected[:opening] + expected[opening+1:closing] + expected[closing+1:]
 		}
-		ds = append(ds, ansibleDiagnostic(s, "jinja-redundant-conditional-parentheses", e.Tokens[0].Span, "standalone conditional result has unnecessary enclosing parentheses", "Use "+expected+"; preserve condition and branch grouping."))
+		d := ansibleDiagnostic(s, "jinja-redundant-conditional-parentheses", e.Tokens[0].Span, "standalone conditional result has unnecessary enclosing parentheses", "Use "+expected+"; preserve condition and branch grouping.")
+		if e.mapped && (e.node == nil || e.node.Tag == "" && e.node.Anchor == "") {
+			d.Preview = &Preview{}
+			for i := range (len(e.Tokens) - len(tokens)) / 2 {
+				d.Preview.Edits = append(d.Preview.Edits, Edit{Span: e.Tokens[i].Span}, Edit{Span: e.Tokens[len(e.Tokens)-1-i].Span})
+			}
+		}
+		ds = append(ds, d)
 	}
 	return ds
 }

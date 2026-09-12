@@ -1,0 +1,11 @@
+{
+  "comment": "Literal patterns (booleans, numbers, none) have been moved to the core jinja.tmLanguage.json grammar",
+  "injectTo": [
+    "source.ansible"
+  ],
+  "injectionSelector": "L:meta.embedded.inline.jinja -string.quoted.double.jinja -string.quoted.single.jinja",
+  "name": "Grammar for Jinja2 syntax highlighting that is not provided out-of-the-box",
+  "patterns": [],
+  "repository": {},
+  "scopeName": "injection.ansible.jinja-extras"
+}

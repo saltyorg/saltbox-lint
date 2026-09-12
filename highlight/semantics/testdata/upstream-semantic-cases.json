@@ -1,0 +1,1046 @@
+[
+  {
+    "name": "root_mapping",
+    "source": "debug:\n  msg: hello\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 1,
+        "length": 5,
+        "text": "debug",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 3,
+        "text": "msg",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "task_known",
+    "source": "- name: Test\n  debug:\n    msg: hello\n  when: ready\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 4,
+        "text": "name",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 4,
+        "column": 3,
+        "length": 4,
+        "text": "when",
+        "type": "keyword",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "play_context",
+    "source": "- hosts: localhost\n  vars:\n    value: one\n  tasks:\n    - debug:\n        msg: hello\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "hosts",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 4,
+        "text": "vars",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 5,
+        "text": "value",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      },
+      {
+        "line": 4,
+        "column": 3,
+        "length": 5,
+        "text": "tasks",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 7,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 6,
+        "column": 9,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "role_context",
+    "source": "- hosts: localhost\n  roles:\n    - role: web\n      become: true\n      web_var: hi\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "hosts",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 5,
+        "text": "roles",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 7,
+        "length": 4,
+        "text": "role",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      },
+      {
+        "line": 4,
+        "column": 7,
+        "length": 6,
+        "text": "become",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 7,
+        "length": 7,
+        "text": "web_var",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "task_keyword_subtrees",
+    "source": "- debug:\n    msg: hi\n  vars:\n    value: one\n  environment:\n    TEST: hi\n  loop_control:\n    loop_var: element\n  module_defaults:\n    debug:\n      msg: ignored\n  with_not_a_plugin: items\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 3,
+        "length": 4,
+        "text": "vars",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 3,
+        "length": 11,
+        "text": "environment",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 7,
+        "column": 3,
+        "length": 12,
+        "text": "loop_control",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 9,
+        "column": 3,
+        "length": 15,
+        "text": "module_defaults",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 12,
+        "column": 3,
+        "length": 17,
+        "text": "with_not_a_plugin",
+        "type": "keyword",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "separate_args",
+    "source": "- debug:\n  args:\n    msg: hi\n    invented_option:\n      child: value\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 4,
+        "text": "args",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 7,
+        "length": 5,
+        "text": "child",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "unknown_module",
+    "source": "- made.up.module:\n    msg: hi\n    nested:\n      value: true\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 14,
+        "text": "made.up.module",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 6,
+        "text": "nested",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      },
+      {
+        "line": 4,
+        "column": 7,
+        "length": 5,
+        "text": "value",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "unknown_option",
+    "source": "- debug:\n    invented_option:\n      child: value\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 7,
+        "length": 5,
+        "text": "child",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "action_forms",
+    "source": "- action: ansible.builtin.debug msg=hello\n- local_action:\n    module: debug\n    msg: hello\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 6,
+        "text": "action",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 12,
+        "text": "local_action",
+        "type": "keyword",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "quoted_keys",
+    "source": "- 'debug':\n    \"msg\": hi\n  'when': ready\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 7,
+        "text": "'debug'",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 5,
+        "text": "\"msg\"",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 3,
+        "length": 6,
+        "text": "'when'",
+        "type": "keyword",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "unicode_flow",
+    "source": "- { name: \"café 😀\", debug: { msg: ok }, naïve: yes }\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 5,
+        "length": 4,
+        "text": "name",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 1,
+        "column": 22,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 1,
+        "column": 31,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 1,
+        "column": 42,
+        "length": 5,
+        "text": "naïve",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "custom_module",
+    "source": "- port_assignment:\n    namespace: web\n    owner: example\n- tld_parse:\n    url: example.com\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 15,
+        "text": "port_assignment",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 9,
+        "text": "namespace",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 5,
+        "text": "owner",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 4,
+        "column": 3,
+        "length": 9,
+        "text": "tld_parse",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 5,
+        "length": 3,
+        "text": "url",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "explicit_legacy_custom",
+    "source": "- ansible.legacy.port_assignment:\n    namespace: web\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 30,
+        "text": "ansible.legacy.port_assignment",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 9,
+        "text": "namespace",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "declared_collection",
+    "source": "- collections: [community.docker]\n  docker_container:\n    name: demo\n    networks:\n      - name: saltbox\n        ipv4_address: 172.20.0.5\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 11,
+        "text": "collections",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 16,
+        "text": "docker_container",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 4,
+        "text": "name",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 4,
+        "column": 5,
+        "length": 8,
+        "text": "networks",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 9,
+        "length": 4,
+        "text": "name",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 6,
+        "column": 9,
+        "length": 12,
+        "text": "ipv4_address",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "inherited_collection",
+    "source": "- hosts: localhost\n  collections: [community.docker]\n  tasks:\n    - block:\n        - docker_container:\n            name: demo\n      rescue:\n        - debug:\n            msg: rescue\n      always:\n        - debug:\n            msg: always\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "hosts",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 3,
+        "length": 11,
+        "text": "collections",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 3,
+        "length": 5,
+        "text": "tasks",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 4,
+        "column": 7,
+        "length": 5,
+        "text": "block",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 11,
+        "length": 16,
+        "text": "docker_container",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 6,
+        "column": 13,
+        "length": 4,
+        "text": "name",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 7,
+        "column": 7,
+        "length": 6,
+        "text": "rescue",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 8,
+        "column": 11,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 9,
+        "column": 13,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 10,
+        "column": 7,
+        "length": 6,
+        "text": "always",
+        "type": "keyword",
+        "modifiers": []
+      },
+      {
+        "line": 11,
+        "column": 11,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 12,
+        "column": 13,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "nested_options_alias",
+    "source": "- community.docker.docker_container:\n    name: demo\n    hostname: example\n    mounts:\n      - src: /tmp\n        target: /mnt\n    healthcheck:\n      test: [CMD, true]\n      interval: 10s\n      invented: false\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 33,
+        "text": "community.docker.docker_container",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 4,
+        "text": "name",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 8,
+        "text": "hostname",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 4,
+        "column": 5,
+        "length": 6,
+        "text": "mounts",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 6,
+        "column": 9,
+        "length": 6,
+        "text": "target",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 7,
+        "column": 5,
+        "length": 11,
+        "text": "healthcheck",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 8,
+        "column": 7,
+        "length": 4,
+        "text": "test",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 9,
+        "column": 7,
+        "length": 8,
+        "text": "interval",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "jinja_values",
+    "source": "- debug:\n    msg: \"{{ value | default('x') | not_a_filter }} {{ value is custom_test }} {{ lookup('env', 'HOME') }}\"\n  when:\n    - value is defined\n    - value | custom_filter\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 3,
+        "length": 4,
+        "text": "when",
+        "type": "keyword",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "multiline_value",
+    "source": "- debug:\n    msg: |\n      {{ value | custom_filter }}\n      debug: literal\n      when: literal\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "multiple_documents",
+    "source": "---\n- debug:\n    msg: first\n---\n- debug:\n    msg: second\n",
+    "tokens": [
+      {
+        "line": 2,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "malformed_yaml",
+    "source": "- debug:\n    msg: hello\n  broken: [\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 3,
+        "length": 6,
+        "text": "broken",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "anchors_aliases",
+    "source": "- debug: &options\n    msg: hello\n- debug: *options\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "non_scalar_keys",
+    "source": "? [one, two]\n: {child: value}\n",
+    "tokens": [
+      {
+        "line": 2,
+        "column": 4,
+        "length": 5,
+        "text": "child",
+        "type": "property",
+        "modifiers": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "documented_option_alias",
+    "source": "- community.general.xml:\n    ensure: present\n    xpath: /root\n    value: hi\n- community.docker.docker_container:\n    name: demo\n    ports: [8080:80]\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 21,
+        "text": "community.general.xml",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 6,
+        "text": "ensure",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 4,
+        "column": 5,
+        "length": 5,
+        "text": "value",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 5,
+        "column": 3,
+        "length": 33,
+        "text": "community.docker.docker_container",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 6,
+        "column": 5,
+        "length": 4,
+        "text": "name",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 7,
+        "column": 5,
+        "length": 5,
+        "text": "ports",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "builtin_redirect",
+    "source": "- ansible.builtin.xml:\n    ensure: present\n    value: hi\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 19,
+        "text": "ansible.builtin.xml",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 6,
+        "text": "ensure",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 5,
+        "length": 5,
+        "text": "value",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "escaped_quoted_keys",
+    "source": "- \"\\u0064ebug\":\n    \"m\\u0073g\": hello\n  \"wh\\u0065n\": ready\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 12,
+        "text": "\"\\u0064ebug\"",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 5,
+        "length": 10,
+        "text": "\"m\\u0073g\"",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 3,
+        "column": 3,
+        "length": 11,
+        "text": "\"wh\\u0065n\"",
+        "type": "keyword",
+        "modifiers": []
+      }
+    ]
+  },
+  {
+    "name": "anchors_tags_and_explicit_key",
+    "source": "- debug: &options\n    ? \"msg\"\n    : hello\n- debug: *options\n- !!map\n  debug: !!map\n    msg: tagged\n",
+    "tokens": [
+      {
+        "line": 1,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 2,
+        "column": 7,
+        "length": 5,
+        "text": "\"msg\"",
+        "type": "method",
+        "modifiers": []
+      },
+      {
+        "line": 4,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 6,
+        "column": 3,
+        "length": 5,
+        "text": "debug",
+        "type": "class",
+        "modifiers": []
+      },
+      {
+        "line": 7,
+        "column": 5,
+        "length": 3,
+        "text": "msg",
+        "type": "method",
+        "modifiers": []
+      }
+    ]
+  }
+]

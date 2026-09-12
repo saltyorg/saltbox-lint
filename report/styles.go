@@ -2,6 +2,7 @@ package report
 
 import (
 	"charm.land/glamour/v2/ansi"
+	"charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
 )
 
@@ -63,4 +64,18 @@ func markdownStyles() ansi.StyleConfig {
 			},
 		},
 	}
+}
+
+// Preserve Glamour's native banner foreground and background as a pair.
+func humanMarkdownStyles(theme Theme) ansi.StyleConfig {
+	config := markdownStyles()
+	native := styles.DarkStyleConfig
+	if theme == ThemeLight {
+		native = styles.LightStyleConfig
+	}
+	config.H1 = native.H1
+	config.H2 = native.H2
+	config.Heading = native.Heading
+	config.H2.Prefix = ""
+	return config
 }

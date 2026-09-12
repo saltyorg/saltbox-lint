@@ -1,0 +1,37 @@
+{
+  "method": "unmodified scope matcher, getScopeMatcher, resolveScopes and TokenStyle.fromSettings extracted from pinned VS Code source; Color.fromHex normalized to uppercase hex for JSON",
+  "one-dark-pro": {
+    "semanticHighlighting": true,
+    "styles": {
+      "class": {
+        "foreground": "#E5C07B"
+      },
+      "method": {
+        "foreground": "#61AFEF"
+      },
+      "keyword": {
+        "foreground": "#C678DD"
+      },
+      "property": {
+        "foreground": "#E06C75"
+      }
+    }
+  },
+  "one-light": {
+    "semanticHighlighting": false,
+    "styles": {
+      "class": {
+        "foreground": "#C18401"
+      },
+      "method": {
+        "foreground": "#4078F2"
+      },
+      "keyword": {
+        "foreground": "#A626A4"
+      },
+      "property": {
+        "foreground": "#E45649"
+      }
+    }
+  }
+}

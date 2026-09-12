@@ -1,0 +1,26 @@
+--- a/internal/grammar/compile.go
++++ b/internal/grammar/compile.go
+@@ -5,6 +5,7 @@
+ 	"regexp"
+ 	"strconv"
+ 	"strings"
++	"unicode"
+ )
+ 
+ // GrammarResolver resolves foreign grammars by scope name.
+@@ -286,8 +287,14 @@
+ 	var b strings.Builder
+ 	for _, ch := range s {
+ 		switch ch {
+-		case '\\', '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '^', '$':
++		case '\\', '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '^', '$', '-', ',', '#':
+ 			b.WriteByte('\\')
++		default:
++			// Captured whitespace and # must stay literal in (?x) end/while
++			// patterns, matching vscode-textmate escapeRegExpCharacters.
++			if unicode.IsSpace(ch) || ch == '\uFEFF' {
++				b.WriteByte('\\')
++			}
+ 		}
+ 		b.WriteRune(ch)
+ 	}

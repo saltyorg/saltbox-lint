@@ -1,0 +1,2408 @@
+{
+  "tokens": [
+    [
+      {
+        "content": "---",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "entity.other.document.begin.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "-",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.definition.block.sequence.item.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "name",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible",
+          "keyword.other.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "S",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      },
+      {
+        "content": "how template values",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "ansible.builtin.debug",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "msg",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.definition.string.begin.ansible"
+        ]
+      },
+      {
+        "content": "{{",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.section.embedded.begin.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": ".",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "punctuation.other.jinja"
+        ]
+      },
+      {
+        "content": "name",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.property.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "|",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "punctuation.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "default",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "entity.name.function.filter.jinja"
+        ]
+      },
+      {
+        "content": "(",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "punctuation.other.jinja"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "string.quoted.single.jinja",
+          "punctuation.definition.string.begin.jinja"
+        ]
+      },
+      {
+        "content": "unknown",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "string.quoted.single.jinja"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "string.quoted.single.jinja",
+          "punctuation.definition.string.end.jinja"
+        ]
+      },
+      {
+        "content": ")",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "punctuation.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "}}",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.section.embedded.end.jinja"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.definition.string.end.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "quoted",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.definition.string.begin.ansible"
+        ]
+      },
+      {
+        "content": "when: ansible.builtin.debug name",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.definition.string.end.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "escaped",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.definition.string.begin.ansible"
+        ]
+      },
+      {
+        "content": "a ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible"
+        ]
+      },
+      {
+        "content": "\\\"",
+        "color": "#0184BC",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "constant.character.escape.ansible"
+        ]
+      },
+      {
+        "content": "quote",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible"
+        ]
+      },
+      {
+        "content": "\\\"",
+        "color": "#0184BC",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "constant.character.escape.ansible"
+        ]
+      },
+      {
+        "content": " and ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible"
+        ]
+      },
+      {
+        "content": "{{",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.section.embedded.begin.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "}}",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.section.embedded.end.jinja"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.double.ansible",
+          "punctuation.definition.string.end.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "single",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.definition.string.begin.ansible"
+        ]
+      },
+      {
+        "content": "it",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible"
+        ]
+      },
+      {
+        "content": "''",
+        "color": "#0184BC",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "constant.character.escape.single-quoted.ansible"
+        ]
+      },
+      {
+        "content": "s ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible"
+        ]
+      },
+      {
+        "content": "{{",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.section.embedded.begin.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "}}",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.section.embedded.end.jinja"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.definition.string.end.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "enabled",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "true",
+        "color": "#986801",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "constant.language.boolean.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "count",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "42",
+        "color": "#986801",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "constant.numeric.integer.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "nested",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "      ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "ratio",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "3.14",
+        "color": "#986801",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "constant.numeric.float.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "      ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "multiline",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "|",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "keyword.control.flow.block-scalar.literal.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "        ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible"
+        ]
+      },
+      {
+        "content": "line one ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible"
+        ]
+      },
+      {
+        "content": "{{",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "punctuation.section.embedded.begin.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "}}",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "punctuation.section.embedded.end.jinja"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "        when: this stays literal",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "folded",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "\u003e",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "keyword.control.flow.block-scalar.folded.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "      ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible"
+        ]
+      },
+      {
+        "content": "first line",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "      second ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible"
+        ]
+      },
+      {
+        "content": "{{",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "punctuation.section.embedded.begin.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "}}",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.block.ansible",
+          "punctuation.section.embedded.end.jinja"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition"
+        ]
+      },
+      {
+        "content": "when",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "keyword.other.special-method.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition"
+        ]
+      },
+      {
+        "content": "is",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "keyword.control.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "defined",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "entity.name.function.test.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition"
+        ]
+      },
+      {
+        "content": "and",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "keyword.operator.logical.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition"
+        ]
+      },
+      {
+        "content": "count",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition"
+        ]
+      },
+      {
+        "content": "\u003e",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "keyword.operator.comparison.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition"
+        ]
+      },
+      {
+        "content": "2",
+        "color": "#986801",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow-unquoted.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "constant.numeric.jinja"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.whitespace.comment.leading.ansible"
+        ]
+      },
+      {
+        "content": "#",
+        "color": "#A0A1A7",
+        "fontStyle": 1,
+        "scopes": [
+          "source.ansible",
+          "comment.line.number-sign.ansible",
+          "punctuation.definition.comment.ansible"
+        ]
+      },
+      {
+        "content": " explanatory comment",
+        "color": "#A0A1A7",
+        "fontStyle": 1,
+        "scopes": [
+          "source.ansible",
+          "comment.line.number-sign.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "-",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.definition.block.sequence.item.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "name",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible",
+          "keyword.other.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "C",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      },
+      {
+        "content": "heck conditions",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "ansible.builtin.debug",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "msg",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.definition.string.begin.ansible"
+        ]
+      },
+      {
+        "content": "{{",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.section.embedded.begin.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "result",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "}}",
+        "color": "#CA1243",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.section.embedded.end.jinja"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.quoted.single.ansible",
+          "punctuation.definition.string.end.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition"
+        ]
+      },
+      {
+        "content": "when",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "keyword.other.special-method.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "-",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "punctuation.definition.block.sequence.item.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "is",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "keyword.control.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "defined",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "entity.name.function.test.jinja"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "-",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "punctuation.definition.block.sequence.item.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "count",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "|",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "punctuation.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "int",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "entity.name.function.filter.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "\u003e",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "keyword.operator.comparison.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition"
+        ]
+      },
+      {
+        "content": "1",
+        "color": "#986801",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.block.ansible.condition",
+          "meta.yaml-block.ansible.condition",
+          "meta.yaml-block-list-item.ansible.condition",
+          "string.unquoted.ansible",
+          "meta.embedded.inline.jinja",
+          "constant.numeric.jinja"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "-",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.definition.block.sequence.item.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "name",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible",
+          "keyword.other.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "Q",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      },
+      {
+        "content": "uoted condition",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "ansible.builtin.debug",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "msg",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "d",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      },
+      {
+        "content": "one",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition"
+        ]
+      },
+      {
+        "content": "when",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "keyword.other.special-method.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "punctuation.definition.string.begin.ansible"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "==",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "keyword.operator.comparison.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "\\\"",
+        "color": "#0184BC",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "string.quoted.double.jinja",
+          "constant.character.escape.double-quoted.ansible"
+        ]
+      },
+      {
+        "content": "ready",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "string.quoted.double.jinja"
+        ]
+      },
+      {
+        "content": "\\\"",
+        "color": "#0184BC",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "string.quoted.double.jinja",
+          "constant.character.escape.double-quoted.ansible"
+        ]
+      },
+      {
+        "content": "\"",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.double.ansible.meta",
+          "punctuation.definition.string.end.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "-",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.definition.block.sequence.item.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "name",
+        "color": "#A626A4",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible",
+          "keyword.other.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "S",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      },
+      {
+        "content": "ingle quoted condition",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "ansible.builtin.debug",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "    ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "msg",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible",
+          "entity.name.tag.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible"
+        ]
+      },
+      {
+        "content": "d",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      },
+      {
+        "content": "one",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "string.unquoted.plain.out.ansible"
+        ]
+      }
+    ],
+    [
+      {
+        "content": "  ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition"
+        ]
+      },
+      {
+        "content": "when",
+        "color": "#4078F2",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "keyword.other.special-method.ansible"
+        ]
+      },
+      {
+        "content": ":",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "punctuation.separator.key-value.mapping.ansible"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "punctuation.definition.string.begin.ansible"
+        ]
+      },
+      {
+        "content": "item",
+        "color": "#E45649",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "variable.other.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "==",
+        "color": "#383A42",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "keyword.operator.comparison.jinja"
+        ]
+      },
+      {
+        "content": " ",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "meta.embedded.inline.jinja"
+        ]
+      },
+      {
+        "content": "''",
+        "color": "#0184BC",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "string.quoted.single.jinja",
+          "constant.character.escape.single-quoted.ansible"
+        ]
+      },
+      {
+        "content": "ready",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "string.quoted.single.jinja"
+        ]
+      },
+      {
+        "content": "''",
+        "color": "#0184BC",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "meta.embedded.inline.jinja",
+          "string.quoted.single.jinja",
+          "constant.character.escape.single-quoted.ansible"
+        ]
+      },
+      {
+        "content": "'",
+        "color": "#50A14F",
+        "fontStyle": 0,
+        "scopes": [
+          "source.ansible",
+          "meta.flow.ansible.condition",
+          "string.quoted.single.ansible.meta",
+          "punctuation.definition.string.end.ansible"
+        ]
+      }
+    ]
+  ],
+  "fg": "#383A42",
+  "bg": "#FAFAFA",
+  "themeName": "OneLight"
+}

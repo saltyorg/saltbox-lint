@@ -1,0 +1,33 @@
+---
+- name: Show template values
+  ansible.builtin.debug:
+    msg: "{{ item.name | default('unknown') }}"
+    quoted: "when: ansible.builtin.debug name"
+    escaped: "a \"quote\" and {{ item }}"
+    single: 'it''s {{ item }}'
+    enabled: true
+    count: 42
+    nested:
+      ratio: 3.14
+      multiline: |
+        line one {{ item }}
+        when: this stays literal
+    folded: >
+      first line
+      second {{ item }}
+  when: item is defined and count > 2
+  # explanatory comment
+- name: Check conditions
+  ansible.builtin.debug:
+    msg: '{{ result }}'
+  when:
+    - item is defined
+    - count | int > 1
+- name: Quoted condition
+  ansible.builtin.debug:
+    msg: done
+  when: "item == \"ready\""
+- name: Single quoted condition
+  ansible.builtin.debug:
+    msg: done
+  when: 'item == ''ready'''

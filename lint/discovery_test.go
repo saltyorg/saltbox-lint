@@ -3,12 +3,61 @@ package lint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
 )
+
+func TestLoadReportsFirstCandidateError(t *testing.T) {
+	for _, useGit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("git=%v", useGit), func(t *testing.T) {
+			root := t.TempDir()
+			if useGit {
+				gitTest(t, root, "init", "-q")
+			}
+			outside := t.TempDir()
+			first := putFile(t, outside, "first.yml", "value: first\n")
+			last := putFile(t, outside, "last.yml", "value: last\n")
+			if err := os.Mkdir(filepath.Join(root, "tasks"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			for name, target := range map[string]string{"a.yml": first, "z.yml": last} {
+				if err := os.Symlink(target, filepath.Join(root, "tasks", name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := fmt.Sprintf("source %s is outside root %s", first, root)
+			for range 10 {
+				_, err := Load(t.Context(), Options{Root: root, Paths: []string{root}})
+				if err == nil || err.Error() != want {
+					t.Fatalf("error = %v, want %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestGitDirectoryCandidatesRespectPathBoundaries(t *testing.T) {
+	files := []string{"roles/a", "roles/a-extra/tasks/main.yml", "roles/a/defaults/main.yml", "roles/a/tasks/main.yml", "roles/ab/tasks/main.yml", "saltbox.yml"}
+	for _, tc := range []struct {
+		dir  string
+		want []string
+	}{
+		{".", files},
+		{"roles/a", []string{"roles/a", "roles/a/defaults/main.yml", "roles/a/tasks/main.yml"}},
+		{"roles/a/tasks", []string{"roles/a/tasks/main.yml"}},
+		{"roles/missing", nil},
+	} {
+		t.Run(tc.dir, func(t *testing.T) {
+			if got := slices.Collect(gitDirectoryCandidates(files, tc.dir)); !slices.Equal(got, tc.want) {
+				t.Fatalf("candidates = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func putFile(t *testing.T, root, name, data string) string {
 	t.Helper()

@@ -21,6 +21,7 @@ var errFindings = errors.New("lint findings")
 
 type rootOptions struct {
 	color string
+	theme string
 }
 
 // NewRootCommand creates an independent command tree for one invocation.
@@ -47,7 +48,10 @@ func NewRootCommand(streams Streams, version string) *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE:          func(command *cobra.Command, _ []string) error { return command.Help() },
 		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
-			return validateColorMode(opts.color)
+			if err := validateColorMode(opts.color); err != nil {
+				return err
+			}
+			return validateThemeMode(opts.theme)
 		},
 	}
 	root.SetIn(streams.In)
@@ -55,6 +59,7 @@ func NewRootCommand(streams Streams, version string) *cobra.Command {
 	root.SetErr(streams.Err)
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.PersistentFlags().StringVar(&opts.color, "color", "auto", "Color: auto, always, never")
+	root.PersistentFlags().StringVar(&opts.theme, "theme", "auto", "Theme: auto, dark, light (auto detects the terminal background)")
 	root.AddCommand(newCheckCommand(&opts), newRulesCommand(&opts))
 	return root
 }

@@ -13,12 +13,23 @@ import (
 	"github.com/goccy/go-yaml/lexer"
 	"github.com/goccy/go-yaml/parser"
 	"github.com/goccy/go-yaml/token"
+	"github.com/saltyorg/saltbox-lint/yamlindex"
 )
 
 // Parse preserves the supplied bytes and reports invalid YAML as a located
 // diagnostic. Templates are raw text and are never interpreted as YAML.
 func Parse(filename string, data []byte) (*Source, []Diagnostic) {
-	s := &Source{Path: path.Clean(filename), Data: bytes.Clone(data), lineStarts: []int{0}}
+	return parseOwnedSource(filename, bytes.Clone(data))
+}
+
+// parseOwnedSource takes ownership of data. Disk reads already supply an owned
+// buffer; public Parse and editor buffers must retain their copying boundary.
+func parseOwnedSource(filename string, data []byte) (*Source, []Diagnostic) {
+	return parseSource(filename, data, false)
+}
+
+func parseSource(filename string, data []byte, retainIndex bool) (*Source, []Diagnostic) {
+	s := &Source{Path: path.Clean(filename), Data: data, lineStarts: []int{0}}
 	s.Kind, s.Role, s.RolePath = classify(s.Path)
 	for i, b := range s.Data {
 		if b == '\n' {
@@ -28,7 +39,13 @@ func Parse(filename string, data []byte) (*Source, []Diagnostic) {
 	if s.Kind == Template {
 		return s, nil
 	}
-	tokens := lexer.Tokenize(string(s.Data))
+	text := string(s.Data)
+	tokens := lexer.Tokenize(text)
+	if retainIndex {
+		// Semantic indexing is independent of lint syntax acceptance. Its failure
+		// leaves presentation on the normal classifier fallback.
+		s.sourceIndex, _ = yamlindex.FromTokens(text, tokens)
+	}
 	a := sourceAdapter{Source: s, spans: make(map[*token.Token]Span), originEnds: make(map[*token.Token]int)}
 	err := a.locateTokens(tokens)
 	if err == nil {

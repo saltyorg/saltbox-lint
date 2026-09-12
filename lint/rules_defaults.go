@@ -41,6 +41,9 @@ func declarationsByName(source *Source) map[string]defaultDeclaration {
 }
 
 func expressionsForDeclaration(source *Source, declaration defaultDeclaration) []Expression {
+	if declaration.Value == nil {
+		return nil
+	}
 	nodes := make(map[*Node]bool)
 	var visit func(*Node)
 	visit = func(node *Node) {
@@ -57,14 +60,7 @@ func expressionsForDeclaration(source *Source, declaration defaultDeclaration) [
 		}
 	}
 	visit(declaration.Value)
-
-	var expressions []Expression
-	for _, expression := range Expressions(source) {
-		if nodes[expression.node] {
-			expressions = append(expressions, expression)
-		}
-	}
-	return expressions
+	return expressionsMatching(source, func(node *Node) bool { return nodes[node] })
 }
 
 func checkRoleVariablePrefix(_ *Project, source *Source) []Diagnostic {

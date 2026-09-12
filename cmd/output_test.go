@@ -210,7 +210,7 @@ func TestAutoFormatUsesTerminalAndHonorsDumbTerm(t *testing.T) {
 
 	t.Run("diff diagnostics use terminal stderr", func(t *testing.T) {
 		patch := filepath.Join(root, "fix.patch")
-		command := binary + " --color never check --diff " + path + " >" + patch
+		command := "stty cols 160 && " + binary + " --color never check --diff " + path + " >" + patch
 		pty := exec.CommandContext(t.Context(), "script", "-qec", command, "/dev/null")
 		pty.Env = terminalTestEnvironment("xterm-256color", "")
 		output, err := pty.CombinedOutput()
@@ -220,6 +220,10 @@ func TestAutoFormatUsesTerminalAndHonorsDumbTerm(t *testing.T) {
 		if !bytes.Contains(output, []byte("Fix available:")) {
 			t.Fatalf("stderr terminal did not receive human diagnostics: %q", output)
 		}
+		if !bytes.Contains(output, []byte(strings.Repeat("━", 160))) {
+			t.Fatalf("stderr terminal width was capped: %q", output)
+		}
+
 		patchData, err := os.ReadFile(patch)
 		if err != nil {
 			t.Fatal(err)

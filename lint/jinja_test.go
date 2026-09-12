@@ -5,6 +5,25 @@ import (
 	"testing"
 )
 
+// Mapping ordinary YAML text used to allocate in proportion to its length for
+// every expression consumer, despite returning no expressions.
+func TestExpressionsWithoutExpressionsDoNotAllocateSourceMaps(t *testing.T) {
+	for _, value := range []string{
+		strings.Repeat("ordinary text ", 1024),
+		"{# a Jinja comment with {{ ignored }} #}",
+	} {
+		s := jinjaSource(t, "value: '"+value+"'\n")
+		allocations := testing.AllocsPerRun(10, func() {
+			if got := Expressions(s); got != nil {
+				t.Fatalf("expressions = %+v, want nil", got)
+			}
+		})
+		if allocations != 0 {
+			t.Fatalf("expression-free scalar allocated %.0f times", allocations)
+		}
+	}
+}
+
 func jinjaSource(t *testing.T, input string) *Source {
 	t.Helper()
 	s, ds := Parse("values.yml", []byte(input))

@@ -1,0 +1,36 @@
+{
+  "injectTo": [
+    "source.ansible"
+  ],
+  "injectionSelector": "L:string.quoted.single meta.embedded.inline.jinja",
+  "name": "Injection grammar for supporting single quote escapes in Jinja2 expressions",
+  "patterns": [
+    {
+      "captures": {
+        "1": {
+          "name": "constant.character.escape.single-quoted.ansible"
+        },
+        "2": {
+          "patterns": [
+            {
+              "include": "source.ansible-jinja#string"
+            }
+          ]
+        },
+        "3": {
+          "name": "constant.character.escape.single-quoted.ansible"
+        }
+      },
+      "match": "('')(.*?)('')",
+      "name": "string.quoted.single.jinja"
+    },
+    {
+      "comment": [
+        "This technique will remind the user to use quote escaping"
+      ],
+      "match": "(?x)\n                    '(?! \\s+ (?=\\#|$)) # we accept the quote only if the line ends or ends with a comment\n                ",
+      "name": "invalid.illegal.expected-escaped-single-quote.ansible"
+    }
+  ],
+  "scopeName": "injection.ansible.jinja-single-quote-escape"
+}

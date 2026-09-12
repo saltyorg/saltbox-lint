@@ -1,0 +1,39 @@
+{
+  "vsctmVersion": "9.3.2",
+  "grammar": "go",
+  "grammarSourceHash": "sha256:abcdef1234567890",
+  "source": "package main\n",
+  "themes": {
+    "github-light": {
+      "tokens": [
+        [
+          {
+            "start": 0,
+            "end": 7,
+            "text": "package",
+            "scopes": ["source.go", "keyword.other.package.go"],
+            "color": "#D73A49",
+            "fontStyle": 0
+          },
+          {
+            "start": 7,
+            "end": 8,
+            "text": " ",
+            "scopes": ["source.go"],
+            "color": "#24292E",
+            "fontStyle": 0
+          },
+          {
+            "start": 8,
+            "end": 12,
+            "text": "main",
+            "scopes": ["source.go", "entity.name.package.go"],
+            "color": "#6F42C1",
+            "fontStyle": 0
+          }
+        ]
+      ],
+      "html": "<pre class=\"nuri github-light\"><code><span class=\"line\"><span style=\"color:#D73A49\">package</span><span style=\"color:#24292E\"> </span><span style=\"color:#6F42C1\">main</span></span></code></pre>"
+    }
+  }
+}

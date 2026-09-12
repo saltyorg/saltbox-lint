@@ -76,6 +76,7 @@ type Diagnostic struct {
 	Expected string    `json:"expected,omitempty"`
 	Related  []Related `json:"related,omitempty"`
 	Fix      *Fix      `json:"fix,omitempty"`
+	preview  *lint.Preview
 }
 
 func location(p *lint.Project, path string, span lint.Span) Location {
@@ -86,7 +87,7 @@ func location(p *lint.Project, path string, span lint.Span) Location {
 func diagnostics(p *lint.Project, ds []lint.Diagnostic) []Diagnostic {
 	records := make([]Diagnostic, 0, len(ds))
 	for _, d := range ds {
-		record := Diagnostic{Location: location(p, d.Path, d.Span), RuleID: d.RuleID, Severity: d.Severity, Message: d.Message, Expected: d.Expected}
+		record := Diagnostic{Location: location(p, d.Path, d.Span), RuleID: d.RuleID, Severity: d.Severity, Message: d.Message, Expected: d.Expected, preview: d.Preview}
 		for _, related := range d.Related {
 			record.Related = append(record.Related, Related{Location: location(p, related.Path, related.Span), Message: related.Message})
 		}

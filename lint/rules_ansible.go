@@ -58,7 +58,16 @@ func checkAnsibleTags(_ *Project, s *Source) []Diagnostic {
 				}
 			}
 			if !valid {
-				ds = append(ds, ansibleDiagnostic(s, "ansible-tag-name", value.Span, "Ansible tags must be literal lowercase strings", "Use literal kebab-case tags matching [a-z0-9]+(?:-[a-z0-9]+)*; quote string spellings of YAML typed values."))
+				d := ansibleDiagnostic(s, "ansible-tag-name", value.Span, "Ansible tags must be literal lowercase strings", "Use literal kebab-case tags matching [a-z0-9]+(?:-[a-z0-9]+)*; quote string spellings of YAML typed values.")
+				replacement := strings.ReplaceAll(text, "_", "-")
+				if kind == "string" && undecoratedScalar(s, value) && strings.Contains(text, "_") && ansibleTagName.MatchString(replacement) && !yamlDateTag.MatchString(replacement) {
+					span := scalarTextSpan(s, value, 0, len(value.Value))
+					// Only simple literal spellings, never escaped or templated names.
+					if string(s.Data[span.Start:span.End]) == text {
+						d.Preview = editPreview(span, replacement)
+					}
+				}
+				ds = append(ds, d)
 			}
 		}
 	}
@@ -71,7 +80,18 @@ func checkAnsibleStaticImports(_ *Project, s *Source) []Diagnostic {
 			continue
 		}
 		replacement := strings.Replace(task.Module, "import_", "include_", 1)
-		ds = append(ds, ansibleDiagnostic(s, "ansible-static-import", task.ModuleSpan, "static Ansible imports are not allowed", "Use ansible.builtin."+replacement+" instead of "+task.Module+"."))
+		d := ansibleDiagnostic(s, "ansible-static-import", task.ModuleSpan, "static Ansible imports are not allowed", "Use ansible.builtin."+replacement+" instead of "+task.Module+".")
+		for _, entry := range task.Node.Entries {
+			if entry.Key.Span != task.ModuleSpan || !undecoratedScalar(s, entry.Key) {
+				continue
+			}
+			span := scalarTextSpan(s, entry.Key, 0, len(entry.Key.Value))
+			text := string(s.Data[span.Start:span.End])
+			if text == task.Module || text == "ansible.builtin."+task.Module {
+				d.Preview = editPreview(span, "ansible.builtin."+replacement)
+			}
+		}
+		ds = append(ds, d)
 	}
 	return ds
 }

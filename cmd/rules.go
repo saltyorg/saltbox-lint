@@ -18,7 +18,11 @@ func newRulesCommand(rootOpts *rootOptions) *cobra.Command {
 		if len(args) == 1 {
 			for _, rule := range rules {
 				if args[0] == rule.ID {
-					return report.RenderRule(command.OutOrStdout(), rule, resolveHumanOptions(command.OutOrStdout(), rootOpts.color))
+					human := resolveHumanOptions(command.Context(), command.OutOrStdout(), rootOpts.color, rootOpts.theme)
+					if err := command.Context().Err(); err != nil {
+						return err
+					}
+					return report.RenderRule(command.OutOrStdout(), rule, human)
 				}
 			}
 			return fmt.Errorf("unknown rule %q", args[0])

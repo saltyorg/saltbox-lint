@@ -56,6 +56,8 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 
 // Primary fields share a bucket; only equal explanatory and fix content makes
 // a duplicate. Separate allocations of the same fix still compare equal.
+// Display-only previews deliberately do not participate in diagnostic identity;
+// differing suggestions must never create extra machine-visible findings.
 func sameDiagnosticDetails(a, b Diagnostic) bool {
 	if (a.Related == nil) != (b.Related == nil) || !slices.Equal(a.Related, b.Related) {
 		return false
