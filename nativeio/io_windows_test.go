@@ -11,8 +11,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// CreatePipe produces the synchronous inherited handles used by shells and
-// Node child_process; os.Pipe can instead produce overlapped Go-owned handles.
+// CreatePipe explicitly produces synchronous handles, independent of how Go
+// implements its higher-level pipe helpers.
 func TestReadSynchronousPipeCancellationAndCallerReuse(t *testing.T) {
 	for range 50 {
 		var read, write windows.Handle
@@ -69,5 +69,37 @@ func TestReadRejectsOverlappedHandle(t *testing.T) {
 	defer func() { _ = file.Close() }()
 	if _, err := Read(t.Context(), file, make([]byte, 4)); !errors.Is(err, ErrOverlappedHandle) {
 		t.Fatalf("overlapped read: %v", err)
+	}
+}
+
+// Unlike the entry-race test, Read runs synchronously against an empty pipe;
+// only the deadline can end the pending operation. The watchdog releases the
+// real read if cancellation regresses so native CI reports a failure, not a hang.
+func TestReadSynchronousPipeDeadlineInterruptsPendingIO(t *testing.T) {
+	var read, write windows.Handle
+	if err := windows.CreatePipe(&read, &write, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	source := os.NewFile(uintptr(read), "read")
+	writer := os.NewFile(uintptr(write), "write")
+	defer func() { _ = source.Close(); _ = writer.Close() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	watchdogDone := make(chan struct{})
+	watchdog := time.AfterFunc(time.Second, func() { _ = writer.Close(); close(watchdogDone) })
+	data := make([]byte, 1)
+	_, err := Read(ctx, source, data)
+	if !watchdog.Stop() {
+		<-watchdogDone
+		t.Fatal("pending pipe read required watchdog closure")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deadline read: %v", err)
+	}
+	if _, err := writer.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(source, data); err != nil || string(data) != "x" {
+		t.Fatalf("caller reuse: %q %v", data, err)
 	}
 }
