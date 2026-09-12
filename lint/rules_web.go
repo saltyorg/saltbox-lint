@@ -99,6 +99,7 @@ var endpointComponentName = regexp.MustCompile(`^([a-z][a-z0-9_]*)_(subdomain|do
 
 func checkRoleWebContract(_ *Project, source *Source) []Diagnostic {
 	declarations := declarationsByName(source)
+	expressions := newDeclarationExpressionQuery(source)
 	components := make(map[string]endpointComponents)
 	rolePrefix := source.Role + "_role_"
 	for name := range declarations {
@@ -136,7 +137,7 @@ func checkRoleWebContract(_ *Project, source *Source) []Diagnostic {
 				continue
 			}
 			recognized[contract.name] = true
-			if canonicalRoleWebDefault(source, declaration, endpoint, contract.scheme) || (contract.scheme == "https" && hasCanonicalHostFallback(source, declaration, endpoint, declarations)) {
+			if canonicalRoleWebDefault(source, declaration, endpoint, contract.scheme, expressions) || (contract.scheme == "https" && hasCanonicalHostFallback(source, declaration, endpoint, declarations, expressions)) {
 				continue
 			}
 			diagnostics = append(diagnostics, roleWebDiagnostic(source, declaration, source.Role, endpoint, contract.scheme, "endpoint default does not use its canonical role_web contract"))
@@ -145,8 +146,8 @@ func checkRoleWebContract(_ *Project, source *Source) []Diagnostic {
 	}
 
 	for _, declaration := range topLevelDeclarations(source) {
-		expressions := expressionsForDeclaration(source, declaration)
-		if !recognized[declaration.Name] && (strings.HasSuffix(declaration.Name, "_host") || strings.HasSuffix(declaration.Name, "_url")) && hasDirectLookupDefault(source, declaration, "role_web") {
+		declarationExpressions := expressions.expressions(declaration)
+		if !recognized[declaration.Name] && (strings.HasSuffix(declaration.Name, "_host") || strings.HasSuffix(declaration.Name, "_url")) && hasDirectLookupDefault(declaration, "role_web", expressions) {
 			diagnostics = append(diagnostics, Diagnostic{
 				Path:     source.Path,
 				RuleID:   "role-web-contract",
@@ -158,7 +159,7 @@ func checkRoleWebContract(_ *Project, source *Source) []Diagnostic {
 			reported[declaration.Name] = true
 		}
 
-		targetRole, endpoint, composed := directlyComposedEndpoint(expressions)
+		targetRole, endpoint, composed := directlyComposedEndpoint(declarationExpressions)
 		if !composed || reported[declaration.Name] {
 			continue
 		}
@@ -174,11 +175,11 @@ func checkRoleWebContract(_ *Project, source *Source) []Diagnostic {
 	return diagnostics
 }
 
-func hasDirectLookupDefault(source *Source, declaration defaultDeclaration, plugin string) bool {
+func hasDirectLookupDefault(declaration defaultDeclaration, plugin string, expressions *declarationExpressionQuery) bool {
 	if declaration.Value == nil || declaration.Value.Kind != "string" {
 		return false
 	}
-	for _, expression := range expressionsForDeclaration(source, declaration) {
+	for _, expression := range expressions.expressions(declaration) {
 		if strings.TrimSpace(declaration.Value.Value) != strings.TrimSpace(expression.text) {
 			continue
 		}
@@ -202,11 +203,11 @@ func directLookup(expression Expression, plugin string) (Call, bool) {
 	return Call{}, false
 }
 
-func canonicalRoleWebDefault(source *Source, declaration defaultDeclaration, endpoint, scheme string) bool {
+func canonicalRoleWebDefault(source *Source, declaration defaultDeclaration, endpoint, scheme string, query *declarationExpressionQuery) bool {
 	if declaration.Value == nil || declaration.Value.Kind != "string" {
 		return false
 	}
-	expressions := expressionsForDeclaration(source, declaration)
+	expressions := query.expressions(declaration)
 	if len(expressions) != 1 || strings.TrimSpace(declaration.Value.Value) != strings.TrimSpace(expressions[0].text) {
 		return false
 	}
@@ -242,12 +243,12 @@ func canonicalRoleWebDefault(source *Source, declaration defaultDeclaration, end
 	return ok && found == scheme
 }
 
-func hasCanonicalHostFallback(source *Source, declaration defaultDeclaration, endpoint string, declarations map[string]defaultDeclaration) bool {
+func hasCanonicalHostFallback(source *Source, declaration defaultDeclaration, endpoint string, declarations map[string]defaultDeclaration, query *declarationExpressionQuery) bool {
 	hostName := source.Role + "_role_" + endpoint + "_host"
 	if _, exists := declarations[hostName]; !exists || declaration.Value == nil || declaration.Value.Kind != "string" {
 		return false
 	}
-	expressions := expressionsForDeclaration(source, declaration)
+	expressions := query.expressions(declaration)
 	if len(expressions) != 1 || declaration.Value.Value != "https://"+expressions[0].text {
 		return false
 	}

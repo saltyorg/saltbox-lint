@@ -66,3 +66,48 @@ func TestDeclarationExpressionsPreserveSharedNodeMembership(t *testing.T) {
 		t.Fatalf("foreign parent of source nodes returned %+v, want both source occurrences", got)
 	}
 }
+
+func TestDeclarationExpressionQueryPreservesOccurrenceContract(t *testing.T) {
+	s := jinjaSource(t, "wanted:\n  '{{ key }}': ['{{ first }}', '{{ second }}']\nunsafe: !unsafe '{{ ignored }}'\nother: literal\n")
+	wanted := defaultDeclaration{Value: s.Documents[0].Get("wanted")}
+	first := wanted.Value.Entries[0].Value.Items[0]
+	second := wanted.Value.Entries[0].Value.Items[1]
+	assertExpressionTokens(t, newDeclarationExpressionQuery(s).expressions(wanted), "key", "first", "second")
+
+	s.Documents[0].Entries[2].Value = first
+	query := newDeclarationExpressionQuery(s)
+	assertExpressionTokens(t, query.expressions(wanted), "key", "first", "second", "first")
+	assertExpressionTokens(t, query.expressions(defaultDeclaration{Value: s.Documents[0].Get("unsafe")}))
+	assertExpressionTokens(t, query.expressions(defaultDeclaration{}))
+
+	foreignParent := &Node{Kind: "sequence", Items: []*Node{second, wanted.Value.Entries[0].Key}}
+	assertExpressionTokens(t, query.expressions(defaultDeclaration{Value: foreignParent}), "key", "second")
+
+	foreign := jinjaSource(t, "wanted: '{{ foreign }}'\n")
+	assertExpressionTokens(t, query.expressions(defaultDeclaration{Value: foreign.Documents[0].Get("wanted")}))
+
+	unsafeAncestor := jinjaSource(t, "!unsafe {wanted: '{{ ignored }}'}\n")
+	unsafeQuery := newDeclarationExpressionQuery(unsafeAncestor)
+	assertExpressionTokens(t, unsafeQuery.expressions(defaultDeclaration{Value: unsafeAncestor.Documents[0].Get("wanted")}))
+}
+
+func TestDeclarationExpressionQueryObservesMutationsBetweenInvocations(t *testing.T) {
+	s := jinjaSource(t, "wanted: {inner: '{{ target }}'}\nother: literal\n")
+	declaration := defaultDeclaration{Value: s.Documents[0].Get("wanted")}
+	assertExpressionTokens(t, newDeclarationExpressionQuery(s).expressions(declaration), "target")
+
+	s.Documents[0].Entries[1].Value = declaration.Value.Get("inner")
+	assertExpressionTokens(t, newDeclarationExpressionQuery(s).expressions(declaration), "target", "target")
+}
+
+func assertExpressionTokens(t *testing.T, expressions []Expression, want ...string) {
+	t.Helper()
+	if len(expressions) != len(want) {
+		t.Fatalf("expressions = %+v, want tokens %v", expressions, want)
+	}
+	for i, token := range want {
+		if len(expressions[i].Tokens) != 1 || expressions[i].Tokens[0].Text != token {
+			t.Fatalf("expression %d = %+v, want token %q", i, expressions[i], token)
+		}
+	}
+}

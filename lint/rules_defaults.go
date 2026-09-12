@@ -3,6 +3,7 @@ package lint
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -44,6 +45,52 @@ func expressionsForDeclaration(source *Source, declaration defaultDeclaration) [
 	if declaration.Value == nil {
 		return nil
 	}
+	nodes := declarationNodes(declaration.Value)
+	return expressionsMatching(source, func(node *Node) bool { return nodes[node] })
+}
+
+type declarationExpressionQuery struct {
+	index      expressionIndex
+	visited    map[*Node]uint64
+	generation uint64
+	matches    []indexedExpression
+}
+
+func newDeclarationExpressionQuery(source *Source) *declarationExpressionQuery {
+	return &declarationExpressionQuery{index: newExpressionIndex(source), visited: make(map[*Node]uint64)}
+}
+
+func (query *declarationExpressionQuery) expressions(declaration defaultDeclaration) []Expression {
+	if declaration.Value == nil {
+		return nil
+	}
+	query.generation++
+	query.matches = query.matches[:0]
+	query.collect(declaration.Value)
+	slices.SortFunc(query.matches, func(a, b indexedExpression) int { return a.order - b.order })
+	expressions := make([]Expression, len(query.matches))
+	for i, match := range query.matches {
+		expressions[i] = match.expression
+	}
+	return expressions
+}
+
+func (query *declarationExpressionQuery) collect(node *Node) {
+	if node == nil || query.visited[node] == query.generation {
+		return
+	}
+	query.visited[node] = query.generation
+	query.matches = append(query.matches, query.index[node]...)
+	for _, entry := range node.Entries {
+		query.collect(entry.Key)
+		query.collect(entry.Value)
+	}
+	for _, item := range node.Items {
+		query.collect(item)
+	}
+}
+
+func declarationNodes(value *Node) map[*Node]bool {
 	nodes := make(map[*Node]bool)
 	var visit func(*Node)
 	visit = func(node *Node) {
@@ -59,8 +106,8 @@ func expressionsForDeclaration(source *Source, declaration defaultDeclaration) [
 			visit(item)
 		}
 	}
-	visit(declaration.Value)
-	return expressionsMatching(source, func(node *Node) bool { return nodes[node] })
+	visit(value)
+	return nodes
 }
 
 func checkRoleVariablePrefix(_ *Project, source *Source) []Diagnostic {

@@ -12,12 +12,13 @@ func dockerDiagnostic(source *Source, id string, span Span, message, expected st
 
 func checkDockerAggregateContract(_ *Project, source *Source) []Diagnostic {
 	declarations := declarationsByName(source)
+	expressions := newDeclarationExpressionQuery(source)
 	var diagnostics []Diagnostic
 	prefix := source.Role + "_role_docker_"
 	for _, declaration := range topLevelDeclarations(source) {
 		// Environment access is constrained even outside the owning aggregate. Prefer
 		// its actionable contract hint over a duplicate generic layer finding.
-		if issues := dockerEnvironmentIssues(source, declaration); len(issues) > 0 {
+		if issues := dockerEnvironmentIssues(source, declaration, expressions); len(issues) > 0 {
 			diagnostics = append(diagnostics, issues...)
 			continue
 		}
@@ -43,13 +44,13 @@ func checkDockerAggregateContract(_ *Project, source *Source) []Diagnostic {
 		var hint string
 		switch declaration.Name {
 		case prefix + "networks":
-			hint = dockerNetworkHint(source, declaration, def)
+			hint = dockerNetworkHint(source, declaration, def, expressions)
 		case prefix + "hosts":
-			if !slices.Equal(dockerFormula(source, declaration), []string{"@default", "|", "combine", "(", "@custom", ")"}) {
+			if !slices.Equal(dockerFormula(source, declaration, expressions), []string{"@default", "|", "combine", "(", "@custom", ")"}) {
 				hint = fmt.Sprintf("Only combine role-local host mappings: {{ lookup('role_var', '_docker_hosts_default', role='%s') | combine(lookup('role_var', '_docker_hosts_custom', role='%s')) }}.", source.Role, source.Role)
 			}
 		default:
-			hint = dockerLayerHint(source, declaration)
+			hint = dockerLayerHint(source, declaration, expressions)
 		}
 		if hint != "" {
 			diagnostics = append(diagnostics, dockerDiagnostic(source, "docker-aggregate-contract", declaration.Key.Span, "Docker aggregate does not follow its layer contract", hint))
@@ -65,10 +66,10 @@ func canonicalDockerLayer(call Call, suffix, role string) bool {
 	return ok && valueOK && targetOK && plugin == "role_var" && value == suffix && target == role && len(call.Arguments) == 3
 }
 
-func dockerLayerHint(source *Source, declaration defaultDeclaration) string {
+func dockerLayerHint(source *Source, declaration defaultDeclaration, expressions *declarationExpressionQuery) string {
 	suffix := strings.TrimPrefix(declaration.Name, source.Role+"_role")
 	def, custom := -1, -1
-	for _, expression := range expressionsForDeclaration(source, declaration) {
+	for _, expression := range expressions.expressions(declaration) {
 		for _, call := range Calls(expression, "lookup") {
 			if def < 0 && canonicalDockerLayer(call, suffix+"_default", source.Role) {
 				def = call.Span.Start
@@ -89,8 +90,8 @@ func dockerLayerHint(source *Source, declaration defaultDeclaration) string {
 
 // dockerFormula projects shared tokens into the small, exact formula vocabulary.
 // Calls are recognized by shared analysis, never by reparsing YAML/Jinja text.
-func dockerFormula(source *Source, declaration defaultDeclaration) []string {
-	expressions := expressionsForDeclaration(source, declaration)
+func dockerFormula(source *Source, declaration defaultDeclaration, query *declarationExpressionQuery) []string {
+	expressions := query.expressions(declaration)
 	if len(expressions) != 1 || declaration.Value == nil || declaration.Value.Kind != "string" {
 		return nil
 	}
@@ -128,8 +129,8 @@ func dockerFormula(source *Source, declaration defaultDeclaration) []string {
 	return formula
 }
 
-func dockerNetworkHint(source *Source, declaration, defaults defaultDeclaration) string {
-	formula := dockerFormula(source, declaration)
+func dockerNetworkHint(source *Source, declaration, defaults defaultDeclaration, expressions *declarationExpressionQuery) string {
+	formula := dockerFormula(source, declaration, expressions)
 	standard := []string{"docker_networks_common", "+", "@default", "+", "@custom"}
 	if slices.Equal(formula, standard) {
 		return ""
@@ -166,9 +167,9 @@ func dockerNetworkPins(node *Node) []string {
 	return pins
 }
 
-func dockerEnvironmentIssues(source *Source, declaration defaultDeclaration) []Diagnostic {
+func dockerEnvironmentIssues(source *Source, declaration defaultDeclaration, expressions *declarationExpressionQuery) []Diagnostic {
 	var diagnostics []Diagnostic
-	for _, expression := range expressionsForDeclaration(source, declaration) {
+	for _, expression := range expressions.expressions(declaration) {
 		if !expression.Complete {
 			continue
 		}
@@ -236,6 +237,7 @@ func finalEnvironmentLayer(declaration defaultDeclaration, expression Expression
 
 func checkDockerEmptyLayers(_ *Project, source *Source) []Diagnostic {
 	declarations := declarationsByName(source)
+	expressions := newDeclarationExpressionQuery(source)
 	var diagnostics []Diagnostic
 	for _, def := range topLevelDeclarations(source) {
 		if !strings.HasPrefix(def.Name, source.Role+"_role_docker_") || !strings.HasSuffix(def.Name, "_default") {
@@ -251,7 +253,7 @@ func checkDockerEmptyLayers(_ *Project, source *Source) []Diagnostic {
 		}
 		span := def.Key.Span
 		if aggregate, exists := declarations[name]; exists {
-			formula := dockerFormula(source, aggregate)
+			formula := dockerFormula(source, aggregate, expressions)
 			expected := []string{"@default", "+", "@custom"}
 			if def.Value.Kind == "mapping" {
 				expected = []string{"@default", "|", "combine", "(", "@custom", ")"}

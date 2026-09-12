@@ -84,6 +84,10 @@ type traefikAdapter struct {
 }
 
 func traefikAdapters(s *Source) []traefikAdapter {
+	return traefikAdaptersWithExpressions(s, newDeclarationExpressionQuery(s))
+}
+
+func traefikAdaptersWithExpressions(s *Source, expressions *declarationExpressionQuery) []traefikAdapter {
 	var adapters []traefikAdapter
 	for _, task := range TasksIn(s) {
 		if task.Module != "include_role" {
@@ -94,7 +98,7 @@ func traefikAdapters(s *Source) []traefikAdapter {
 			continue
 		}
 		for _, entry := range task.Vars.Entries {
-			if entry.Key.Value == name.Value+"_role_web_subdomain" && traefikForwardedValue(s, entry.Value, "_"+name.Value+"_web_subdomain") {
+			if entry.Key.Value == name.Value+"_role_web_subdomain" && traefikForwardedValue(s, entry.Value, "_"+name.Value+"_web_subdomain", expressions) {
 				adapters = append(adapters, traefikAdapter{Name: name.Value, Key: entry.Key, Task: task})
 			}
 		}
@@ -104,15 +108,15 @@ func traefikAdapters(s *Source) []traefikAdapter {
 
 // Forwarding requires the lookup result itself as the assigned scalar value.
 // A call buried in a condition or payload does not pass the suffix to the role.
-func traefikForwardedValue(s *Source, value *Node, suffix string) bool {
+func traefikForwardedValue(s *Source, value *Node, suffix string, expressions *declarationExpressionQuery) bool {
 	if value == nil || value.Kind != "string" {
 		return false
 	}
-	expressions := expressionsForDeclaration(s, defaultDeclaration{Value: value})
-	if len(expressions) != 1 || strings.TrimSpace(value.Value) != strings.TrimSpace(expressions[0].text) {
+	matches := expressions.expressions(defaultDeclaration{Value: value})
+	if len(matches) != 1 || strings.TrimSpace(value.Value) != strings.TrimSpace(matches[0].text) {
 		return false
 	}
-	expression := expressions[0]
+	expression := matches[0]
 	expression.Tokens = stripGrouping(expression.Tokens)
 	call, ok := directLookup(expression, "role_var")
 	if !ok {
@@ -161,7 +165,8 @@ func checkTraefikAdapterContract(p *Project, s *Source) []Diagnostic {
 			}
 		}
 		for _, taskSource := range tasks {
-			for _, adapter := range traefikAdapters(taskSource) {
+			expressions := newDeclarationExpressionQuery(taskSource)
+			for _, adapter := range traefikAdaptersWithExpressions(taskSource, expressions) {
 				prefix := s.Role + "_role_" + adapter.Name + "_"
 				// Only the defaults source owning this adapter's namespace owns its defect.
 				if traefikAdapterDefaults(defaults, prefix+"web_subdomain") != s {
@@ -192,7 +197,8 @@ func checkTraefikAdapterContract(p *Project, s *Source) []Diagnostic {
 		}
 		return ds
 	}
-	for _, adapter := range traefikAdapters(s) {
+	expressions := newDeclarationExpressionQuery(s)
+	for _, adapter := range traefikAdaptersWithExpressions(s, expressions) {
 		if invalid := invalidTraefikContext(defaults); len(invalid) > 0 {
 			ds = append(ds, traefikContextDiagnostic(s, "traefik-adapter-contract", adapter.Key.Span, invalid))
 			continue
@@ -211,7 +217,7 @@ func checkTraefikAdapterContract(p *Project, s *Source) []Diagnostic {
 		for _, suffix := range traefikAdapterSuffixes() {
 			target := adapter.Name + "_role_" + suffix
 			value := adapter.Task.Vars.Get(target)
-			if !traefikForwardedValue(s, value, "_"+adapter.Name+"_"+suffix) {
+			if !traefikForwardedValue(s, value, "_"+adapter.Name+"_"+suffix, expressions) {
 				missing = append(missing, target)
 			}
 		}
@@ -256,6 +262,7 @@ func traefikRenderConditions(s *Source, task Task) []Expression {
 func traefikRenderers(p *Project, tasks []*Source) []traefikRenderer {
 	var renderers []traefikRenderer
 	for _, s := range tasks {
+		expressions := newDeclarationExpressionQuery(s)
 		for _, task := range TasksIn(s) {
 			conditions := traefikRenderConditions(s, task)
 			var value *Node
@@ -278,7 +285,7 @@ func traefikRenderers(p *Project, tasks []*Source) []traefikRenderer {
 				continue
 			}
 			if value != nil {
-				renderers = append(renderers, traefikRenderer{Source: s, OutputSource: s, Value: value, Kind: task.Module, Span: value.Span, Conditions: conditions, Expressions: traefikOutputExpressions(s, expressionsForDeclaration(s, defaultDeclaration{Value: value}))})
+				renderers = append(renderers, traefikRenderer{Source: s, OutputSource: s, Value: value, Kind: task.Module, Span: value.Span, Conditions: conditions, Expressions: traefikOutputExpressions(s, expressions.expressions(defaultDeclaration{Value: value}))})
 			}
 		}
 	}

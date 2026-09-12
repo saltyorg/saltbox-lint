@@ -37,6 +37,25 @@ type Call struct {
 	Arguments []Argument
 }
 
+type indexedExpression struct {
+	order      int
+	expression Expression
+}
+
+type expressionIndex map[*Node][]indexedExpression
+
+func newExpressionIndex(source *Source) expressionIndex {
+	expressions := Expressions(source)
+	if len(expressions) == 0 {
+		return nil
+	}
+	index := make(expressionIndex)
+	for order, expression := range expressions {
+		index[expression.node] = append(index[expression.node], indexedExpression{order: order, expression: expression})
+	}
+	return index
+}
+
 // Expressions scans parsed scalar values, never YAML comments or unsafe values.
 // Statement tags remain distinct from output expressions for policy consumers.
 func Expressions(source *Source) []Expression {
