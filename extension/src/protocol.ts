@@ -117,6 +117,7 @@ function edits(value: unknown): asserts value is SourceEdit[] {
 /** One pass builds byte/code-point/UTF16 boundaries for all consumers of a snapshot. */
 export class SnapshotIndex {
   private readonly lines: { byte: number; character: number }[][] = [[]];
+  private readonly interiorCRLF = new Set<number>();
   readonly byteLength: number;
   constructor(source: string) {
     valid(source.isWellFormed());
@@ -132,8 +133,9 @@ export class SnapshotIndex {
         character = 0;
         line = [];
         this.lines.push(line);
-      } else if (!(rune === "\r" && source[offset] === "\n"))
-        character += rune.length;
+      } else if (rune === "\r" && source[offset] === "\n") {
+        this.interiorCRLF.add(byte);
+      } else character += rune.length;
       line.push({ byte, character });
     }
     this.byteLength = byte;
@@ -141,7 +143,7 @@ export class SnapshotIndex {
   private boundary(position: Point) {
     point(position);
     const found = this.lines[position.line - 1]?.[position.column - 1];
-    valid(found);
+    valid(found && !this.interiorCRLF.has(found.byte));
     return found;
   }
   position(position: Point): Position {
@@ -159,10 +161,19 @@ export class SnapshotIndex {
   }
   edits(editsToMap: SourceEdit[]): EditorEdit[] {
     edits(editsToMap);
-    return editsToMap.map((edit) => ({
-      ...this.range(edit.range, edit.span),
-      text: edit.text,
-    }));
+    let previous: EditorEdit | undefined;
+    const compare = (a: Position, b: Position) =>
+      a.line - b.line || a.character - b.character;
+    return editsToMap.map((edit) => {
+      const mapped = { ...this.range(edit.range, edit.span), text: edit.text };
+      if (previous)
+        valid(
+          compare(mapped.start, previous.end) >= 0 &&
+            compare(mapped.start, previous.start) > 0,
+        );
+      previous = mapped;
+      return mapped;
+    });
   }
 }
 export function parseFormat(

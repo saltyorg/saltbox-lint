@@ -72,3 +72,13 @@ live in the repository root and require native Windows execution.
 VSIX staging, binary/SDK platform matrices, license inventory and packaged-VSIX
 acceptance are separate release tooling. This development harness does not install
 or test a packaged VSIX.
+
+Run the lifecycle regression host separately with
+`SALTBOX_TEST_REGRESSIONS=1 VSCODE_EXECUTABLE_PATH=/path/to/code npm run test:host`
+(on Windows, set those environment variables in PowerShell before invoking npm).
+This suite exercises document/root isolation, pending operations, multiple tabs,
+retained closed models, dirty symlink workspaces, root removal, and retained
+quick-fix commands across report replacement. CI acceptance should run both host
+modes at the minimum and current supported SDK versions. Initial regression
+fixtures are created before the editor launches; the tested edits, saves, tab
+changes, workspace changes and root configuration changes happen in the host.

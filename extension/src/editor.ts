@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import * as path from "node:path";
 import { canonicalRoot, identify, resolveSource } from "./identity.ts";
 import type { Identity } from "./identity.ts";
 import { hash, parseCheck, parseFormat, SnapshotIndex } from "./protocol.ts";
@@ -18,10 +20,13 @@ interface Snapshot extends Identity {
   version: number;
   text: string;
   hash: string;
-  generation: number;
+  folder: string;
+  rootRevision: number;
+  documentRevision: number;
   index: SnapshotIndex;
 }
 interface DocumentResult {
+  id: string;
   snapshot: Snapshot;
   report: CheckReport;
   diagnostics: vscode.Diagnostic[];
@@ -39,7 +44,18 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly documents = new Map<string, DocumentResult>();
   private readonly scans = new Map<string, Map<string, vscode.Diagnostic[]>>();
   private readonly checking = new Map<string, Promise<void>>();
-  private generation = 0;
+  private readonly rootRevisions = new Map<string, number>();
+  private readonly documentRevisions = new WeakMap<
+    vscode.TextDocument,
+    number
+  >();
+  private readonly documentFolders = new Map<string, string>();
+  private readonly sourceOwners = new Map<string, Identity>();
+  private readonly canonicalRoots = new Map<string, string>();
+  private readonly closedTabs = new Set<string>();
+  private readonly pendingRefresh = new Set<string>();
+  private nextRevision = 0;
+  private relatedRevision = 0;
   private disposed = false;
   private refreshTimer?: ReturnType<typeof setTimeout>;
   private readonly executable: string;
@@ -51,25 +67,98 @@ export class EditorIntegration implements vscode.Disposable {
       !this.disposed &&
       vscode.workspace.isTrusted &&
       !document.isClosed &&
+      !this.closedTabs.has(document.uri.toString()) &&
       document.uri.scheme === "file" &&
       ["yaml", "ansible"].includes(document.languageId) &&
       /\.ya?ml$/i.test(document.uri.path) &&
       !!vscode.workspace.getWorkspaceFolder(document.uri)
     );
   }
+  private rootRevision(folder: string): number {
+    if (!this.rootRevisions.has(folder))
+      this.rootRevisions.set(folder, ++this.nextRevision);
+    return this.rootRevisions.get(folder)!;
+  }
+  private documentRevision(document: vscode.TextDocument): number {
+    if (!this.documentRevisions.has(document))
+      this.documentRevisions.set(document, ++this.nextRevision);
+    return this.documentRevisions.get(document)!;
+  }
   private async root(folder: vscode.WorkspaceFolder): Promise<string> {
-    return canonicalRoot(
+    const revision = this.rootRevision(folder.uri.toString());
+    const root = await canonicalRoot(
       folder.uri.fsPath,
       vscode.workspace
         .getConfiguration("saltboxLint", folder.uri)
         .get<string>("root", ""),
     );
+    if (revision === this.rootRevision(folder.uri.toString()))
+      this.canonicalRoots.set(folder.uri.toString(), root);
+    return root;
+  }
+  private rememberSource(
+    document: vscode.TextDocument,
+    identity: Identity,
+  ): void {
+    this.sourceOwners.set(document.uri.toString(), identity);
+    const canonical = vscode.Uri.file(identity.filename);
+    if (canonical.toString() !== document.uri.toString())
+      this.publish(canonical);
+  }
+  private async synchronizeSources(): Promise<void> {
+    const live = new Set(
+      vscode.workspace.textDocuments
+        .filter(
+          (document) =>
+            !document.isClosed &&
+            !!vscode.workspace.getWorkspaceFolder(document.uri),
+        )
+        .map((document) => document.uri.toString()),
+    );
+    for (const uri of this.sourceOwners.keys())
+      if (!live.has(uri)) this.sourceOwners.delete(uri);
+    for (const document of vscode.workspace.textDocuments) {
+      if (
+        document.isClosed ||
+        document.uri.scheme !== "file" ||
+        !["yaml", "ansible"].includes(document.languageId) ||
+        !/\.ya?ml$/i.test(document.uri.path)
+      )
+        continue;
+      const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+      if (!folder) continue;
+      const revision = this.rootRevision(folder.uri.toString());
+      try {
+        const identity = await identify(
+          await this.root(folder),
+          document.uri.fsPath,
+        );
+        if (
+          revision === this.rootRevision(folder.uri.toString()) &&
+          !document.isClosed
+        ) {
+          this.documentFolders.set(
+            document.uri.toString(),
+            folder.uri.toString(),
+          );
+          this.rememberSource(document, identity);
+        }
+      } catch {
+        if (revision === this.rootRevision(folder.uri.toString()))
+          this.sourceOwners.delete(document.uri.toString());
+      }
+    }
   }
   private async snapshot(
     document: vscode.TextDocument,
   ): Promise<Snapshot | undefined> {
     if (!this.eligible(document)) return;
-    const generation = this.generation;
+    const folder = vscode.workspace
+      .getWorkspaceFolder(document.uri)!
+      .uri.toString();
+    const rootRevision = this.rootRevision(folder);
+    const documentRevision = this.documentRevision(document);
+    this.documentFolders.set(document.uri.toString(), folder);
     const version = document.version;
     const text = document.getText();
     const identity = await identify(
@@ -82,15 +171,20 @@ export class EditorIntegration implements vscode.Disposable {
       version,
       text,
       hash: hash(text),
-      generation,
+      folder,
+      rootRevision,
+      documentRevision,
       index: new SnapshotIndex(text),
     };
-    return this.current(document, snapshot) ? snapshot : undefined;
+    if (!this.current(document, snapshot)) return;
+    this.rememberSource(document, identity);
+    return snapshot;
   }
   private current(document: vscode.TextDocument, snapshot: Snapshot): boolean {
     return (
       this.eligible(document) &&
-      snapshot.generation === this.generation &&
+      snapshot.rootRevision === this.rootRevision(snapshot.folder) &&
+      snapshot.documentRevision === this.documentRevision(document) &&
       document.version === snapshot.version &&
       hash(document.getText()) === snapshot.hash
     );
@@ -105,7 +199,12 @@ export class EditorIntegration implements vscode.Disposable {
       this.collection.set(uri, own.diagnostics);
       return;
     }
-    if (document) {
+    if (
+      document ||
+      [...this.sourceOwners.values()].some(
+        (owner) => vscode.Uri.file(owner.filename).toString() === key,
+      )
+    ) {
       this.collection.delete(uri);
       return;
     }
@@ -119,13 +218,17 @@ export class EditorIntegration implements vscode.Disposable {
     this.collection.delete(uri);
   }
   private error(error: unknown, manual: boolean): void {
+    if (this.disposed) return;
     const message = error instanceof Error ? error.message : String(error);
     this.output.appendLine(message);
     if (manual) void vscode.window.showErrorMessage(`Saltbox Lint: ${message}`);
   }
   async check(document: vscode.TextDocument, manual = false): Promise<void> {
     if (!this.eligible(document)) return;
-    const requestKey = `${document.uri}:${document.version}:${this.generation}`;
+    const folder = vscode.workspace
+      .getWorkspaceFolder(document.uri)!
+      .uri.toString();
+    const requestKey = `${document.uri}:${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}`;
     const existing = this.checking.get(requestKey);
     if (existing) return existing;
     const work = this.checkSnapshot(document, manual);
@@ -142,6 +245,11 @@ export class EditorIntegration implements vscode.Disposable {
     manual: boolean,
   ): Promise<void> {
     const key = document.uri.toString();
+    const revision = this.documentRevision(document);
+    const folder = vscode.workspace
+      .getWorkspaceFolder(document.uri)!
+      .uri.toString();
+    const rootRevision = this.rootRevision(folder);
     try {
       const snapshot = await this.snapshot(document);
       if (!snapshot) return;
@@ -174,15 +282,30 @@ export class EditorIntegration implements vscode.Disposable {
       )
         throw new Error("Check returned an unselected source");
       for (const fix of report.fixes.values()) snapshot.index.edits(fix.edits);
+      const relatedRevision = this.relatedRevision;
       const diagnostics = await renderDiagnostics(
         report.diagnostics,
         snapshot.index,
         snapshot.root,
       );
       if (!this.current(document, snapshot)) return;
-      this.documents.set(key, { snapshot, report, diagnostics });
+      if (relatedRevision !== this.relatedRevision)
+        for (const diagnostic of diagnostics)
+          diagnostic.relatedInformation = undefined;
+      this.documents.set(key, {
+        id: randomUUID(),
+        snapshot,
+        report,
+        diagnostics,
+      });
       this.publish(document.uri);
     } catch (error) {
+      if (
+        this.disposed ||
+        revision !== this.documentRevision(document) ||
+        rootRevision !== this.rootRevision(folder)
+      )
+        return;
       this.documents.delete(key);
       this.publish(document.uri);
       this.error(error, manual);
@@ -192,7 +315,8 @@ export class EditorIntegration implements vscode.Disposable {
     if (!vscode.workspace.isTrusted || this.disposed) return;
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       if (folder.uri.scheme !== "file") continue;
-      const generation = this.generation;
+      const folderKey = folder.uri.toString();
+      const revision = this.rootRevision(folderKey);
       try {
         const root = await this.root(folder);
         const wire = await this.lint.submit(
@@ -209,7 +333,8 @@ export class EditorIntegration implements vscode.Disposable {
               signal,
             ),
         );
-        if (wire === undefined || generation !== this.generation) continue;
+        if (wire === undefined || revision !== this.rootRevision(folderKey))
+          continue;
         const report = parseCheck(wire);
         const grouped = new Map<string, Finding[]>();
         for (const finding of report.diagnostics) {
@@ -229,7 +354,9 @@ export class EditorIntegration implements vscode.Disposable {
             await renderDiagnostics(findings, index, root),
           );
         }
-        if (generation !== this.generation) continue;
+        if (revision !== this.rootRevision(folderKey)) continue;
+        await this.synchronizeSources();
+        if (revision !== this.rootRevision(folderKey)) continue;
         const previous = this.scans.get(folder.uri.toString());
         this.scans.set(folder.uri.toString(), entries);
         for (const uri of new Set([
@@ -269,7 +396,7 @@ export class EditorIntegration implements vscode.Disposable {
       action.command = {
         command: "saltboxLint.applySharedFix",
         title: action.title,
-        arguments: [document.uri, result.snapshot.hash, fix.id],
+        arguments: [document.uri, result.snapshot.hash, fix.id, result.id],
       };
       actions.push(action);
     });
@@ -289,6 +416,7 @@ export class EditorIntegration implements vscode.Disposable {
     uri: vscode.Uri,
     expectedHash: string,
     id: string,
+    reportId: string,
   ): Promise<void> {
     const document = vscode.workspace.textDocuments.find(
       (doc) => doc.uri.toString() === uri.toString(),
@@ -297,6 +425,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (
       !document ||
       !result ||
+      result.id !== reportId ||
       result.snapshot.hash !== expectedHash ||
       !this.current(document, result.snapshot)
     )
@@ -369,14 +498,20 @@ export class EditorIntegration implements vscode.Disposable {
     if (!document) return;
     const version = document.version;
     const sourceHash = hash(document.getText());
-    const generation = this.generation;
+    const folder = vscode.workspace
+      .getWorkspaceFolder(document.uri)
+      ?.uri.toString();
+    if (!folder) return;
+    const revision = this.rootRevision(folder);
+    const documentRevision = this.documentRevision(document);
     const edits = await this.format(document, "lint-fixes");
     if (
       !edits.length ||
       !this.eligible(document) ||
       document.version !== version ||
       hash(document.getText()) !== sourceHash ||
-      generation !== this.generation
+      revision !== this.rootRevision(folder) ||
+      documentRevision !== this.documentRevision(document)
     )
       return;
     const edit = new vscode.WorkspaceEdit();
@@ -384,13 +519,24 @@ export class EditorIntegration implements vscode.Disposable {
     await vscode.workspace.applyEdit(edit);
   }
   change(document: vscode.TextDocument): void {
-    this.generation++;
     const key = document.uri.toString();
+    if (
+      !this.documentFolders.has(key) &&
+      (document.uri.scheme !== "file" ||
+        !/\.ya?ml$/i.test(document.uri.path) ||
+        !vscode.workspace.getWorkspaceFolder(document.uri))
+    )
+      return;
+    this.documentRevisions.set(document, ++this.nextRevision);
+    this.relatedRevision++;
     this.lint.cancel(key);
     this.formatting.cancel(key);
     this.documents.delete(key);
     this.publish(document.uri);
-    // Related locations came from disk, and cannot be shown against newly dirty buffers.
+    const identity = this.sourceOwners.get(key);
+    if (identity) this.publish(vscode.Uri.file(identity.filename));
+    // Saved related coordinates may now point into a dirty buffer. Primary
+    // snapshots and proposals in other documents remain valid.
     this.collection.forEach((uri, diagnostics) => {
       if (diagnostics.some((d) => d.relatedInformation?.length))
         this.collection.set(
@@ -402,31 +548,106 @@ export class EditorIntegration implements vscode.Disposable {
         );
     });
   }
+  open(document: vscode.TextDocument): void {
+    this.closedTabs.delete(document.uri.toString());
+    void this.check(document);
+  }
   close(document: vscode.TextDocument): void {
+    const key = document.uri.toString();
+    const stillOwned = vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some((tab) =>
+        tabDocumentUris(tab).some((uri) => uri.toString() === key),
+      ),
+    );
+    if (!document.isClosed && stillOwned) return;
+    this.closedTabs.add(key);
     this.change(document);
     this.collection.delete(document.uri);
+    if (document.isClosed) {
+      this.closedTabs.delete(key);
+      this.sourceOwners.delete(key);
+      this.documentFolders.delete(key);
+    }
   }
-  refresh(): void {
-    this.generation++;
-    this.lint.cancelAll();
-    this.formatting.cancelAll();
-    this.documents.clear();
-    this.scans.clear();
-    this.collection.clear();
+  refresh(uris?: readonly vscode.Uri[]): void {
+    if (this.disposed) return;
+    const affected = new Set<string>();
+    if (!uris) {
+      for (const folder of vscode.workspace.workspaceFolders ?? [])
+        affected.add(folder.uri.toString());
+      for (const folder of this.rootRevisions.keys()) affected.add(folder);
+    } else {
+      for (const uri of uris) {
+        const folder = vscode.workspace.getWorkspaceFolder(uri);
+        if (folder) affected.add(folder.uri.toString());
+        if (this.rootRevisions.has(uri.toString()))
+          affected.add(uri.toString());
+        for (const [key, root] of this.canonicalRoots) {
+          const relative = path.relative(root, uri.fsPath);
+          if (
+            relative === "" ||
+            (!relative.startsWith(`..${path.sep}`) &&
+              relative !== ".." &&
+              !path.isAbsolute(relative))
+          )
+            affected.add(key);
+        }
+      }
+    }
+    for (const folder of affected) {
+      this.rootRevisions.set(folder, ++this.nextRevision);
+      this.pendingRefresh.add(folder);
+      this.lint.cancel(`workspace:${folder}`);
+      const scan = this.scans.get(folder);
+      this.scans.delete(folder);
+      for (const uri of scan?.keys() ?? [])
+        this.collection.delete(vscode.Uri.parse(uri));
+      for (const [uri, ownerFolder] of this.documentFolders) {
+        if (ownerFolder !== folder) continue;
+        this.lint.cancel(uri);
+        this.formatting.cancel(uri);
+        this.documents.delete(uri);
+        this.collection.delete(vscode.Uri.parse(uri));
+        if (
+          !vscode.workspace.workspaceFolders?.some(
+            (current) => current.uri.toString() === folder,
+          )
+        ) {
+          this.sourceOwners.delete(uri);
+          this.documentFolders.delete(uri);
+        }
+      }
+    }
+    if (!affected.size) return;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = undefined;
-      for (const document of vscode.workspace.textDocuments)
-        void this.check(document);
+      const pending = new Set(this.pendingRefresh);
+      this.pendingRefresh.clear();
+      for (const document of vscode.workspace.textDocuments) {
+        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (
+          folder &&
+          pending.has(folder.uri.toString()) &&
+          this.eligible(document)
+        )
+          void this.check(document);
+      }
     }, 100);
   }
   dispose(): void {
     this.disposed = true;
-    this.generation++;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.lint.dispose();
     this.formatting.dispose();
     this.collection.dispose();
     this.output.dispose();
   }
+}
+
+export function tabDocumentUris(tab: vscode.Tab): readonly vscode.Uri[] {
+  if (tab.input instanceof vscode.TabInputText) return [tab.input.uri];
+  if (tab.input instanceof vscode.TabInputTextDiff)
+    return [tab.input.original, tab.input.modified];
+  return [];
 }

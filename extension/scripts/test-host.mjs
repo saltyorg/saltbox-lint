@@ -14,6 +14,21 @@ for (const name of ["one", "two"]) {
   writeFileSync(resolve(root, name, ".gitignore"), "ignored.yml\n");
   writeFileSync(resolve(root, name, "ignored.yml"), 'value: "{{ value\n }}"\n');
 }
+if (process.env.SALTBOX_TEST_REGRESSIONS === "1") {
+  for (const name of [
+    "independent.yml",
+    "pending.yml",
+    "two-tabs.yml",
+    "closed.yml",
+    "refresh.yml",
+  ])
+    writeFileSync(resolve(root, "one", name), '---\nvalue: "{{ value\n }}"\n');
+  mkdirSync(resolve(root, "one/roles/example/tasks"), { recursive: true });
+  writeFileSync(
+    resolve(root, "one/roles/example/tasks/main.yml"),
+    '################################\n# Settings\n################################\nvalue: "{{ a\n | f }}"\n',
+  );
+}
 const workspace = resolve(root, "test.code-workspace");
 writeFileSync(
   workspace,

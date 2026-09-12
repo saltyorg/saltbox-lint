@@ -137,3 +137,63 @@ test("replacement strings reject unpaired surrogates from malformed wire", () =>
     ),
   );
 });
+test("CRLF interior endpoints cannot become a different editor operation", () => {
+  const source = "a\r\nb";
+  for (const edits of [
+    [
+      {
+        range: { start: { line: 1, column: 2 }, end: { line: 1, column: 3 } },
+        span: { start: 1, end: 2 },
+        text: "",
+      },
+    ],
+    [
+      {
+        range: { start: { line: 1, column: 3 }, end: { line: 1, column: 3 } },
+        span: { start: 2, end: 2 },
+        text: "x",
+      },
+    ],
+    [
+      {
+        range: { start: { line: 1, column: 2 }, end: { line: 1, column: 2 } },
+        span: { start: 1, end: 1 },
+        text: "x",
+      },
+      {
+        range: { start: { line: 1, column: 3 }, end: { line: 1, column: 3 } },
+        span: { start: 2, end: 2 },
+        text: "y",
+      },
+    ],
+  ])
+    assert.throws(() =>
+      parseFormat(
+        JSON.stringify({
+          schema_version: 1,
+          path: "a.yml",
+          source_sha256: createHash("sha256").update(source).digest("hex"),
+          status: "ready",
+          edits,
+        }),
+        "a.yml",
+        source,
+      ),
+    );
+  assert.deepEqual(
+    new SnapshotIndex(source).edits([
+      {
+        range: { start: { line: 1, column: 2 }, end: { line: 2, column: 1 } },
+        span: { start: 1, end: 3 },
+        text: "\n",
+      },
+    ]),
+    [
+      {
+        start: { line: 0, character: 1 },
+        end: { line: 1, character: 0 },
+        text: "\n",
+      },
+    ],
+  );
+});

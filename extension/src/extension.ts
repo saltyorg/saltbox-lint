@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { EditorIntegration } from "./editor.ts";
+import { EditorIntegration, tabDocumentUris } from "./editor.ts";
 
 const selector: vscode.DocumentSelector = [
   { scheme: "file", language: "yaml", pattern: "**/*.{yml,yaml}" },
@@ -30,8 +30,8 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand(
       "saltboxLint.applySharedFix",
-      (uri: vscode.Uri, hash: string, id: string) =>
-        editor.applyShared(uri, hash, id),
+      (uri: vscode.Uri, hash: string, id: string, reportId: string) =>
+        editor.applyShared(uri, hash, id, reportId),
     ),
     vscode.languages.registerCodeActionsProvider(
       selector,
@@ -51,45 +51,52 @@ export function activate(context: vscode.ExtensionContext): void {
         editor.format(document, "canonical", token),
     }),
     vscode.window.tabGroups.onDidChangeTabs((event) => {
-      for (const tab of event.closed) {
-        if (!(tab.input instanceof vscode.TabInputText)) continue;
-        const uri = tab.input.uri;
-        const document = vscode.workspace.textDocuments.find(
-          (doc) => doc.uri.toString() === uri.toString(),
-        );
-        if (document) editor.close(document);
-      }
-      for (const tab of event.opened) {
-        if (!(tab.input instanceof vscode.TabInputText)) continue;
-        const uri = tab.input.uri;
-        const document = vscode.workspace.textDocuments.find(
-          (doc) => doc.uri.toString() === uri.toString(),
-        );
-        if (document) void editor.check(document);
-      }
+      for (const tab of event.closed)
+        for (const uri of tabDocumentUris(tab)) {
+          const document = vscode.workspace.textDocuments.find(
+            (doc) => doc.uri.toString() === uri.toString(),
+          );
+          if (document) editor.close(document);
+        }
+      for (const tab of event.opened)
+        for (const uri of tabDocumentUris(tab)) {
+          const document = vscode.workspace.textDocuments.find(
+            (doc) => doc.uri.toString() === uri.toString(),
+          );
+          if (document) editor.open(document);
+        }
     }),
-    vscode.workspace.onDidOpenTextDocument((document) => {
-      void editor.check(document);
+    vscode.workspace.onDidOpenTextDocument((document) => editor.open(document)),
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (/\.ya?ml$/i.test(document.uri.path)) editor.refresh([document.uri]);
     }),
-    vscode.workspace.onDidSaveTextDocument(() => editor.refresh()),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length) editor.change(event.document);
     }),
     vscode.workspace.onDidCloseTextDocument((document) =>
       editor.close(document),
     ),
-    vscode.workspace.onDidRenameFiles(() => editor.refresh()),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => editor.refresh()),
+    vscode.workspace.onDidRenameFiles((event) =>
+      editor.refresh(event.files.flatMap((file) => [file.oldUri, file.newUri])),
+    ),
+    vscode.workspace.onDidChangeWorkspaceFolders((event) =>
+      editor.refresh(
+        [...event.added, ...event.removed].map((folder) => folder.uri),
+      ),
+    ),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("saltboxLint.root")) editor.refresh();
+      const affected = (vscode.workspace.workspaceFolders ?? []).filter(
+        (folder) => event.affectsConfiguration("saltboxLint.root", folder.uri),
+      );
+      if (affected.length) editor.refresh(affected.map((folder) => folder.uri));
     }),
   );
   const watcher = vscode.workspace.createFileSystemWatcher("**/*.{yml,yaml}");
   context.subscriptions.push(
     watcher,
-    watcher.onDidChange(() => editor.refresh()),
-    watcher.onDidCreate(() => editor.refresh()),
-    watcher.onDidDelete(() => editor.refresh()),
+    watcher.onDidChange((uri) => editor.refresh([uri])),
+    watcher.onDidCreate((uri) => editor.refresh([uri])),
+    watcher.onDidDelete((uri) => editor.refresh([uri])),
   );
   for (const document of vscode.workspace.textDocuments)
     void editor.check(document);

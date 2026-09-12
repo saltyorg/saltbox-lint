@@ -32,6 +32,10 @@ function diagnostics(uri: vscode.Uri) {
     .filter((d) => d.source === "saltbox-lint");
 }
 export async function run(): Promise<void> {
+  if (process.env.SALTBOX_TEST_REGRESSIONS === "1") {
+    const { runRegressions } = await import("./regressions.ts");
+    return runRegressions();
+  }
   if (process.env.SALTBOX_TEST_UNTRUSTED === "1") {
     assert.equal(vscode.workspace.isTrusted, false);
     const uri = vscode.Uri.joinPath(
@@ -164,9 +168,15 @@ export async function run(): Promise<void> {
     "PASS malformed response rejection and formatter cancellation in extension host",
   );
   // A coexisting formatter remains registered and no user setting is rewritten.
+  let alternateInvocations = 0;
   const other = vscode.languages.registerDocumentFormattingEditProvider(
     { scheme: "file", language: "yaml" },
-    { provideDocumentFormattingEdits: () => [] },
+    {
+      provideDocumentFormattingEdits: () => {
+        alternateInvocations++;
+        return [];
+      },
+    },
   );
   assert.equal(
     vscode.workspace.getConfiguration("editor", second.uri).get("formatOnSave"),
@@ -177,6 +187,15 @@ export async function run(): Promise<void> {
       .getConfiguration("editor", second.uri)
       .get("defaultFormatter"),
     null,
+  );
+  await vscode.commands.executeCommand(
+    "vscode.executeFormatDocumentProvider",
+    second.uri,
+    { tabSize: 2, insertSpaces: true },
+  );
+  assert.ok(
+    alternateInvocations > 0,
+    "alternate formatter executes while Saltbox Lint remains registered",
   );
   other.dispose();
   await replace(document, '---\nexample_value: \"{{ value\n }}\"\n');
