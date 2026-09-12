@@ -32,6 +32,30 @@ function diagnostics(uri: vscode.Uri) {
     .filter((d) => d.source === "saltbox-lint");
 }
 export async function run(): Promise<void> {
+  const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
+  if (
+    process.env.SALTBOX_TEST_VSIX &&
+    process.env.SALTBOX_TEST_DISABLED !== "1" &&
+    vscode.workspace.isTrusted
+  ) {
+    assert.ok(product, "VSIX product must actually be installed");
+    assert.ok(!product.extensionPath.includes("saltbox-controller-"));
+    assert.ok(!product.extensionPath.endsWith("/work/extension"));
+    assert.ok(
+      product.extensionPath.startsWith(
+        process.env.SALTBOX_TEST_EXTENSIONS_DIR!,
+      ),
+      "product must load from isolated installation directory",
+    );
+    console.log(
+      `PASS installed product ${product.id} ${product.packageJSON.version} ${product.extensionPath}`,
+    );
+  }
+  if (process.env.SALTBOX_TEST_DISABLED === "1") {
+    assert.equal(product?.isActive ?? false, false);
+    console.log("PASS installed extension disabled");
+    return;
+  }
   if (process.env.SALTBOX_TEST_REGRESSIONS === "1") {
     const { runRegressions } = await import("./regressions.ts");
     return runRegressions();
@@ -143,11 +167,12 @@ export async function run(): Promise<void> {
   console.log("PASS document Fix All via verified lint-fixes endpoint");
   // A malformed child response is tested through the actual editor adapter.
   const failing = new EditorIntegration(
-    join(
-      extension.extensionPath,
-      "bin",
-      "process-fixture" + (process.platform === "win32" ? ".exe" : ""),
-    ),
+    process.env.SALTBOX_TEST_FIXTURE_PATH ??
+      join(
+        extension.extensionPath,
+        "bin",
+        "process-fixture" + (process.platform === "win32" ? ".exe" : ""),
+      ),
   );
   try {
     const beforeFailure = second.getText();

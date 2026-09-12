@@ -24,3 +24,12 @@ Source versions, commit identifiers, hashes, and local Nuri patch descriptions
 are preserved in highlight/ASSETS.md, highlight/assets/SHA256SUMS.json,
 highlight/assets/ansible-sha256.json, and third_party/nuri/{PATCHES.md,
 provenance.lock.json,UPSTREAM-SHA256.json,FORMAT-CHANGES.json}.
+
+All distributed CLI archives and VSIXs also include a licenses/ directory with
+complete license/notice texts for vendored Go modules, the Go runtime, Nuri,
+Oniguruma and embedded assets. licenses/inventory.json records content hashes.
+SOURCE.json identifies the exact corresponding-source archive and SHA-256.
+That adjacent archive includes modified Nuri source, its original WASM C wrapper
+and build recipes, Oniguruma 6.9.10 source, vendored Go dependencies, source-input
+hashes and rebuild instructions in docs/extension-release.md. It must be made
+available at no charge before distributing these binaries.

@@ -1,5 +1,10 @@
-import { runTests } from "@vscode/test-electron";
-import { mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
+import assert from "node:assert/strict";
+import {
+  runTests,
+  downloadAndUnzipVSCode,
+  resolveCliArgsFromVSCodeExecutablePath,
+} from "@vscode/test-electron";
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -47,10 +52,69 @@ writeFileSync(
     "telemetry.telemetryLevel": "off",
   }),
 );
+const vsix = process.env.SALTBOX_TEST_VSIX;
+const extensionsDir = mkdtempSync(join(tmpdir(), "saltbox-installed-"));
+const controller = mkdtempSync(join(tmpdir(), "saltbox-controller-"));
+writeFileSync(
+  join(controller, "package.json"),
+  JSON.stringify({
+    name: "saltbox-lint-test-controller",
+    publisher: "local-test",
+    version: "0.0.0",
+    engines: { vscode: "^1.100.0" },
+  }),
+);
+let executable = process.env.VSCODE_EXECUTABLE_PATH;
+if (vsix && !executable)
+  executable = await downloadAndUnzipVSCode(
+    process.env.VSCODE_VERSION ?? "1.137.0",
+  );
+function cli(args) {
+  const [command, ...prefix] = resolveCliArgsFromVSCodeExecutablePath(
+    executable,
+    { reuseMachineInstall: true },
+  );
+  const result = spawnSync(
+    command,
+    [
+      ...prefix,
+      "--no-sandbox",
+      "--user-data-dir",
+      userData,
+      "--extensions-dir",
+      extensionsDir,
+      ...args,
+    ],
+    {
+      encoding: "utf8",
+      shell: process.platform === "win32",
+      timeout: 90000,
+    },
+  );
+  if (result.error) throw result.error;
+  process.stdout.write(result.stdout ?? "");
+  process.stderr.write(result.stderr ?? "");
+  if (result.status !== 0)
+    throw new Error(`VS Code CLI exited ${result.status}`);
+  return result.stdout;
+}
+if (vsix) {
+  cli(["--install-extension", resolve(vsix), "--force"]);
+  assert.match(
+    cli(["--list-extensions", "--show-versions"]),
+    /^saltyorg\.saltbox-lint@/m,
+  );
+}
 const options = {
-  vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH,
+  vscodeExecutablePath: executable,
   version: process.env.VSCODE_VERSION ?? "1.137.0",
-  extensionDevelopmentPath: resolve("."),
+  extensionDevelopmentPath: vsix ? controller : resolve("."),
+  extensionTestsEnv: {
+    SALTBOX_TEST_EXTENSIONS_DIR: extensionsDir,
+    SALTBOX_TEST_FIXTURE_PATH: resolve(
+      "bin/process-fixture" + (process.platform === "win32" ? ".exe" : ""),
+    ),
+  },
   extensionTestsPath: resolve("dist/test/host.js"),
   launchArgs: [
     workspace,
@@ -61,32 +125,42 @@ const options = {
     userData,
     "--skip-welcome",
     "--skip-release-notes",
-    "--disable-extensions",
+    ...(vsix ? ["--extensions-dir", extensionsDir] : ["--disable-extensions"]),
+    ...(process.env.SALTBOX_TEST_DISABLED === "1"
+      ? ["--disable-extension", "saltyorg.saltbox-lint"]
+      : []),
   ],
 };
-if (untrusted) {
-  if (!options.vscodeExecutablePath)
-    throw new Error(
-      "Restricted-workspace test requires VSCODE_EXECUTABLE_PATH",
+try {
+  if (untrusted) {
+    if (!options.vscodeExecutablePath)
+      throw new Error(
+        "Restricted-workspace test requires VSCODE_EXECUTABLE_PATH",
+      );
+    // test-electron always adds --disable-workspace-trust; launch this one case directly.
+    const result = spawnSync(
+      options.vscodeExecutablePath,
+      [
+        ...options.launchArgs,
+        `--extensionDevelopmentPath=${options.extensionDevelopmentPath}`,
+        `--extensionTestsPath=${options.extensionTestsPath}`,
+        "--disable-updates",
+      ],
+      {
+        env: { ...process.env, ...options.extensionTestsEnv },
+        stdio: "inherit",
+        shell: false,
+        windowsHide: true,
+        timeout: 90000,
+      },
     );
-  // test-electron always adds --disable-workspace-trust; launch this one case directly.
-  const result = spawnSync(
-    options.vscodeExecutablePath,
-    [
-      ...options.launchArgs,
-      `--extensionDevelopmentPath=${options.extensionDevelopmentPath}`,
-      `--extensionTestsPath=${options.extensionTestsPath}`,
-      "--disable-updates",
-    ],
-    {
-      env: process.env,
-      stdio: "inherit",
-      shell: false,
-      windowsHide: true,
-      timeout: 90000,
-    },
-  );
-  if (result.error) throw result.error;
-  if (result.status !== 0)
-    throw new Error(`Restricted-workspace test exited ${result.status}`);
-} else await runTests(options);
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+      throw new Error(`Restricted-workspace test exited ${result.status}`);
+  } else await runTests(options);
+} finally {
+  if (vsix) cli(["--uninstall-extension", "saltyorg.saltbox-lint"]);
+  rmSync(extensionsDir, { recursive: true, force: true });
+  rmSync(controller, { recursive: true, force: true });
+  rmSync(userData, { recursive: true, force: true });
+}

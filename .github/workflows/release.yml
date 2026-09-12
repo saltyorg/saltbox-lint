@@ -5,29 +5,28 @@ on:
 permissions:
   contents: read
 jobs:
+  qualify:
+    uses: ./.github/workflows/ci.yml
+    with:
+      stable: true
   release:
+    needs: qualify
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Validate stable version tag
+          name: release-artifacts
+          path: dist
+      - name: Publish exactly the native-qualified archives and matching source
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: '[[ $RELEASE_TAG =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]'
-      - name: Check and build
-        run: make build
-      - name: Publish release archives
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
-        with:
-          distribution: goreleaser
-          version: v2.18.1
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ $RELEASE_TAG =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes \
+            dist/*.tar.gz dist/*.zip dist/*.vsix dist/SOURCE.json \
+            dist/vsix-artifacts.json dist/checksums.txt
+# Marketplace uploads remain a separately authorized manual owner action.

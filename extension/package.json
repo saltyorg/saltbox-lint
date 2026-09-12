@@ -15,7 +15,8 @@
   ],
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": false
+      "supported": false,
+      "description": "Runs a bundled native executable and local Git beside trusted workspace files."
     },
     "virtualWorkspaces": false
   },
@@ -61,14 +62,36 @@
     "test:host": "node scripts/test-host.mjs",
     "stage:binary": "node scripts/stage-binary.mjs",
     "stage:test-fixture": "node scripts/stage-test-fixture.mjs",
-    "format:check": "prettier --check src test scripts package.json tsconfig.json"
+    "format:check": "prettier --check src test scripts package.json tsconfig.json",
+    "test:release": "node --test test/*.test.mjs",
+    "package": "node scripts/release.mjs",
+    "test:package": "node scripts/test-package.mjs"
   },
   "devDependencies": {
     "@types/node": "22.15.30",
     "@types/vscode": "1.100.0",
     "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.2",
+    "prettier": "3.9.6",
     "typescript": "5.9.3",
-    "prettier": "3.9.6"
-  }
+    "yauzl": "3.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saltyorg/saltbox-lint.git",
+    "directory": "extension"
+  },
+  "homepage": "https://github.com/saltyorg/saltbox-lint/tree/main/extension",
+  "bugs": {
+    "url": "https://github.com/saltyorg/saltbox-lint/issues"
+  },
+  "pricing": "Free",
+  "keywords": [
+    "saltbox",
+    "sandbox",
+    "yaml",
+    "ansible"
+  ],
+  "packageManager": "npm@11.19.0"
 }

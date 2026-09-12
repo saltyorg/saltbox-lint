@@ -32,53 +32,36 @@ Operational errors and skipped-format reasons appear in the **Saltbox Lint**
 Output channel. Manual operation failures also show a notification. There are no
 runtime downloads, telemetry, Python/Ansible execution, or persistent server.
 
+## Platforms and installation
+
+Install the VSIX matching the machine hosting your workspace extension:
+Linux x64/ARM64, Alpine x64/ARM64, macOS Intel/Apple Silicon, or Windows x64/ARM64.
+Each package carries one native executable. Alpine reuses the CGO-free Linux
+binary; Alpine remote-host acceptance is a release gate. A local cross-built
+package is not a claim that its target has completed native qualification.
+No web/virtual-workspace extension is provided. See the release's qualification
+record for tested environments; initial Marketplace publication remains pending.
+
+Use **Extensions → Install from VSIX…** for a local package. VS Code controls
+install/update/disable/uninstall. No administrator installation, runtime download,
+Python, Ansible or persistent daemon is required. Git must be available on the
+workspace host for repository-aware discovery.
+
+## Privacy, support and licensing
+
+See [Privacy](PRIVACY.md), [Support and security](SUPPORT.md), and
+[Changelog](CHANGELOG.md). Saltbox Lint is GPL-3.0-only; redistribution and
+modification are permitted under the included [GPL license](https://github.com/saltyorg/saltbox-lint/blob/main/LICENSE), without
+warranty. Third-party components retain their own notices and license texts.
+Every package includes `SOURCE.json` naming and hashing its exact corresponding
+source archive. That archive includes modified Nuri, its WASM wrapper and matching
+Oniguruma source, vendored Go dependencies and build instructions. It must be
+available at no charge alongside the matching release binaries.
+
 ## Development
 
-Use Node 24.20.0 and the repository's Go toolchain. Dependencies are exact pins in
-`package-lock.json`; there are no runtime Node dependencies.
-
-```sh
-cd extension
-npm ci
-npm run build
-npm test
-npm run format:check
-npm run stage:binary
-npm run stage:test-fixture
-VSCODE_EXECUTABLE_PATH=/path/to/code npm run test:host
-```
-
-`build` type-checks and bundles the extension and real-host tests with esbuild,
-leaving `vscode` external. `stage:binary` builds the native CLI into ignored
-`bin/saltbox-lint[.exe]`; `stage:test-fixture` builds a test-only operational-failure
-executable that must never ship. `test:host` creates isolated local Git fixtures
-and launches the development extension with `@vscode/test-electron`. Providing
-`VSCODE_EXECUTABLE_PATH` uses an existing SDK; otherwise the test tool downloads
-the pinned 1.137.0 SDK (or the explicitly supplied `VSCODE_VERSION`). SDK downloads
-are development-only. Linux GUI tests require Xvfb and Electron dependencies.
-
-For restricted-workspace acceptance, set `SALTBOX_TEST_UNTRUSTED=1` and provide
-`VSCODE_EXECUTABLE_PATH`. This case launches the SDK directly because test-electron
-unconditionally disables workspace trust. Test settings are written only to a
-fresh temporary test profile.
-
-The host suite uses the bundled native CLI for diagnostics, quick fixes, Fix All,
-Unicode/CRLF formatting, undo/redo, multi-root, ignored files and document
-lifecycle. A separate test executable covers malformed responses and formatting
-cancellation. Pure tests cover wire validation, coordinate indexing, queue
-ownership, bounds and actual subprocess tree cleanup on POSIX. Windows job tests
-live in the repository root and require native Windows execution.
-
-VSIX staging, binary/SDK platform matrices, license inventory and packaged-VSIX
-acceptance are separate release tooling. This development harness does not install
-or test a packaged VSIX.
-
-Run the lifecycle regression host separately with
-`SALTBOX_TEST_REGRESSIONS=1 VSCODE_EXECUTABLE_PATH=/path/to/code npm run test:host`
-(on Windows, set those environment variables in PowerShell before invoking npm).
-This suite exercises document/root isolation, pending operations, multiple tabs,
-retained closed models, dirty symlink workspaces, root removal, and retained
-quick-fix commands across report replacement. CI acceptance should run both host
-modes at the minimum and current supported SDK versions. Initial regression
-fixtures are created before the editor launches; the tested edits, saves, tab
-changes, workspace changes and root configuration changes happen in the host.
+See the repository's [release and native testing guide](https://github.com/saltyorg/saltbox-lint/blob/main/docs/extension-release.md).
+Use Node 24.20.0, npm 11.19.0 and the Go toolchain in `go.mod`.
+Run `npm ci --ignore-scripts`, `npm run build`, `npm test`, and
+`npm run format:check` in this directory. `make check` includes these quality
+gates; `make snapshot` builds the eight local VSIXs and corresponding source.

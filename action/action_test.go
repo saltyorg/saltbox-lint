@@ -1,3 +1,5 @@
+//go:build linux
+
 package action_test
 
 import (
@@ -15,16 +17,6 @@ import (
 	"sync/atomic"
 	"testing"
 )
-
-func writeFile(t *testing.T, path string, data []byte) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func shell(t *testing.T, script string, env map[string]string) (string, int) {
 	t.Helper()
@@ -169,16 +161,6 @@ func TestInstallValidatesReleaseAndDownload(t *testing.T) {
 			}
 		})
 	}
-}
-
-func buildBinary(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "saltbox-lint")
-	c := exec.CommandContext(t.Context(), "go", "build", "-ldflags", "-X main.version=1.2.3", "-o", path, "..")
-	if out, err := c.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
-	return path
 }
 
 func TestRunPathsAreDataAndStatusesArePreserved(t *testing.T) {

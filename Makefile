@@ -10,7 +10,7 @@ ACTIONLINT := $(TOOLS)/actionlint-$(ACTIONLINT_VERSION)/actionlint
 GORELEASER := $(TOOLS)/goreleaser-$(GORELEASER_VERSION)/goreleaser
 VERSION ?= dev
 
-.PHONY: tools catalog check format-check build snapshot
+.PHONY: tools catalog check format-check build snapshot extension-check release-artifacts
 
 tools: $(GOLANGCI) $(ACTIONLINT) $(GORELEASER)
 
@@ -33,7 +33,14 @@ format-check:
 
 # Gate commands never rewrite sources or module files. Bootstrap tools and Go
 # caches may be populated; build/release artifacts live in ignored directories.
-check: tools format-check
+extension-check:
+	npm --prefix extension ci --ignore-scripts
+	npm --prefix extension run check
+	npm --prefix extension test
+	npm --prefix extension run test:release
+	npm --prefix extension run format:check
+
+check: tools format-check extension-check
 	go mod tidy -diff
 	go vet ./...
 	$(GOLANGCI) run
@@ -47,4 +54,8 @@ build: check
 	CGO_ENABLED=0 go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/saltbox-lint .
 
 snapshot: check
-	$(GORELEASER) release --snapshot --clean
+	npm --prefix extension run package
+
+# Local artifacts only; stable tag and manifest version must agree.
+release-artifacts: check
+	npm --prefix extension run package -- --stable

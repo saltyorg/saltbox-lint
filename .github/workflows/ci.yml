@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      stable:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -16,5 +21,122 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Check, build and package a local snapshot
-        run: make build snapshot
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: extension/.node-version
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - name: Check, build and package local artifacts
+        env:
+          STABLE: ${{ inputs.stable }}
+        run: |
+          if [[ "$STABLE" == true ]]; then
+            make build release-artifacts
+          else
+            make build snapshot
+          fi
+      - name: Rebuild from the matching source with dependency downloads disabled
+        run: |
+          mkdir -p "$RUNNER_TEMP/source-rebuild"
+          tar -xzf dist/*_source.tar.gz -C "$RUNNER_TEMP/source-rebuild"
+          version=$(node -p 'require("./extension/package.json").version')
+          cd "$RUNNER_TEMP/source-rebuild/saltbox-lint-source"
+          CGO_ENABLED=0 GOPROXY=off GOSUMDB=off go build -mod=vendor -buildvcs=false -trimpath -ldflags "-s -w -X main.version=$version" -o saltbox-lint .
+          ./saltbox-lint --version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-artifacts
+          path: |
+            dist/*.vsix
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/SOURCE.json
+            dist/vsix-artifacts.json
+          if-no-files-found: error
+  native:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64
+            alpine: alpine-x64
+            race: true
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+            alpine: alpine-arm64
+            race: true
+          - runner: windows-2025
+            target: win32-x64
+            race: true
+          - runner: windows-11-arm
+            target: win32-arm64
+            race: false # Go has no windows/arm64 race runtime.
+          - runner: macos-15-intel
+            target: darwin-x64
+            race: true
+          - runner: macos-15
+            target: darwin-arm64
+            race: true
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: extension/.node-version
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-artifacts
+          path: dist
+      - name: Native Go and patched Nuri tests
+        run: |
+          go test ./...
+          go -C third_party/nuri test . ./internal/grammar ./internal/tokenizer
+      - name: Native race tests on supported targets
+        if: matrix.race
+        run: |
+          go test -race ./...
+          go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
+      - name: Extension unit and packaged CLI tests
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          npm --prefix extension ci --ignore-scripts
+          npm --prefix extension run build
+          npm --prefix extension test
+          node extension/scripts/test-package.mjs "$PACKAGE_TARGET"
+          npm --prefix extension run stage:test-fixture
+      - name: Install editor host dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
+      - name: Installed VSIX minimum/current editor acceptance
+        working-directory: extension
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a node scripts/test-native-hosts.mjs
+          else
+            node scripts/test-native-hosts.mjs
+          fi
+      - name: Native musl packaged binary acceptance
+        if: runner.os == 'Linux'
+        env:
+          ALPINE_TARGET: ${{ matrix.alpine }}
+        run: |
+          node extension/scripts/test-package.mjs "$ALPINE_TARGET" dist --extract-only
+          version=$(node -p 'require("./extension/package.json").version')
+          docker run --init --rm --mount "type=bind,source=$PWD,target=/work,readonly" \
+            node:24.20.0-alpine3.23@sha256:0388af2af070cd4736a1567cfed02469ba117848845b4165d87a333edb53d2ca \
+            node /work/extension/scripts/test-binary.mjs \
+            "/work/dist/package-test/$ALPINE_TARGET/saltbox-lint" "$version" "$ALPINE_TARGET"

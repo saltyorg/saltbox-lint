@@ -7,6 +7,8 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -16,6 +18,9 @@ builds:
       - -s -w -X main.version={{ .Version }}
 archives:
   - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
     files:
       - LICENSE
@@ -24,10 +29,14 @@ archives:
       - highlight/assets/licenses/*
       - third_party/nuri/LICENSE
       - third_party/nuri/THIRD-PARTY-NOTICE
+      - src: bin/release-source/licenses
+        dst: licenses
+      - src: bin/release-source/SOURCE.json
+        dst: SOURCE.json
 checksum:
   name_template: checksums.txt
 snapshot:
-  version_template: '0.0.0-{{ .ShortCommit }}-snapshot'
+  version_template: '{{ .Env.SALTBOX_RELEASE_VERSION }}'
 changelog:
   use: git
 release:

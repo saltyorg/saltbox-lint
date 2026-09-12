@@ -3,7 +3,7 @@
 Generated: 2026-09-12
 
 ## Stack
-- Go 1.27.1; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; current release packaging remains Linux.
+- Go 1.27.1; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
 - Cobra v1.10.2; command factories own explicit I/O and exit-code boundaries.
 - colorprofile v0.4.3, x/term v0.2.2 and uniseg v0.4.7 provide destination-aware terminal presentation and grapheme wrapping.
 - goccy/go-yaml v1.19.2 validates lint sources; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
@@ -27,9 +27,10 @@ Generated: 2026-09-12
 - Explicit fixes preserve YAML/Jinja meaning and already-valid bytes. Consumer repositories remain read-only; examples are adoption templates.
 
 ## CI gates
-- Extension development gates: npm run build, npm test and npm run format:check; npm run test:host exercises the actual native CLI in VS Code. Packaging/CI integration follows separately.
+- Extension gates (included in make check): npm run build, npm test and npm run format:check; installed VSIX host tests run on six native CI targets at minimum/current SDKs, with same-architecture Alpine musl probes.
 - make check: non-mutating gofmt/module-tidiness checks, vet, pinned golangci-lint and root plus patched Nuri race suites; Bash syntax, workflow/example actionlint and GoReleaser validation.
-- make build runs that gate before the CGO-free binary; make snapshot runs it before local Linux amd64/arm64 archives/checksums with third-party notices/licenses.
+- make build runs that gate before the CGO-free binary; make snapshot runs it before six native CLI archives, eight VSIXs, checksums and hash-linked corresponding source with vendored modules, Nuri WASM build inputs and Oniguruma source.
+- Packaging uses exact npm 11.19.0, vsce 3.9.2 and yauzl 3.4.0 pins; build tools are development-only. Source/archive/ZIP verification remains separate from editor runtime.
 - Makefile pins golangci-lint v2.13.2, actionlint v1.7.12 and GoReleaser v2.18.1; workflow actions are commit-pinned. Tools live under ignored bin/tools.
 - make catalog is the explicit managed-wrapper refresh. Normal gates use embedded data and require no Saltbox Ansible venv.
 - See docs/terminal-rendering-results.md for measured adoption/defer decisions and delivery evidence status.
