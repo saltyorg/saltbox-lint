@@ -434,6 +434,35 @@ export async function runRegressions(): Promise<void> {
     },
   );
   await run(
+    "POLICY explicitly grouped Cloudflare condition stays intact",
+    async () => {
+      const directory = vscode.Uri.joinPath(
+        roots[0].uri,
+        "roles/example/tasks",
+      );
+      await vscode.workspace.fs.createDirectory(directory);
+      const source =
+        '- name: Check Cloudflare state\n  ansible.builtin.debug:\n    msg: "{{ value\n     }}"\n  when:\n    - ((cloudflare_ipv4_record is defined) and (cloudflare_ipv4_record | length > 0))\n';
+      const document = await open(
+        vscode.Uri.joinPath(directory, "grouped-when.yml"),
+        source,
+      );
+      await waitFor(
+        () => diagnostics(document.uri).some((d) => d.code === "jinja-layout"),
+        "actual source snapshot diagnosed",
+      );
+      assert.ok(
+        !diagnostics(document.uri).some(
+          (d) =>
+            d.code === "ansible-when-list" ||
+            d.code === "ansible-when-parentheses",
+        ),
+        "explicitly grouped Cloudflare condition was split or rejected",
+      );
+      assert.equal(document.getText(), source);
+    },
+  );
+  await run(
     "I5 a retained quick fix cannot bind to a replacement report",
     async () => {
       const folder = vscode.Uri.joinPath(roots[0].uri, "roles/example/tasks");
