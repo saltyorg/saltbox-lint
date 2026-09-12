@@ -66,6 +66,19 @@ func verify(ctx context.Context, before, after *lint.Source, jinja bool) error {
 	if bytes.HasSuffix(before.Data, []byte("\n")) != bytes.HasSuffix(after.Data, []byte("\n")) {
 		return fmt.Errorf("final newline state changed")
 	}
+	if !jinja {
+		oldBlanks, err := blankLineSignature(ctx, before.Data)
+		if err != nil {
+			return err
+		}
+		newBlanks, err := blankLineSignature(ctx, after.Data)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(oldBlanks, newBlanks) {
+			return fmt.Errorf("source blank lines changed")
+		}
+	}
 	if jinja {
 		allowed, err := lint.FormattingEdits(before)
 		if err != nil {
@@ -184,21 +197,41 @@ func verifyDiagnostics(ctx context.Context, before, after *lint.Source) error {
 	if err != nil {
 		return err
 	}
+	if len(old) == 0 && len(current) == 0 {
+		return nil
+	}
+	beforeOwners, err := newOwnerIndex(ctx, before)
+	if err != nil {
+		return err
+	}
+	afterOwners, err := newOwnerIndex(ctx, after)
+	if err != nil {
+		return err
+	}
 	type identity struct{ rule, message, owner string }
 	counts := map[identity]int{}
 	for _, d := range old {
-		counts[identity{d.RuleID, d.Message, diagnosticOwner(before, d.Span)}]++
+		owner, err := beforeOwners.owner(ctx, d.Span)
+		if err != nil {
+			return err
+		}
+		counts[identity{d.RuleID, d.Message, owner}]++
 	}
 	for _, d := range current {
 		if d.RuleID == "jinja-layout" || d.RuleID == "section-spacing" {
 			continue
 		}
-		key := identity{d.RuleID, d.Message, diagnosticOwner(after, d.Span)}
+		owner, err := afterOwners.owner(ctx, d.Span)
+		if err != nil {
+			return err
+		}
+		key := identity{d.RuleID, d.Message, owner}
 		if counts[key] == 0 {
 			return fmt.Errorf("formatting introduces %s: %s", d.RuleID, d.Message)
 		}
 		counts[key]--
 	}
+
 	return nil
 }
 
@@ -220,33 +253,17 @@ func documentSyntax(data []byte) []string {
 	return result
 }
 
-// Source positions move under formatting; syntax paths identify the same owner.
-// A removed finding must never cancel a new finding on another scalar.
-func diagnosticOwner(source *lint.Source, span lint.Span) string {
-	var visit func(*lint.Node, string) string
-	visit = func(n *lint.Node, path string) string {
-		if n == nil || span.Start < n.Span.Start || span.End > n.Span.End {
-			return ""
+// The semantic trees omit blank gaps. Preserve their complete raw lines as a
+// separate invariant; the shared section-fix phase is verified separately.
+func blankLineSignature(ctx context.Context, data []byte) ([]string, error) {
+	var lines []string
+	for line := range bytes.SplitAfterSeq(data, []byte{'\n'}) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		for i, e := range n.Entries {
-			if owner := visit(e.Key, fmt.Sprintf("%s/k%d", path, i)); owner != "" {
-				return owner
-			}
-			if owner := visit(e.Value, fmt.Sprintf("%s/v%d", path, i)); owner != "" {
-				return owner
-			}
-		}
-		for i, item := range n.Items {
-			if owner := visit(item, fmt.Sprintf("%s/i%d", path, i)); owner != "" {
-				return owner
-			}
-		}
-		return path
-	}
-	for i, n := range source.Documents {
-		if owner := visit(n, fmt.Sprintf("d%d", i)); owner != "" {
-			return owner
+		if len(line) > 0 && len(bytes.Trim(line, " \t\r\n")) == 0 {
+			lines = append(lines, string(line))
 		}
 	}
-	return "document"
+	return lines, nil
 }

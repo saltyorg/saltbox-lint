@@ -79,3 +79,17 @@ func TestVerificationProtectsLexicalScalarSpelling(t *testing.T) {
 		})
 	}
 }
+
+func TestStructuralVerificationRejectsCollapsedBlankLines(t *testing.T) {
+	before, ds := lint.Parse("vars.yml", []byte("v: [one,\n\n two]\n"))
+	if len(ds) > 0 {
+		t.Fatal(ds)
+	}
+	after, ds := lint.Parse("vars.yml", []byte("v:\n  - one\n  - two\n"))
+	if len(ds) > 0 {
+		t.Fatal(ds)
+	}
+	if err := verify(t.Context(), before, after, false); err == nil {
+		t.Fatal("semantic equality hid a collapsed blank gap")
+	}
+}

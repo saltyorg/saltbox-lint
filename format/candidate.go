@@ -73,14 +73,13 @@ func (b *candidateBuilder) node(n *lint.Node, depth int) error {
 		return fmt.Errorf("missing YAML node")
 	}
 	if n.Style == "flow" {
-		text, err := b.flow(n, depth)
-		if err != nil {
-			return err
+		start := bytes.LastIndexByte(b.source.Data[:n.Span.Start], '\n') + 1
+		if strings.Trim(string(b.source.Data[start:n.Span.Start]), " \t") != "" {
+			start = n.Span.Start
 		}
-		b.indent(n.Span.Start, depth)
-		b.change(n.Span.Start, n.Span.End, text)
-		return nil
+		return b.flowEdit(n, depth, start, strings.Repeat(" ", depth))
 	}
+
 	switch n.Kind {
 	case "mapping":
 		for _, e := range n.Entries {
@@ -102,7 +101,7 @@ func (b *candidateBuilder) node(n *lint.Node, depth int) error {
 			value := e.Value
 			gap := string(b.source.Data[colon+1 : value.Span.Start])
 			childDepth := depth
-			if nonempty(value) {
+			if value.Kind == "mapping" || value.Kind == "sequence" {
 				childDepth += 2
 			}
 			if !strings.ContainsAny(gap, "\r\n#") {
@@ -113,8 +112,15 @@ func (b *candidateBuilder) node(n *lint.Node, depth int) error {
 				if value.Span.Start == value.Span.End {
 					want = ""
 				}
-				b.change(colon+1, value.Span.Start, want)
+				gap = want
 			}
+			if value.Style == "flow" {
+				if err := b.flowEdit(value, childDepth, colon+1, gap); err != nil {
+					return err
+				}
+				continue
+			}
+			b.change(colon+1, value.Span.Start, gap)
 			if err := b.node(value, childDepth); err != nil {
 				return err
 			}
@@ -133,8 +139,15 @@ func (b *candidateBuilder) node(n *lint.Node, depth int) error {
 				if item.Span.Start == item.Span.End {
 					want = ""
 				}
-				b.change(dash+1, item.Span.Start, want)
+				gap = want
 			}
+			if item.Style == "flow" {
+				if err := b.flowEdit(item, depth+2, dash+1, gap); err != nil {
+					return err
+				}
+				continue
+			}
+			b.change(dash+1, item.Span.Start, gap)
 			if err := b.node(item, depth+2); err != nil {
 				return err
 			}
@@ -191,81 +204,6 @@ func (b *candidateBuilder) scalar(n *lint.Node, depth int) error {
 
 func simpleQuote(raw string) bool {
 	return len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' && !strings.ContainsAny(raw[1:len(raw)-1], "'\"\\\r\n") && !strings.Contains(raw, "{{") && !strings.Contains(raw, "{%")
-}
-
-func (b *candidateBuilder) flow(n *lint.Node, depth int) (string, error) {
-	if err := b.ctx.Err(); err != nil {
-		return "", err
-	}
-	for _, span := range b.comments {
-		if span.Start >= n.Span.Start && span.Start < n.Span.End {
-			return "", fmt.Errorf("interior flow comments have ambiguous block attachment")
-		}
-	}
-	raw := string(b.source.Data[n.Span.Start:n.Span.End])
-	prefix := ""
-	if n.Anchor != "" || n.Tag != "" {
-		start := strings.IndexAny(raw, "[{")
-		if start < 0 {
-			return "", fmt.Errorf("cannot locate prefixed flow collection")
-		}
-		prefix = strings.TrimSpace(raw[:start]) + b.newline + strings.Repeat(" ", depth)
-	}
-	if !nonempty(n) {
-		empty := "{}"
-		if n.Kind == "sequence" {
-			empty = "[]"
-		}
-		if prefix != "" {
-			prefix = strings.TrimSpace(strings.TrimSuffix(prefix, strings.Repeat(" ", depth))) + " "
-		}
-		return prefix + empty, nil
-	}
-	var lines []string
-	if n.Kind == "mapping" {
-		for _, e := range n.Entries {
-			if e.Key.Kind == "mapping" || e.Key.Kind == "sequence" {
-				return "", fmt.Errorf("complex mapping keys are unsupported")
-			}
-			key, err := b.flowScalar(e.Key)
-			if err != nil {
-				return "", err
-			}
-			value, err := b.flowValue(e.Value, depth+2)
-			if err != nil {
-				return "", err
-			}
-			gap := " "
-			if nonempty(e.Value) && e.Value.Anchor == "" && e.Value.Tag == "" {
-				gap = b.newline + strings.Repeat(" ", depth+2)
-			}
-			lines = append(lines, key+":"+gap+value)
-		}
-	} else {
-		for _, item := range n.Items {
-			value, err := b.flowValue(item, depth+2)
-			if err != nil {
-				return "", err
-			}
-			lines = append(lines, "- "+value)
-		}
-	}
-	return prefix + strings.Join(lines, b.newline+strings.Repeat(" ", depth)), nil
-}
-
-func (b *candidateBuilder) flowValue(n *lint.Node, depth int) (string, error) {
-	if n.Kind == "mapping" || n.Kind == "sequence" {
-		return b.flow(n, depth)
-	}
-	return b.flowScalar(n)
-}
-
-func (b *candidateBuilder) flowScalar(n *lint.Node) (string, error) {
-	raw := string(b.source.Data[n.Span.Start:n.Span.End])
-	if strings.ContainsAny(raw, "\r\n") {
-		return "", fmt.Errorf("multiline scalars in flow collections are unsupported")
-	}
-	return canonicalScalar(n, raw), nil
 }
 
 func canonicalScalar(n *lint.Node, raw string) string {
