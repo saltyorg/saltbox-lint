@@ -85,6 +85,7 @@ func TestManualPreviewProducers(t *testing.T) {
 		{"boolean", "tasks/main.yml", task + "  when: false\n", task + "  when: (false)\n", "ansible-when-parentheses"},
 		{"conditional", "vars.yml", "key: '{{ ((a if enabled else b)) }}'\n", "key: '{{ a if enabled else b }}'\n", "jinja-redundant-conditional-parentheses"},
 		{"when list", "tasks/main.yml", task + "  when: enabled and café is defined\n", task + "  when:\n    - enabled\n    - (café is defined)\n", "ansible-when-list"},
+		{"when grouped operand", "tasks/main.yml", task + "  when: a and (b and c)\n", task + "  when:\n    - a\n    - (b and c)\n", "ansible-when-list"},
 		{"when crlf eof", "tasks/main.yml", strings.ReplaceAll(task, "\n", "\r\n") + "  when: enabled and (b or c)", strings.ReplaceAll(task, "\n", "\r\n") + "  when:\r\n    - enabled\r\n    - (b or c)", "ansible-when-list"},
 	}
 	for _, tc := range cases {

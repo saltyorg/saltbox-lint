@@ -15,7 +15,8 @@ func TestWhenListConjunctions(t *testing.T) {
 	}{
 		{"(remote_docker_controller_service_running is defined) and remote_docker_controller_service_running", []string{"(remote_docker_controller_service_running is defined)", "remote_docker_controller_service_running"}},
 		{"a and b and c", []string{"a", "b", "c"}},
-		{"((a and (b and c)))", []string{"a", "b", "c"}},
+		{"a and (b and c)", []string{"a", "(b and c)"}},
+		{"((a and b)) and (c and (d and e))", []string{"((a and b))", "(c and (d and e))"}},
 		{"(a) and ((b))", []string{"(a)", "((b))"}},
 		{"a and (b or c)", []string{"a", "(b or c)"}},
 		{"a is defined and a | bool and not b and c == d", []string{"(a is defined)", "(a | bool)", "(not b)", "(c == d)"}},
@@ -41,6 +42,35 @@ func TestWhenListConjunctions(t *testing.T) {
 				assertWhenListHint(t, ds[0], tc.items)
 			}
 		})
+	}
+}
+
+func TestWhenListPreservesCompleteGroups(t *testing.T) {
+	for _, condition := range []string{"(a and b)", "((a and (b and c)))", "((a and b) and (c and d))"} {
+		t.Run(condition, func(t *testing.T) {
+			for _, prefix := range []string{"  when: ", "  when:\n    - "} {
+				input := "- name: Check readiness\n  ansible.builtin.debug: {msg: ok}\n" + prefix + condition + "\n"
+				for _, name := range []string{"saltbox", "sandbox"} {
+					p := ansibleProject(t, name, map[string]string{"tasks/main.yml": input})
+					if ds := Analyze(p, dockerRules("ansible-when-list", "ansible-when-parentheses")); len(ds) != 0 {
+						t.Fatalf("%s: grouped condition has diagnostics: %+v", name, ds)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestWhenListCloudflareGroupedCondition(t *testing.T) {
+	data, err := os.ReadFile("testdata/ansible/when-grouped.good.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"saltbox", "sandbox"} {
+		p := ansibleProject(t, name, map[string]string{"tasks/main.yml": string(data)})
+		if ds := Analyze(p, dockerRules("ansible-when-list", "ansible-when-parentheses")); len(ds) != 0 {
+			t.Fatalf("%s: Cloudflare grouped condition has diagnostics: %+v", name, ds)
+		}
 	}
 }
 
@@ -177,7 +207,7 @@ func TestWhenListDecodedHintsPositionsAndSelection(t *testing.T) {
 func TestWhenListMultipleItemsAndFixtures(t *testing.T) {
 	input := "- name: Check readiness\n  ansible.builtin.debug: {msg: ok}\n  when:\n    - a and b\n    - (c and d)\n    - value is defined\n    - enabled\n"
 	ds := Analyze(ansibleProject(t, "saltbox", map[string]string{"tasks/main.yml": input}), dockerRules("ansible-when-list", "ansible-when-parentheses"))
-	if len(ds) != 3 || ds[0].RuleID != "ansible-when-list" || ds[1].RuleID != "ansible-when-list" || ds[2].RuleID != "ansible-when-parentheses" {
+	if len(ds) != 2 || ds[0].RuleID != "ansible-when-list" || ds[1].RuleID != "ansible-when-parentheses" {
 		t.Fatalf("diagnostics=%+v", ds)
 	}
 	for _, kind := range []string{"good", "bad"} {

@@ -7,32 +7,24 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-// rootConjunction returns ordered indivisible operands only when and is the
-// root operation. Inspect each delimiter depth without distributing into or,
+// rootConjunction returns ordered indivisible operands only for unparenthesized
+// top-level and. Explicit groups stay intact, as do conjunctions beneath or,
 // conditional branches, call arguments, or operands of higher-precedence uses.
-// Retain the original groups on leaves; only conjunction groups are removed.
 func rootConjunction(tokens []Token) [][]Token {
-	ungrouped := stripGrouping(tokens)
-	if conditionalResultTuple(ungrouped) {
+	if conditionalResultTuple(tokens) {
 		return nil
 	}
-	syntax := inspectRegion(ungrouped, 0, len(ungrouped))
+	syntax := inspectRegion(tokens, 0, len(tokens))
 	if syntax.If >= 0 || syntax.Or || len(syntax.And) == 0 {
 		return nil
 	}
 	var operands [][]Token
 	start := 0
-	for _, end := range append(syntax.And, len(ungrouped)) {
+	for _, end := range append(syntax.And, len(tokens)) {
 		if start == end {
 			return nil
 		}
-		operand := ungrouped[start:end]
-		nested := rootConjunction(operand)
-		if len(nested) > 0 {
-			operands = append(operands, nested...)
-		} else {
-			operands = append(operands, operand)
-		}
+		operands = append(operands, tokens[start:end])
 		start = end + 1
 	}
 	return operands

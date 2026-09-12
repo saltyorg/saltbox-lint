@@ -10,10 +10,12 @@ files describe working-tree bytes, not an unmodified HEAD snapshot.
 ## When-only conventions
 
 `ansible-when-list` requires separate block-list items when a scalar `when`
-condition or an existing list item has logical `and` as its root operation.
-Outer conjunction groups are removed and nested conjunctions are flattened:
-`a and (b and c)` becomes three items in the same order. This preserves guard
-conditions before the expressions they protect:
+condition or an existing list item has an unparenthesized top-level logical `and`.
+Explicit groups are intentional indivisible conditions: `a and (b and c)` becomes
+two items, `a` and `(b and c)`, in the same order. Complete outer groups, including
+`((a and (b and c)))`, stay intact. This grouping boundary reflects the user policy
+correction on 2026-09-13; it supersedes the earlier recursive-flattening convention.
+Operand order preserves guard conditions before the expressions they protect:
 
 ```yaml
 - name: Check remote controller readiness
@@ -24,13 +26,23 @@ conditions before the expressions they protect:
     - remote_docker_controller_service_running
 ```
 
+A grouped guard and value check may remain together in one list item:
+
+```yaml
+- name: Cloudflare | Add DNS Record | IPv4 Disable Tasks
+  ansible.builtin.include_tasks: "add_dns_record/ipv4_disabled.yml"
+  when:
+    - (not dns_ipv4_enabled)
+    - ((cloudflare_ipv4_record is defined) and (cloudflare_ipv4_record | length > 0))
+```
+
 The scalar form `(remote_docker_controller_service_running is defined) and
 remote_docker_controller_service_running`, observed in
 [Remote tasks:66](/srv/git/saltbox/roles/remote/tasks/main.yml:66), needs this list.
 `a and (b or c)` becomes `a` and `(b or c)` list items. `(a) and (b)` becomes
 `(a)` and `(b)`, preserving already-valid operand groups.
 
-Only root conjunctions split. `(a and b) or c`, `a and b or c`,
+Only unparenthesized top-level conjunctions split. `(a and b) or c`, `a and b or c`,
 `not (a and b)`, `(a and b) | bool`, `(a and b) == c`,
 `lookup('vars', a and b)` and conditional-result branches stay together;
 apply the parentheses convention below to each indivisible condition.
@@ -42,9 +54,9 @@ applying the hint.
 
 `ansible-when-parentheses` requires an outer round-parenthesis pair around the
 complete indivisible `when` condition unless it is a single variable read.
-A root conjunction belongs to `ansible-when-list` and receives no competing
-whole-condition parentheses finding. This applies
-to each YAML list item independently. Direct field/item access and standalone
+An unparenthesized top-level conjunction belongs to `ansible-when-list` and
+receives no competing whole-condition parentheses finding. This applies to each
+YAML list item independently. Direct field/item access and standalone
 `lookup(...)`, `query(...)`, and `q(...)` calls are variable reads. The lookup
 arguments do not affect this classification. Negation, operators, tests and
 filters applied outside the call still need grouping, as do other calls and

@@ -9,8 +9,9 @@ requires a blank line between genuine three-line section banners and variables,
 including custom titles. It safely inserts missing separators with `check --fix`
 and preserves existing spacing and attached variable documentation.
 
-The diagnostic-only additions are `ansible-when-list` (split root conjunctions
-in structural `when` scalars or list items into ordered block-list items),
+The diagnostic-only additions are `ansible-when-list` (split unparenthesized
+top-level conjunctions in structural `when` scalars or list items into ordered
+block-list items),
 `ansible-when-parentheses` (group each nontrivial indivisible structural `when`
 condition, including literal booleans) and
 `jinja-redundant-conditional-parentheses` (omit a standalone output's whole
@@ -18,9 +19,10 @@ condition, including literal booleans) and
 `query` and `q` calls, may remain ungrouped; other Ansible condition fields and
 generic boolean outputs gain no grouping
 requirement. Consumed conditional results retain their needed parentheses.
-Root conjunctions receive only the list diagnostic; each suggested item obeys
-the parentheses convention. Conjunctions beneath other operators, calls or
-conditional results remain intact. Hints preserve decoded literal contents
+Unparenthesized top-level conjunctions receive only the list diagnostic; each
+suggested item obeys the parentheses convention. Explicit groups remain indivisible, including nested
+conjunctions. Conjunctions beneath other operators, calls or conditional results
+remain intact. Hints preserve decoded literal contents
 with YAML scalar quoting and never offer automatic edits.
 See [the scoped conventions](boolean-grouping-research.md) for examples,
 source observations and exclusions. Historical acceptance results describe

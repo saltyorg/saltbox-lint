@@ -1,0 +1,5 @@
+- name: Cloudflare | Add DNS Record | IPv4 Disable Tasks
+  ansible.builtin.include_tasks: "add_dns_record/ipv4_disabled.yml"
+  when:
+    - (not dns_ipv4_enabled)
+    - ((cloudflare_ipv4_record is defined) and (cloudflare_ipv4_record | length > 0))

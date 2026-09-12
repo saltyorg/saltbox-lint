@@ -8,3 +8,5 @@
     - (not (a and b))
     - lookup('vars', flag_name)
     - ((a and b) | bool)
+    - (a and b)
+    - ((a and (b and c)))

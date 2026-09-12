@@ -6,5 +6,5 @@
   ansible.builtin.debug:
     msg: ready
   when:
-    - (a and (b and c))
+    - a and (b and c)
     - lookup('vars', flag_name) and (other is defined)
