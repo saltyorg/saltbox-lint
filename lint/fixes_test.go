@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,10 @@ func TestWriteChangesPreservesModeRejectsStaleAndSymlink(t *testing.T) {
 	if err := os.WriteFile(path, before, 0640); err != nil {
 		t.Fatal(err)
 	}
+	beforeInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := layoutProject(t, string(before))
 	p.Root = root
 	changes, err := PlanFixes(p, Analyze(p, Rules()))
@@ -50,7 +55,7 @@ func TestWriteChangesPreservesModeRejectsStaleAndSymlink(t *testing.T) {
 		t.Fatalf("write: %q %v", after, err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0640 {
+	if err != nil || info.Mode() != beforeInfo.Mode() {
 		t.Fatalf("mode: %v %v", info, err)
 	}
 	if err := WriteChanges(p, changes); err == nil {
@@ -174,6 +179,9 @@ func TestWriteChangesWithEmptyBatchNeedsNoFilesystem(t *testing.T) {
 	}
 }
 func TestWriteChangesPreservesSpecialModeBits(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("POSIX sticky mode is tested on supported Linux and macOS targets")
+	}
 	root := t.TempDir()
 	input := "v: \"{{ a\n | f }}\"\n"
 	p := layoutProject(t, input)

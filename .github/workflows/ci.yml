@@ -98,15 +98,16 @@ jobs:
         with:
           name: release-artifacts
           path: dist
-      - name: Native Go and patched Nuri tests
-        run: |
-          go test ./...
-          go -C third_party/nuri test . ./internal/grammar ./internal/tokenizer
-      - name: Native race tests on supported targets
+      - name: Native Go tests
+        run: go test ./...
+      - name: Native patched Nuri tests
+        run: go -C third_party/nuri test . ./internal/grammar ./internal/tokenizer
+      - name: Native Go race tests on supported targets
         if: matrix.race
-        run: |
-          go test -race ./...
-          go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
+        run: go test -race ./...
+      - name: Native patched Nuri race tests on supported targets
+        if: matrix.race
+        run: go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
       - name: Extension unit and packaged CLI tests
         env:
           PACKAGE_TARGET: ${{ matrix.target }}

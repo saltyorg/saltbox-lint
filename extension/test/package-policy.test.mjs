@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { verifyEntries } from "../scripts/verify-package.mjs";
+import { manifest } from "../scripts/release-inputs.mjs";
 
 // Hand-written minimal VSIX boundary fixture. Extra bytes or wrong executable
 // identities must be refused before a release artifact can be handed off.
@@ -25,7 +26,7 @@ function fixture() {
     JSON.stringify({
       name: "saltbox-lint",
       publisher: "saltyorg",
-      version: "0.1.0",
+      version: manifest.version,
       main: "./dist/extension.js",
     }),
   );
