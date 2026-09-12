@@ -74,6 +74,7 @@ func originalPrefixLine(project *lint.Project, group diagnosticGroup) int {
 		}
 		throughLine = max(throughLine, min(len(lines), lineForOffset(lines, offset)+3))
 	}
+	seenFixes := make(map[*Fix]bool)
 	for _, d := range group.diagnostics {
 		include(d.Span.Start, d.Span.End)
 		if d.preview != nil {
@@ -81,7 +82,8 @@ func originalPrefixLine(project *lint.Project, group diagnosticGroup) int {
 				include(edit.Span.Start, edit.Span.End)
 			}
 		}
-		if d.Fix != nil {
+		if d.Fix != nil && !seenFixes[d.Fix] {
+			seenFixes[d.Fix] = true
 			for _, edit := range d.Fix.Edits {
 				include(edit.Span.Start, edit.Span.End)
 			}

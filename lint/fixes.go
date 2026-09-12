@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -19,10 +20,29 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 		return nil, nil
 	}
 	grouped := map[string][]Edit{}
+	// Proposal identity is scoped to its primary source. Content keys also catch
+	// independently allocated equivalents before expanding their shared edits.
+	type proposal struct {
+		path string
+		fix  *Fix
+	}
+	seen := map[proposal]bool{}
+	contents := map[string]map[string]bool{}
 	for _, d := range diagnostics {
-		if project.Selected[d.Path] && d.Fix != nil {
-			grouped[d.Path] = append(grouped[d.Path], d.Fix.Edits...)
+		identity := proposal{d.Path, d.Fix}
+		if !project.Selected[d.Path] || d.Fix == nil || seen[identity] {
+			continue
 		}
+		seen[identity] = true
+		key := editProposalKey(d.Fix.Edits)
+		if contents[d.Path] == nil {
+			contents[d.Path] = map[string]bool{}
+		}
+		if contents[d.Path][key] {
+			continue
+		}
+		contents[d.Path][key] = true
+		grouped[d.Path] = append(grouped[d.Path], d.Fix.Edits...)
 	}
 	paths := make([]string, 0, len(grouped))
 	for path := range grouped {
@@ -39,9 +59,10 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 		if err != nil {
 			return nil, fmt.Errorf("plan fixes for %s: %w", path, err)
 		}
+		validation := newWhitespaceValidation(source)
 		valid := true
 		for _, e := range edits {
-			if e.Span.Start < 0 || e.Span.End < e.Span.Start || e.Span.End > len(source.Data) || !allowedWhitespace(source, e) {
+			if !validation.allows(e) {
 				valid = false
 				break
 			}
@@ -50,7 +71,7 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 			continue
 		}
 		after := applyEdits(source.Data, edits)
-		if bytes.Equal(source.Data, after) || !verifiedCandidate(source, after) {
+		if bytes.Equal(source.Data, after) || !validation.verifiedCandidate(after) {
 			continue
 		}
 		candidate, _ := Parse(path, after)
@@ -62,45 +83,81 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 	}
 	return changes, nil
 }
-func allowedWhitespace(s *Source, e Edit) bool {
-	for _, v := range []string{string(s.Data[e.Span.Start:e.Span.End]), e.Text} {
-		for i := range len(v) {
-			if !space(v[i]) {
-				return false
-			}
-		}
+
+// Keys retain ordered edit content, including arbitrary replacement bytes.
+// Messages do not affect fix authority; reporting owns message-based identity.
+func editProposalKey(edits []Edit) string {
+	var key []byte
+	for _, edit := range edits {
+		key = strconv.AppendInt(key, int64(edit.Span.Start), 10)
+		key = append(key, ':')
+		key = strconv.AppendInt(key, int64(edit.Span.End), 10)
+		key = append(key, ':')
+		key = strconv.AppendQuote(key, edit.Text)
+		key = append(key, ';')
 	}
+	return string(key)
+}
+
+type whitespaceValidation struct {
+	source   *Source
+	sections map[Edit]bool
+	// Sorted starts with prefix-maximum ends support containment queries even
+	// when caller-owned nodes produce overlapping or repeated source spans.
+	gaps []Span
+}
+
+func newWhitespaceValidation(s *Source) whitespaceValidation {
+	validation := whitespaceValidation{source: s, sections: map[Edit]bool{}}
 	for _, gap := range sectionGaps(s) {
-		if e == gap.Edit {
-			return true
-		}
+		validation.sections[gap.Edit] = true
 	}
 	for _, expr := range Expressions(s) {
 		if !expr.Complete || !expr.mapped || expr.Kind != "output" || !layoutSupported(expr) {
 			continue
 		}
-		if e.Span.Start >= expr.opening.End && e.Span.End <= expr.closing.Start {
-			intersects := false
-			for _, t := range expr.Tokens {
-				if e.Span.Start < t.Span.End && e.Span.End > t.Span.Start || e.Span.Start == e.Span.End && e.Span.Start > t.Span.Start && e.Span.Start < t.Span.End {
-					intersects = true
-					break
-				}
-			}
-			if !intersects {
-				return true
-			}
+		start := expr.opening.End
+		for _, token := range expr.Tokens {
+			validation.gaps = append(validation.gaps, Span{start, token.Span.Start})
+			start = token.Span.End
 		}
-		if block, _ := pureBlock(s, expr); block && e.Span.End <= expr.Span.Start {
+		validation.gaps = append(validation.gaps, Span{start, expr.closing.Start})
+		if block, _ := pureBlock(s, expr); block {
 			start := bytes.LastIndexByte(s.Data[:expr.Span.Start], '\n') + 1
-			if e.Span.Start >= start {
-				return true
+			validation.gaps = append(validation.gaps, Span{start, expr.Span.Start})
+		}
+	}
+	slices.SortFunc(validation.gaps, func(a, b Span) int { return a.Start - b.Start })
+	for i := 1; i < len(validation.gaps); i++ {
+		validation.gaps[i].End = max(validation.gaps[i].End, validation.gaps[i-1].End)
+	}
+	return validation
+}
+
+func (v whitespaceValidation) allows(e Edit) bool {
+	if e.Span.Start < 0 || e.Span.End < e.Span.Start || e.Span.End > len(v.source.Data) {
+		return false
+	}
+	for _, text := range []string{string(v.source.Data[e.Span.Start:e.Span.End]), e.Text} {
+		for i := range len(text) {
+			if !space(text[i]) {
+				return false
 			}
 		}
 	}
-	return false
+	if v.sections[e] {
+		return true
+	}
+	i := sort.Search(len(v.gaps), func(i int) bool { return v.gaps[i].Start > e.Span.Start })
+	return i > 0 && e.Span.End <= v.gaps[i-1].End
 }
+
 func verifiedCandidate(before *Source, after []byte) bool {
+	return newWhitespaceValidation(before).verifiedCandidate(after)
+}
+
+func (v whitespaceValidation) verifiedCandidate(after []byte) bool {
+	before := v.source
 	candidate, ds := Parse(before.Path, after)
 	if len(ds) > 0 || len(before.parseDiagnostics) > 0 || len(candidate.Documents) != len(before.Documents) {
 		return false
@@ -110,7 +167,7 @@ func verifiedCandidate(before *Source, after []byte) bool {
 		return false
 	}
 	for _, e := range edits {
-		if !allowedWhitespace(before, e) {
+		if !v.allows(e) {
 			return false
 		}
 	}

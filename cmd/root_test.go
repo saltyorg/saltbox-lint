@@ -83,7 +83,7 @@ func TestStdinAndDuplicateTargets(t *testing.T) {
 	t.Chdir(root)
 	for _, input := range []string{"", "v: true\n"} {
 		code, out, stderr := invoke(t, input, "check", "-", "--stdin-filename", "unsaved.yml", "--format", "json")
-		if code != 0 || stderr != "" || strings.TrimSpace(out) != "{\"diagnostics\":[]}" {
+		if code != 0 || stderr != "" || strings.TrimSpace(out) != "{\"schema_version\":2,\"diagnostics\":[],\"fixes\":[]}" {
 			t.Fatalf("%d %q %q", code, out, stderr)
 		}
 	}
@@ -103,7 +103,7 @@ func TestStdinAndDuplicateTargets(t *testing.T) {
 		t.Fatalf("%d %q %q", code, out, stderr)
 	}
 	code, out, stderr = invoke(t, "v: true\n", "check", bad, "-", "--stdin-filename", bad, "--format", "json")
-	if code != 0 || stderr != "" || strings.TrimSpace(out) != "{\"diagnostics\":[]}" {
+	if code != 0 || stderr != "" || strings.TrimSpace(out) != "{\"schema_version\":2,\"diagnostics\":[],\"fixes\":[]}" {
 		t.Fatalf("%d %q %q", code, out, stderr)
 	}
 }

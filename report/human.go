@@ -59,6 +59,7 @@ type humanRenderer struct {
 	tokens                    map[documentKey]cachedDocumentTokens
 	prepared                  cachedDisplayDocument
 	proposals                 map[[32]byte]string
+	fixProposals              map[fixProposalIdentity]cachedFixProposal
 }
 
 func human(w io.Writer, p *lint.Project, ds []Diagnostic, opts HumanOptions) error {

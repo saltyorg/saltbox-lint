@@ -4,6 +4,7 @@ package report
 import (
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/saltyorg/saltbox-lint/lint"
 )
@@ -86,19 +87,50 @@ func location(p *lint.Project, path string, span lint.Span) Location {
 }
 func diagnostics(p *lint.Project, ds []lint.Diagnostic) []Diagnostic {
 	records := make([]Diagnostic, 0, len(ds))
+	type identity struct {
+		path string
+		fix  *lint.Fix
+	}
+	shared := map[identity]*Fix{}
+	type content struct{ path, message, edits string }
+	equivalent := map[content]*Fix{}
 	for _, d := range ds {
 		record := Diagnostic{Location: location(p, d.Path, d.Span), RuleID: d.RuleID, Severity: d.Severity, Message: d.Message, Expected: d.Expected, preview: d.Preview}
 		for _, related := range d.Related {
 			record.Related = append(record.Related, Related{Location: location(p, related.Path, related.Span), Message: related.Message})
 		}
 		if d.Fix != nil {
-			record.Fix = &Fix{Message: d.Fix.Message, Edits: make([]Edit, 0, len(d.Fix.Edits))}
-			for _, edit := range d.Fix.Edits {
-				loc := location(p, d.Path, edit.Span)
-				record.Fix.Edits = append(record.Fix.Edits, Edit{Range: loc.Range, Span: loc.Span, Text: edit.Text})
+			id := identity{d.Path, d.Fix}
+			record.Fix = shared[id]
+			if record.Fix == nil {
+				key := content{d.Path, d.Fix.Message, fixEditsKey(d.Fix.Edits)}
+				record.Fix = equivalent[key]
+				if record.Fix == nil {
+					record.Fix = &Fix{Message: d.Fix.Message, Edits: make([]Edit, 0, len(d.Fix.Edits))}
+					for _, edit := range d.Fix.Edits {
+						loc := location(p, d.Path, edit.Span)
+						record.Fix.Edits = append(record.Fix.Edits, Edit{Range: loc.Range, Span: loc.Span, Text: edit.Text})
+					}
+					equivalent[key] = record.Fix
+				}
+				shared[id] = record.Fix
 			}
 		}
 		records = append(records, record)
 	}
 	return records
+}
+
+// Encode exact ordered source edits before allocating their display positions.
+func fixEditsKey(edits []lint.Edit) string {
+	var key []byte
+	for _, edit := range edits {
+		key = strconv.AppendInt(key, int64(edit.Span.Start), 10)
+		key = append(key, ':')
+		key = strconv.AppendInt(key, int64(edit.Span.End), 10)
+		key = append(key, ':')
+		key = strconv.AppendQuote(key, edit.Text)
+		key = append(key, ';')
+	}
+	return string(key)
 }

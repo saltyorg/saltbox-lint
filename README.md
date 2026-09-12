@@ -136,13 +136,26 @@ path:line:column: error [rule-id] message
 
 Concise paths are source-root-relative, positions one-based, columns UTF-16 for
 VS Code; embedded CR/LF become visible escapes. Human columns count Unicode code
-points. Clean concise output is empty. JSON always emits one object with a
-`diagnostics` array, including an empty array for clean input. Each diagnostic
-contains `path`, `rule_id`, `severity`, `message`, `range` and `span`, and optional
-`expected`, `related`, `fix`. Range lines/columns are one-based code points with
-a half-open end; span offsets are half-open UTF-8 bytes in the original source.
-Fix edits refer to that original source, too. Structured stdout contains no
+points. Clean concise output is empty. JSON schema version 2 always emits one
+object with `schema_version: 2`, a `diagnostics` array and a shared `fixes` array.
+Both arrays are empty for clean input. Each diagnostic contains `path`, `rule_id`,
+`severity`, `message`, `range` and `span`, and optional `expected`, `related` and
+`fix_id`. Range lines/columns are one-based code points with a half-open end;
+span offsets are half-open UTF-8 bytes in the original source.
+
+Each shared fix contains `id`, `path`, `message` and `edits`. Each edit retains
+its original `range`, `span` and replacement `text`. Identical fixes for the same
+path share one record, even when several findings refer to them. IDs are
+`fix-1`, `fix-2`, and so on in first diagnostic occurrence order; they are local
+to each report. Findings without an automatic fix omit `fix_id`. Manual previews
+never create a fix record or reference. Structured stdout contains no
 progress/status text.
+
+To migrate a version 1 reader, replace access to `diagnostic.fix` with a lookup
+of `diagnostic.fix_id` in the top-level `fixes` array, indexed by `id`. The shared
+fix's `path` owns its edits. Keep processing every diagnostic, but process each
+referenced fix once. There is no legacy-format flag; diagnostic fields and edit
+positions otherwise retain their previous meaning.
 
 `--format github` emits escaped workflow-command annotations and, when
 `GITHUB_STEP_SUMMARY` is set, appends a Markdown summary. Multiline annotations

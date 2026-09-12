@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -201,5 +202,144 @@ func TestPlanFixesDeclinesUntrustedEditsInUnsupportedExpressions(t *testing.T) {
 	changes, err := PlanFixes(p, []Diagnostic{{Path: "values.yml", Fix: &Fix{Edits: []Edit{{Span: Span{8, 9}, Text: "  "}}}}})
 	if err != nil || len(changes) > 0 {
 		t.Fatalf("unsupported expression correction: %+v %v", changes, err)
+	}
+}
+
+func TestPlanFixesEquivalentProposalsKeepSourceOwnership(t *testing.T) {
+	p := layoutProject(t, "v: \"{{ a\n | f }}\"\n")
+	ds := Analyze(p, jinjaRules())
+	original := ds[0]
+	duplicate := original
+	duplicate.Fix = &Fix{Message: "different presentation", Edits: append([]Edit(nil), original.Fix.Edits...)}
+	second, _ := Parse("second.yml", p.Sources["values.yml"].Data)
+	p.Sources[second.Path] = second
+	p.Selected[second.Path] = true
+	other := original
+	other.Path = second.Path
+	changes, err := PlanFixes(p, []Diagnostic{original, duplicate, original, other})
+	if err != nil || len(changes) != 2 {
+		t.Fatalf("changes=%+v err=%v", changes, err)
+	}
+	for i, path := range []string{"second.yml", "values.yml"} {
+		if changes[i].Path != path || string(changes[i].After) != "v: \"{{ a\n       | f }}\"\n" {
+			t.Fatalf("source ownership: %+v", changes)
+		}
+	}
+	// Equivalent identity must not hide a later caller mutation or conflict.
+	duplicate.Fix.Edits[0].Text = "\t"
+	if _, err := PlanFixes(p, []Diagnostic{original, duplicate}); err == nil {
+		t.Fatal("conflicting independent proposal accepted")
+	}
+	p.Selected[second.Path] = false
+	changes, err = PlanFixes(p, []Diagnostic{original, other})
+	if err != nil || len(changes) != 1 || changes[0].Path != "values.yml" {
+		t.Fatalf("selection ignored: %+v %v", changes, err)
+	}
+	delete(p.Sources, "values.yml")
+	if _, err := PlanFixes(p, []Diagnostic{original}); err == nil {
+		t.Fatal("missing selected source ignored")
+	}
+}
+
+func TestPlanFixesSharedProposalsRemainIdempotentAndDetached(t *testing.T) {
+	input := "v: \"{{ a\n | f }}\"\n"
+	p := layoutProject(t, input)
+	ds := Analyze(p, jinjaRules())
+	changes, err := PlanFixes(p, append(ds, ds...))
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("changes=%+v err=%v", changes, err)
+	}
+	candidate, errors := Parse("values.yml", changes[0].After)
+	if len(errors) != 0 {
+		t.Fatal(errors)
+	}
+	p.Sources[candidate.Path] = candidate
+	remaining := Analyze(p, jinjaRules())
+	again, err := PlanFixes(p, remaining)
+	if err != nil || len(remaining) != 0 || len(again) != 0 {
+		t.Fatalf("not idempotent: %+v %+v %v", remaining, again, err)
+	}
+	candidate.Data[0] = 'x'
+	if string(changes[0].Before) != input {
+		t.Fatal("original Change bytes aliased caller data")
+	}
+	// Reusing the Project with a freshly parsed source must rebuild validation.
+	updated, _ := Parse("values.yml", []byte("v: '{{ a $ b }}'\n"))
+	p.Sources[updated.Path] = updated
+	changes, err = PlanFixes(p, []Diagnostic{{Path: updated.Path, Fix: &Fix{Edits: []Edit{{Span: Span{8, 9}, Text: "  "}}}}})
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("stale whitespace authority: %+v %v", changes, err)
+	}
+}
+
+// A frozen pre-optimization authority oracle checks token boundaries and source
+// mapping independently of the indexed containment implementation.
+func legacyAllowedWhitespace(s *Source, e Edit) bool {
+	for _, v := range []string{string(s.Data[e.Span.Start:e.Span.End]), e.Text} {
+		for i := range len(v) {
+			if !space(v[i]) {
+				return false
+			}
+		}
+	}
+	for _, gap := range sectionGaps(s) {
+		if e == gap.Edit {
+			return true
+		}
+	}
+	for _, expr := range Expressions(s) {
+		if !expr.Complete || !expr.mapped || expr.Kind != "output" || !layoutSupported(expr) {
+			continue
+		}
+		if e.Span.Start >= expr.opening.End && e.Span.End <= expr.closing.Start {
+			intersects := false
+			for _, t := range expr.Tokens {
+				if e.Span.Start < t.Span.End && e.Span.End > t.Span.Start || e.Span.Start == e.Span.End && e.Span.Start > t.Span.Start && e.Span.Start < t.Span.End {
+					intersects = true
+					break
+				}
+			}
+			if !intersects {
+				return true
+			}
+		}
+		if block, _ := pureBlock(s, expr); block && e.Span.End <= expr.Span.Start {
+			start := bytes.LastIndexByte(s.Data[:expr.Span.Start], '\n') + 1
+			if e.Span.Start >= start {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestWhitespaceValidationPreservesAuthority(t *testing.T) {
+	for _, input := range []string{
+		"v: \"{{ a\n | f('a  b') }}\" # keep  spaces\n",
+		"v: '{{ a != b }} {{ café }}'\n",
+		"v: '{{ 1e3 }} {{ a $ b }}'\n",
+		"v: !unsafe '{{ a }}'\n",
+		"v: |-\n    {{ a\n     | f }}\n",
+		"################################\n# Test\n################################\nv: true\n",
+	} {
+		source, errors := Parse("values.yml", []byte(input))
+		if len(errors) != 0 {
+			t.Fatal(errors)
+		}
+		validation := newWhitespaceValidation(source)
+		for start := range len(input) + 1 {
+			for end := start; end <= len(input); end++ {
+				if strings.TrimSpace(input[start:end]) != "" {
+					continue
+				}
+				for _, replacement := range []string{"", " ", "\n", "not whitespace"} {
+					edit := Edit{Span: Span{start, end}, Text: replacement}
+					want := legacyAllowedWhitespace(source, edit)
+					if got := validation.allows(edit); got != want {
+						t.Fatalf("input=%q edit=%+v allowed=%v want=%v", input, edit, got, want)
+					}
+				}
+			}
+		}
 	}
 }

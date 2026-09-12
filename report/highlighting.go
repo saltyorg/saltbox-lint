@@ -36,6 +36,7 @@ func (r *humanRenderer) releaseDisplayData() {
 	r.lines = make(map[string][]sourceLine)
 	r.tokens = make(map[documentKey]cachedDocumentTokens)
 	r.prepared = cachedDisplayDocument{}
+	r.fixProposals = nil
 }
 
 type highlightSession struct {

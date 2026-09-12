@@ -48,8 +48,36 @@ func proposal(d Diagnostic) (lint.Diagnostic, [32]byte) {
 	return raw, key
 }
 
-func (r *humanRenderer) renderComparison(b textWriter, d Diagnostic) bool {
+type fixProposalIdentity struct {
+	path string
+	fix  *Fix
+}
+
+type cachedFixProposal struct {
+	raw lint.Diagnostic
+	key [32]byte
+}
+
+// A renderer keeps transformed proposals only for its active primary file.
+// Content hashes still deduplicate equivalent fixes and manual previews.
+func (r *humanRenderer) comparisonProposal(d Diagnostic) (lint.Diagnostic, [32]byte) {
+	if d.preview != nil || d.Fix == nil {
+		return proposal(d)
+	}
+	identity := fixProposalIdentity{d.Path, d.Fix}
+	if cached, ok := r.fixProposals[identity]; ok {
+		return cached.raw, cached.key
+	}
 	raw, key := proposal(d)
+	if r.fixProposals == nil {
+		r.fixProposals = make(map[fixProposalIdentity]cachedFixProposal)
+	}
+	r.fixProposals[identity] = cachedFixProposal{raw, key}
+	return raw, key
+}
+
+func (r *humanRenderer) renderComparison(b textWriter, d Diagnostic) bool {
+	raw, key := r.comparisonProposal(d)
 	if previous, ok := r.proposals[key]; ok {
 		if previous != "" {
 			_, _ = fmt.Fprintf(b, "Suggestion shown above (%s).\n", previous)

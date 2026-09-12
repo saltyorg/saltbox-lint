@@ -22,9 +22,13 @@ func TestSequentialRendererReleasesDisplayDataAtPrimaryFileTransitions(t *testin
 	defer r.close()
 
 	maxLines, maxTokens := 0, 0
-	out.afterWrite = func(int) {
+	out.afterWrite = func(call int) {
+		r.comparisonProposal(fixLifetimeRecord(records[call-1]))
 		maxLines = max(maxLines, len(r.lines))
 		maxTokens = max(maxTokens, len(r.tokens))
+		if len(r.fixProposals) > 1 {
+			t.Errorf("completed primary fix payloads remain cached: %d", len(r.fixProposals))
+		}
 		if len(r.lines) > 2 || len(r.tokens) > 2 {
 			t.Errorf("completed primary files remain cached: %d line maps, %d token maps", len(r.lines), len(r.tokens))
 		}
@@ -78,6 +82,7 @@ func TestParallelRendererReleasesDisplayDataBetweenReusedJobs(t *testing.T) {
 	defer r.close()
 
 	for i, record := range records {
+		r.comparisonProposal(fixLifetimeRecord(record))
 		job := &fileRenderJob{
 			group:  diagnosticGroup{start: i, diagnostics: []Diagnostic{record}},
 			chunks: make(chan string, fileRenderChunkCapacity),
@@ -101,6 +106,7 @@ func TestSequentialRendererReleasesDisplayDataAfterWriterFailure(t *testing.T) {
 	}
 	defer r.close()
 
+	r.comparisonProposal(fixLifetimeRecord(records[0]))
 	if err := r.renderSequentialFindings(records); !errors.Is(err, failure) {
 		t.Fatalf("renderSequentialFindings() error = %v, want %v", err, failure)
 	}
@@ -121,6 +127,7 @@ func TestParallelRendererReleasesDisplayDataAfterCancellation(t *testing.T) {
 			group:  diagnosticGroup{diagnostics: records},
 			chunks: make(chan string),
 		}
+		r.comparisonProposal(fixLifetimeRecord(records[0]))
 		done := make(chan bool, 1)
 		go func() {
 			done <- r.renderFileJob(job, func(error) {})
@@ -179,7 +186,17 @@ func displayLifetimeFixture(t *testing.T, count int) (*lint.Project, []Diagnosti
 
 func assertDisplayDataReleased(t *testing.T, r *humanRenderer) {
 	t.Helper()
+	if len(r.fixProposals) != 0 {
+		t.Fatalf("completed fix payloads retained: %d", len(r.fixProposals))
+	}
 	if len(r.lines) != 0 || len(r.tokens) != 0 || r.prepared.document != nil {
 		t.Fatalf("released display data = %d line maps, %d token maps, prepared %v", len(r.lines), len(r.tokens), r.prepared.document != nil)
 	}
+}
+
+// Prime real transformed fix payloads without changing the source/related
+// excerpt contract exercised by the existing display-lifetime fixtures.
+func fixLifetimeRecord(record Diagnostic) Diagnostic {
+	record.Fix = &Fix{Message: "replace wrong value", Edits: []Edit{{Span: record.Span, Text: "right"}}}
+	return record
 }

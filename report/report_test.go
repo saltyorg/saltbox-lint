@@ -44,7 +44,7 @@ func TestRenderersShareFindings(t *testing.T) {
 				if err := json.Unmarshal(got["diagnostics"], &records); err != nil {
 					t.Fatal(err)
 				}
-				if len(records) != 1 || string(records[0]["range"]) != "{\"start\":{\"line\":1,\"column\":6},\"end\":{\"line\":1,\"column\":7}}" || string(records[0]["span"]) != "{\"start\":8,\"end\":9}" || records[0]["fix"] == nil || records[0]["related"] == nil {
+				if len(records) != 1 || string(records[0]["range"]) != "{\"start\":{\"line\":1,\"column\":6},\"end\":{\"line\":1,\"column\":7}}" || string(records[0]["span"]) != "{\"start\":8,\"end\":9}" || string(records[0]["fix_id"]) != `"fix-1"` || records[0]["fix"] != nil || records[0]["related"] == nil {
 					t.Fatal(out.String())
 				}
 			case "github":
