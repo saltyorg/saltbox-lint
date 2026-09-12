@@ -17,6 +17,55 @@
       "repository": "https://github.com/ansible/vscode-ansible/tree/v26.8.2"
     }
   },
+  "lexical": {
+    "sourceLabel": "examples/markdown-demo-v4/highlight/testdata/compatibility.yaml",
+    "packages": {
+      "vscode-textmate": {
+        "version": "9.3.2",
+        "registryMetadataURL": "https://registry.npmjs.org/vscode-textmate/9.3.2",
+        "archiveURL": "https://registry.npmjs.org/vscode-textmate/-/vscode-textmate-9.3.2.tgz",
+        "archiveSHA256": "f7c742b16d59600d77529b7a904af09b59dfddb0f046fc045340004ae2fc50e7",
+        "archiveIntegrity": "sha512-n2uGbUcrjhUEBH16uGA0TvUfhWwliFZ1e3+pTjrkim1Mt7ydB41lV08aUvsi70OlzDWp6X7Bx3w/x3fAXIsN0Q==",
+        "files": {
+          "package.json": "985c992fd96fc2b51df49151a4d18c46cc83dff9f4dd381c94ef4a589e9e1828",
+          "release/main.js": "9da91ca33178e8d68ac5b9ea5733258275fe2f1924db02930ef9cf7e0d850e0f"
+        }
+      },
+      "vscode-oniguruma": {
+        "version": "1.7.0",
+        "registryMetadataURL": "https://registry.npmjs.org/vscode-oniguruma/1.7.0",
+        "archiveURL": "https://registry.npmjs.org/vscode-oniguruma/-/vscode-oniguruma-1.7.0.tgz",
+        "archiveSHA256": "830c8de8fd475455d8c161ca3c1f5f3c935fad8327ee548dec38c8985097657f",
+        "archiveIntegrity": "sha512-L9WMGRfrjOhgHSdOYgCt/yRMsXzLDJSL7BPrOZt73gU0iWO4mpqzqQzOz5srxqTvMBaR0XZTSrVWo4j55Rc6cA==",
+        "files": {
+          "package.json": "98a5eb60b6dbcad4e302c877b2d5aff312a890c42bddf32e0585cbd1e3ff0df9",
+          "release/main.js": "8eeebfd13b75baaf42e014e8492366e5e28c9a1336b006193a39a0f15bfb0b1e",
+          "release/onig.wasm": "fd885c2d12e5951e59d761ebd4a006e06254b1491fd6f530c92b69fb4d8d77d9"
+        }
+      }
+    },
+    "assets": {
+      "ansible-package.json": "8aeee07bb22518b5ad939a8bb740b80695a91bae36b0246b1fc974a25d6d77cd",
+      "grammars/injection.ansible.jinja-braces.json": "92772679ea945ac4bf2c3b613473693e49dc53504c39fd75018a0ca1ca5a4cfb",
+      "grammars/injection.ansible.jinja-conditionals.json": "c2b7a50671e289204c5f334c214d965b5b8b17cd423e0ccfb6bae2432323cb62",
+      "grammars/injection.ansible.jinja-double-quote-escape.json": "f43fd092615afe905bcf0950a5408d4ee20566100f4d62f0a6eeb0fc1dcbd3f9",
+      "grammars/injection.ansible.jinja-extras.json": "1feb5c1672401741d99316ceddf86a970d5047f2d93f899a677fa91898e35ff9",
+      "grammars/injection.ansible.jinja-single-quote-escape.json": "185a31cee56a230c25bd6d57fd9bf8463dded4cc80082e6a9e45c7462b6a3559",
+      "grammars/injection.ansible.keywords.json": "037361d0b8a2bbb175a0bf57c3e6ec3a35eafd64398e418bbe10709413de5254",
+      "grammars/source.ansible-jinja.json": "a4e4e6de1362ab6e016cbe6b63bead98d16b5690b77b132777fcfd594fde963a",
+      "grammars/source.ansible.json": "52e46cd7cfa2c8563fcec55b61b77e6468e9cf2f28131560beab0eb161a7cb76",
+      "themes/one-dark-pro.json": "186fbbd1ef99a9fb6548fac7a1d354b925a7f9b98da97ef7649e22e20d08c756",
+      "themes/one-light.json": "6628e350875e76186f3ac007680544d54a3ea132e6b542442e7704fdfac45250"
+    },
+    "fixtures": {
+      "compatibility.yaml": "d20de0291ff86c0d2615eebb924e49b140d04e1ecfecc80e8266e3c4e97b537d"
+    },
+    "licenses": {
+      "vscode-textmate-LICENSE.md": "b5cb7ff7859e7d282d98fc43ab081b0dda5dc659dc3385cf65740c759a7e6a6c",
+      "vscode-oniguruma-LICENSE.txt": "ddde8aba8fe72b4830e27901fc78733eb6db7b6c653161075de213a6adeda3fd",
+      "vscode-oniguruma-NOTICES.txt": "615d94d89eacc046241518c247f6650a5df80d1adf4b284a756f500867620b35"
+    }
+  },
   "sources": {
     "ansible/api-DforCLaL.js": "55a86f079ecba1350a3c0db9df2463e03a705ba370855dfdfb835dd3eaf3376a",
     "ansible/dist-ZCKjkvV4.js": "023f9d8f9dfd102421b93c8563dff33bfe7594455325cde86633a5777b9eb13a",

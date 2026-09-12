@@ -14,7 +14,19 @@ Tracked independent runners, original case inputs, pinned upstream sources,
 licenses and offline reproduction commands live in [`tools/oracles`](../../tools/oracles/README.md).
 The style runner reproduces both fixture families completely; Node is an explicit
 development-only regeneration tool, never a Go gate or runtime dependency.
-The older lexical snapshots are unchanged and their generator is outside this recovery.
+`oracle-dark.json` and `oracle-light.json` are complete independent lexical
+expectations from the actual pinned vscode-textmate 9.3.2 and vscode-oniguruma
+1.7.0 engines. The offline runner validates the engine closure, all eight grammars,
+the extension injection order, both themes and `compatibility.yaml` before execution,
+then reproduces both 236-token files byte-for-byte. Its source label intentionally
+retains the historical archived path. See [`tools/oracles`](../../tools/oracles/README.md)
+for the runner, package hashes, licenses and exact command.
+
+`tokens-dark.json` and `tokens-light.json` are complete Nuri captures of the same
+source and assets. They are compatibility evidence, never independent expectations.
+The tracked `examples/markdown-demo-v4/cmd/token-evidence` command reproduces both;
+the exact commands are documented with the independent runner. Do not use archived
+Make targets to regenerate this evidence.
 
 The singleton-probe selector adapter in `scope_matcher.go` follows these sources:
 
