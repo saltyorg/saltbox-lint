@@ -343,3 +343,23 @@ func TestWhitespaceValidationPreservesAuthority(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanFixesEmptyProposalsPreserveSourceValidation(t *testing.T) {
+	for _, fix := range []*Fix{nil, {}, {Edits: []Edit{}}} {
+		p := layoutProject(t, "v: true\n")
+		diagnostics := []Diagnostic{{Path: "values.yml", Fix: fix}}
+		changes, err := PlanFixes(p, diagnostics)
+		if err != nil || len(changes) != 0 {
+			t.Fatalf("empty proposal changed available source: %+v %v", changes, err)
+		}
+		delete(p.Sources, "values.yml")
+		_, err = PlanFixes(p, diagnostics)
+		if (err != nil) != (fix != nil) {
+			t.Fatalf("missing source with fix=%+v: %v", fix, err)
+		}
+		p.Selected["values.yml"] = false
+		if _, err := PlanFixes(p, diagnostics); err != nil {
+			t.Fatalf("unselected empty proposal: %v", err)
+		}
+	}
+}

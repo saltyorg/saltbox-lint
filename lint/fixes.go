@@ -20,29 +20,31 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 		return nil, nil
 	}
 	grouped := map[string][]Edit{}
-	// Proposal identity is scoped to its primary source. Content keys also catch
-	// independently allocated equivalents before expanding their shared edits.
+	// Skip repeated proposal identities, then collect each distinct source edit
+	// once. Planning owns the union of edits, not proposal order or messages.
 	type proposal struct {
 		path string
 		fix  *Fix
 	}
 	seen := map[proposal]bool{}
-	contents := map[string]map[string]bool{}
+	contents := map[string]map[Edit]bool{}
 	for _, d := range diagnostics {
 		identity := proposal{d.Path, d.Fix}
 		if !project.Selected[d.Path] || d.Fix == nil || seen[identity] {
 			continue
 		}
 		seen[identity] = true
-		key := editProposalKey(d.Fix.Edits)
 		if contents[d.Path] == nil {
-			contents[d.Path] = map[string]bool{}
+			contents[d.Path] = map[Edit]bool{}
+			// Even an empty fix requires its selected source to be available.
+			grouped[d.Path] = nil
 		}
-		if contents[d.Path][key] {
-			continue
+		for _, edit := range d.Fix.Edits {
+			if !contents[d.Path][edit] {
+				contents[d.Path][edit] = true
+				grouped[d.Path] = append(grouped[d.Path], edit)
+			}
 		}
-		contents[d.Path][key] = true
-		grouped[d.Path] = append(grouped[d.Path], d.Fix.Edits...)
 	}
 	paths := make([]string, 0, len(grouped))
 	for path := range grouped {
@@ -82,21 +84,6 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 		changes = append(changes, Change{Path: path, Before: bytes.Clone(source.Data), After: after})
 	}
 	return changes, nil
-}
-
-// Keys retain ordered edit content, including arbitrary replacement bytes.
-// Messages do not affect fix authority; reporting owns message-based identity.
-func editProposalKey(edits []Edit) string {
-	var key []byte
-	for _, edit := range edits {
-		key = strconv.AppendInt(key, int64(edit.Span.Start), 10)
-		key = append(key, ':')
-		key = strconv.AppendInt(key, int64(edit.Span.End), 10)
-		key = append(key, ':')
-		key = strconv.AppendQuote(key, edit.Text)
-		key = append(key, ';')
-	}
-	return string(key)
 }
 
 type whitespaceValidation struct {
