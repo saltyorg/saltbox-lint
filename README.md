@@ -1,9 +1,9 @@
 # Saltbox Lint
 
 A standalone Go linter for Saltbox and Sandbox YAML/Jinja policy. One engine
-supplies 30 documented rules, selected-file checks, conservative formatting
-fixes, VS Code tasks, and GitHub annotations. It does not execute Ansible,
-Python, templates, or lookups. Licensed under [GPLv3](LICENSE).
+supplies the documented rule registry, selected-file checks, conservative
+formatting fixes, VS Code tasks, and GitHub annotations. It does not execute
+Ansible, Python, templates, or lookups. Licensed under [GPLv3](LICENSE).
 
 ## Install
 
@@ -16,16 +16,19 @@ on your PATH. Archive names are `saltbox-lint_VERSION_linux_ARCH.tar.gz`, with
 VERSION excluding the leading `v`. The [Action](action.yml) automates that
 installation on Linux X64/ARM64 runners without sudo.
 
-With Go 1.27.1 or newer, installation from the module root is also supported:
+With Go 1.27.1 or newer, installation from a complete local checkout is also
+supported. The checkout must include the repository's `third_party/nuri`
+replacement, and the command must run from the module root:
 
 ```sh
-go install github.com/saltyorg/saltbox-lint@v0.1.0
+git clone https://github.com/saltyorg/saltbox-lint.git
+cd saltbox-lint
+go install .
 ```
 
-`v0.1.0` is illustrative; substitute a published version. This documentation
-and its examples do not assert that a release has been published. Source builds
-without release linker flags report `dev`; `go version -m` shows Go module/build
-metadata. For a local checkout, run `make build` and use `bin/saltbox-lint`.
+Source builds without release linker flags report `dev`; `go version -m` shows
+Go module/build metadata. For the checked local build path, run `make build`
+and use `bin/saltbox-lint`.
 
 ## Commands
 
