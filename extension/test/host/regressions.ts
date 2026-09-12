@@ -38,6 +38,24 @@ async function actions(document: vscode.TextDocument) {
     )
   ).filter((a) => a.title.includes("this file"));
 }
+async function waitForInitialActions(document: vscode.TextDocument) {
+  // Local diagnostics can precede a usable main-thread code-action response
+  // during editor/provider startup. Establish the observable fixture precondition;
+  // post-mutation assertions below must still succeed without polling or rechecks.
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if ((await actions(document)).length > 0) return;
+    await pause(25);
+  }
+  assert.fail(
+    `initial fixture code actions did not become available: ${JSON.stringify({
+      version: document.version,
+      language: document.languageId,
+      closed: document.isClosed,
+      diagnostics: diagnostics(document.uri),
+    })}`,
+  );
+}
 async function open(uri: vscode.Uri, text: string) {
   let existing: string | undefined;
   try {
@@ -100,7 +118,7 @@ export async function runRegressions(): Promise<void> {
       const markdownUri = vscode.Uri.joinPath(roots[1].uri, "readme.md");
       await vscode.workspace.fs.writeFile(markdownUri, Buffer.from("one\n"));
       const markdown = await vscode.workspace.openTextDocument(markdownUri);
-      assert.ok((await actions(document)).length > 0);
+      await waitForInitialActions(document);
       await replace(markdown, "two\n");
       assert.ok(
         (await actions(document)).length > 0,
