@@ -86,9 +86,14 @@ recorded below. Final integration review and external gates remain open. Nothing
 has been pushed or published.
 
 
-## Final local code and semantic qualification
+## Historical 39d9740 local code and semantic qualification
 
-Final code/harness commit: `39d9740286b1660c0be3a7b664e6dae09a535270`.
+The following record predates the intentional grouped-when correction. It is
+historical evidence, not final-revision qualification; current results follow
+at the end. Original artifacts are preserved in ignored `frozen-39d9740/`, with
+a relocation manifest, without rewriting their original declarations.
+
+Historical code/harness commit: `39d9740286b1660c0be3a7b664e6dae09a535270`.
 Runtime correction `124fbbf` preserves diagnostics owned by an unaffected nested
 workspace when an overlapping parent scan is invalidated. A real-host component
 regression failed before the change; the same test passed afterward. Separate
@@ -114,7 +119,7 @@ The skipped inputs remain explicit unsupported coverage: Saltbox's
 unsupported workflow/Jinja layout; `roles/nzbget/defaults/main.yml` contains
 multiline scalars inside flow collections. No consumer or scratch file was edited.
 
-## Frozen CLI performance evidence
+## Historical 39d9740 frozen CLI performance evidence
 
 A is the original `ef533311fc48a5001d497d99e462f0968bbceb16` binary; B is the
 actual extracted `39d9740` VSIX binary. Before measurement, the declaration fixed
@@ -332,3 +337,109 @@ Reproducible harnesses are in `tools/qualification` and `extension/test/host`.
 Ignored raw evidence lives under `.superpowers/sdd/2026-09-12-vscode-extension/`,
 including task-6-report.md, declarations, all raw samples, retained development
 failures/prototypes, per-file semantic records, SDK logs and artifact manifests.
+
+
+## Current corrected-policy code: 2ea5ac4; performance remains blocked
+
+Current packaged code is `2ea5ac4771324b342d2257dec41c2e4b2e737c49`, including the
+reviewed grouping correction `4bb7eea`. Explicitly grouped Cloudflare conditions
+now remain intact. The original 39d9740 results above are retained as history;
+the policy correction intentionally changes diagnostics and output volume.
+
+For a meaningful new extension comparison, control A′ is an isolated checkout
+of `ef533311fc48a5001d497d99e462f0968bbceb16` with **only** the reviewed production
+changes to `lint/rules.go` and `lint/rules_when_list.go`. Its 653-file manifest,
+exact patch and build identity are recorded. The original history, archive and
+baseline binary were preserved. A′ has an explicitly recorded dirty marker;
+it is not the untouched historical baseline. Compiler, architecture, CGO,
+trimpath, version and linker flags match the final package; VCS metadata is
+not silently disabled on one side.
+
+A fresh small supervisor establishes readiness before the child clock starts,
+then reports that actual child's wait4 CPU/RSS. Its startup/CPU costs are recorded
+separately. Behavioral tests first reproduced the old launch-image floor, then
+passed seven real-process checks, including failed-protocol partial output,
+failed-attempt retention and owned-process cleanup. Unavailable measurements
+remain null, never zero.
+
+Before timing, declaration `c091d89de3f9687f82f2bb0d2c1f021f0e485f6d8a7615ef31fb698359d0cfe0`
+and source/statistics addendum `8694ef7f86dc0b8cde021a01d200d17435a4a8a10622abfec24b61084e2e72e4`
+bound all source/patch/binary/helper identities and descriptive statistics.
+Exactly 160 attempts completed, with **80/80 exact stdout/stderr/exit pairs**,
+zero measurement failures and every child peak above its supervisor high-water
+mark (maximum 11,804 KiB). No attempt was dropped, retried or replaced. The
+supervisor's median startup was 13.43 ms and CPU 13.48 ms, outside child timing.
+This new fixed series was required by the real policy change, not by a desire
+for more favorable results.
+
+A′ is the policy-matched control and B the exact final packaged binary. Deltas
+are B−A′; signs count positive/zero/negative pairs. Paired medians and ratios
+need not equal differences or ratios of independent medians.
+
+| Workload | Wall median s A′ → B | Paired wall Δ ms | Wall +/0/− | First output median s A′ → B | Paired CPU B/A |
+| --- | ---: | ---: | --- | ---: | ---: |
+| saltbox-dark | 3.6558 → 3.6653 | -7.00 | 4/0/6 | 0.2692 → 0.2728 | 1.004 |
+| saltbox-light | 3.5013 → 3.4497 | -15.47 | 5/0/5 | 0.2830 → 0.2805 | 0.996 |
+| saltbox-json | 0.2629 → 0.2647 | -0.56 | 4/0/6 | 0.2606 → 0.2621 | 1.002 |
+| saltbox-stdin | 0.0227 → 0.0232 | +0.22 | 7/0/3 | 0.0220 → 0.0223 | 1.010 |
+| sandbox-dark | 1.3150 → 1.3317 | -2.08 | 5/0/5 | 0.3316 → 0.3175 | 1.000 |
+| sandbox-light | 1.2970 → 1.3114 | +24.82 | 8/0/2 | 0.3168 → 0.3098 | 1.012 |
+| sandbox-json | 0.3155 → 0.3068 | -8.07 | 4/0/6 | 0.3132 → 0.3041 | 0.998 |
+| sandbox-stdin | 0.0197 → 0.0212 | +0.20 | 7/0/3 | 0.0195 → 0.0207 | 1.029 |
+
+| Workload | RSS median MiB A′ → B | Paired RSS Δ MiB | RSS +/0/− | Paired RSS Δ range MiB |
+| --- | ---: | ---: | --- | ---: |
+| saltbox-dark | 358.58 → 359.67 | +0.13 | 5/0/5 | -8.18…+16.99 |
+| saltbox-light | 352.47 → 357.70 | +5.52 | 7/0/3 | -10.24…+11.26 |
+| saltbox-json | 53.96 → 54.32 | +0.44 | 7/0/3 | -0.58…+2.29 |
+| saltbox-stdin | 22.80 → 23.14 | +0.51 | 9/0/1 | -0.21…+0.86 |
+| sandbox-dark | 250.26 → 254.07 | +5.71 | 9/0/1 | -63.40…+59.54 |
+| sandbox-light | 226.85 → 226.07 | -0.90 | 5/0/5 | -48.08…+36.62 |
+| sandbox-json | 50.88 → 52.69 | +0.95 | 7/0/3 | -4.03…+7.61 |
+| sandbox-stdin | 21.15 → 21.30 | +0.28 | 7/0/3 | -1.06…+1.00 |
+
+**Existing-CLI performance qualification remains open/blocked.** In particular,
+Sandbox dark RSS increases +5.71 MiB in paired median with 9/1 signs; Saltbox
+light RSS increases +5.52 MiB with 7/3 signs; Saltbox stdin RSS increases +0.51 MiB
+with 9/1 signs. Sandbox light wall increases +24.82 ms with 8/2 signs and paired
+CPU ratio 1.012. No specific code cause or justified production correction has
+been identified. Output parity, overlapping ranges and small changes do not
+establish performance equivalence or waive the constraint. No further adaptive
+probes were run. Independent assessment retains this open acceptance gate.
+
+The final snapshot quality gate and eight-package build passed. Both minimum
+and current Linux SDKs passed all nine installed regression cases, including the
+exact Cloudflare condition; its test first failed against the old 39d9740 package.
+Native Linux x64/Alpine x64 package probes passed. Final corpus results remain
+878 files: 161 ready, 714 unchanged, three explicitly skipped, 875 loader-equal,
+zero semantic failures; controlled loader/Jinja checks passed. Unchanged large
+formatter/editor timing fixtures were not rerun to seek better values: their
+previous 500 ms target miss remains disclosed and separately dispositioned.
+
+Final source archive SHA-256:
+`e89894ea446074ca8044260820466314855f53db65cd83886a2e3cc4255eeafc`.
+Final measured Linux binary SHA-256:
+`5dd3648bef15793523d1e05c635ffbb7b9777f0935d5e7a3bafbd808452182c0`.
+Control A′ binary SHA-256:
+`9ba6ce2e662912e3aba58a9e859fce3a4acc3f532d4ca378d063f0c07348eb21`.
+Independent integrity checks passed 756 exported source inputs, 17 published-file
+checksums, all eight VSIXs and six CLI archives. An offline vendored Go rebuild
+passed native probes; an offline npm rebuild reproduced runtime JavaScript
+`3133ceb1ebc3e99f425541c65724ddcdf973e43c778255b816714cd6bd4876c6` byte-for-byte.
+
+| Current VSIX target | SHA-256 |
+| --- | --- |
+| linux-x64 | `df56b651c35cb9a63da1e5fd595cf4a14eea795aeecaded4d3b2d762c67a84bc` |
+| linux-arm64 | `ba3aefac93db64579e16c24a82a7ec3ebdb7426dc3cbf804b785ffa9fec0e869` |
+| alpine-x64 | `0bab1dcfe8f493fc5074e80cbeb3a6517ce41cc9cf0fde3d5da919c02eda874e` |
+| alpine-arm64 | `7f15d05d324f5dbdf7ceab675a45e997bcb119dd2a6fb852f8f630610e2b9929` |
+| darwin-x64 | `d75c73af98bc9d391f5d332d65b41b6082f1cbcf00984d8b7e33edf57b3b4607` |
+| darwin-arm64 | `ad700d71081b39997f81d3ff4fadab316d88ea43f10e873f580097280bd11ff2` |
+| win32-x64 | `69700d6ce60f6c93286be664ce77b32aaa5914812b80393ad1ee0570841c7a3d` |
+| win32-arm64 | `99409cb376c6ef0fc312a60bba47f4f7f1a691cc32ec678b676efec48200c88f` |
+
+Raw current evidence is under ignored `task-6-final-policy/`, including source
+identities, all attempts, paired-results.json, native/SDK/semantic logs and
+integrity records. Local implementation review does not grant performance or
+publication acceptance. Native Windows/macOS/ARM, remote placement, manual
+upgrade, stable tagged qualification and publication gates remain external.
