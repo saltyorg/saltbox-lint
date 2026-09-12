@@ -1,10 +1,10 @@
 # VS Code extension implementation record
 
-Local implementation is ready for independent review. Existing-CLI memory
-qualification remains **blocked** by unresolved Sandbox RSS increases. Large-file
-editor latency also misses the separately dispositioned 500 ms target. Other
-native platforms, remote hosts, publication and final integration review remain
-pending.
+Independent final review approved local code quality and integration.
+Existing-CLI performance qualification remains **blocked** by unresolved resource
+increases. Large-file editor latency also misses the separately dispositioned
+500 ms target. Other native platforms, remote hosts and publication remain pending.
+Code approval does not grant performance acceptance or publication readiness.
 
 Plan: [portable extension implementation](superpowers/plans/2026-09-12-vscode-extension.md).
 Baseline: `ef533311fc48a5001d497d99e462f0968bbceb16`.
@@ -82,8 +82,9 @@ baseline byte-for-byte after portability and source-index changes. Development
 formatter scaling observations are not formal performance qualification.
 
 The subsequent editor, packaging, source and local qualification stages are
-recorded below. Final integration review and external gates remain open. Nothing
-has been pushed or published.
+recorded below. Final integration review is complete; performance acceptance and
+external gates remain open. Nothing has been pushed or published. The retained
+local review is `.superpowers/sdd/2026-09-12-vscode-extension/final-integration-review.md`.
 
 
 ## Historical 39d9740 local code and semantic qualification
