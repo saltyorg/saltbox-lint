@@ -1,10 +1,11 @@
+//go:build linux || darwin
+
 package cmd
 
 import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -29,25 +30,9 @@ func TestTerminalInterruptHelper(t *testing.T) {
 }
 
 func TestTerminalQueryPreservesInterruptAndRestoresMode(t *testing.T) {
-	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = master.Close() }()
+	master, slave := openTestPTY(t)
 	fd := int(master.Fd())
-	if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPTLCK, 0); err != nil {
-		t.Fatal(err)
-	}
-	number, err := unix.IoctlGetInt(fd, unix.TIOCGPTN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	slave, err := os.OpenFile(fmt.Sprintf("/dev/pts/%d", number), os.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = slave.Close() }()
-	before, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+	before, err := unix.IoctlGetTermios(int(slave.Fd()), terminalGetState)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +93,19 @@ func TestTerminalQueryPreservesInterruptAndRestoresMode(t *testing.T) {
 	if !sent || !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(output.String(), "context canceled") || strings.Contains(output.String(), "Good example:") {
 		t.Fatalf("sent=%t exit=%v output=%q", sent, err, output.String())
 	}
-	after, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+	after, err := unix.IoctlGetTermios(int(slave.Fd()), terminalGetState)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if *after != *before {
 		t.Fatalf("terminal mode changed: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestBackgroundQueryStopsBeforeInspectingOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := queryBackground(ctx, nil, backgroundQueryTimeout); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
 	}
 }

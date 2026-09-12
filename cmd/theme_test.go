@@ -133,9 +133,6 @@ func TestBackgroundQueryStopsBeforeOpeningOnCancellation(t *testing.T) {
 	if _, err := queryControllingTerminal(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v", err)
 	}
-	if _, err := queryBackground(ctx, nil, backgroundQueryTimeout); !errors.Is(err, context.Canceled) {
-		t.Fatalf("got %v", err)
-	}
 }
 
 func TestCanceledRuleCommandDoesNotRender(t *testing.T) {

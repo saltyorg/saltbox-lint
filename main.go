@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"syscall"
 
 	"github.com/saltyorg/saltbox-lint/cmd"
 )
@@ -13,7 +12,7 @@ import (
 var version = "dev"
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), processSignals()...)
 	// Restore normal signal termination after cancellation as a fallback for
 	// operations outside our interruptible input boundary.
 	restoreSignals := context.AfterFunc(ctx, stop)

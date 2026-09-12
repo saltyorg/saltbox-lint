@@ -3,7 +3,7 @@
 Generated: 2026-09-12
 
 ## Stack
-- Go 1.27.1; Linux amd64/arm64, CGO disabled for release binaries.
+- Go 1.27.1; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; current release packaging remains Linux.
 - Cobra v1.10.2; command factories own explicit I/O and exit-code boundaries.
 - colorprofile v0.4.3, x/term v0.2.2 and uniseg v0.4.7 provide destination-aware terminal presentation and grapheme wrapping.
 - goccy/go-yaml v1.19.2 validates lint sources; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
