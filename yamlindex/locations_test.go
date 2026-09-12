@@ -128,3 +128,35 @@ func TestLocationProjectionsPreserveWhitespaceOnlyOriginsAndErrorCursors(t *test
 		t.Fatalf("trimmed-origin error=%v", err)
 	}
 }
+
+func TestLocateTokensAcceptsOnlySharedWhitespaceAfterBlockTags(t *testing.T) {
+	for _, tt := range []struct {
+		source     string
+		key, value TokenLocation
+	}{
+		{"v: !!map\n  same: same\n", TokenLocation{11, 15, 15}, TokenLocation{17, 21, 21}},
+		{"v: !!map\r\n  same: same\r\n", TokenLocation{12, 16, 16}, TokenLocation{18, 22, 23}},
+	} {
+		got, err := LocateTokens(tt.source, lexer.Tokenize(tt.source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[3] != tt.key || got[5] != tt.value {
+			t.Fatalf("locations: %v", got)
+		}
+	}
+	source := "v: !!map\n  same: same\n"
+	for _, origin := range []string{"map\n  same", "\n same", "\r\n  same", "\n  missing", "\n  same: same"} {
+		tokens := lexer.Tokenize(source)
+		tokens[3].Origin = origin
+		if _, err := LocateTokens(source, tokens); err == nil {
+			t.Errorf("accepted mismatched/overlapping origin %q", origin)
+		}
+	}
+	tokens := lexer.Tokenize(source)
+	for _, changed := range []string{"v: !!map\n unexpected  same: same\n", "v: !!map\r\n  same: same\r\n"} {
+		if _, err := LocateTokens(changed, tokens); err == nil {
+			t.Errorf("accepted changed source %q", changed)
+		}
+	}
+}

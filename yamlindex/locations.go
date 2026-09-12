@@ -62,10 +62,16 @@ func locateTokens(source string, tokens token.Tokens, projection originProjectio
 			continue
 		}
 		gap := strings.Index(source[cursor:], origin)
-		if gap < 0 || strings.TrimSpace(source[cursor:cursor+gap]) != "" {
-			return nil, fmt.Errorf("cannot locate original YAML token at %v", t.Position)
-		}
 		start := cursor + gap
+		if gap < 0 || strings.TrimSpace(source[cursor:cursor+gap]) != "" {
+			var ok bool
+			if projection == completeOrigins && i > 0 {
+				start, ok = sharedWhitespaceOrigin(source, origin, locations[i-1], cursor)
+			}
+			if !ok {
+				return nil, fmt.Errorf("cannot locate original YAML token at %v", t.Position)
+			}
+		}
 		left := len(origin) - len(strings.TrimLeft(origin, " \t\r\n"))
 		right := len(strings.TrimRight(origin, " \t\r\n"))
 		cursor = start + len(origin)
@@ -75,6 +81,24 @@ func locateTokens(source string, tokens token.Tokens, projection originProjectio
 		}
 	}
 	return locations, nil
+}
+
+// The lexer includes the newline after a block tag in both adjacent origins.
+// Retry only within the previous origin's proven trailing ASCII whitespace;
+// the complete next origin must still match, and must advance beyond that origin.
+func sharedWhitespaceOrigin(source, origin string, previous TokenLocation, cursor int) (int, bool) {
+	if previous.OriginEnd != cursor || previous.End >= cursor || strings.Trim(source[previous.End:cursor], " \t\r\n") != "" {
+		return 0, false
+	}
+	gap := strings.Index(source[previous.End:], origin)
+	if gap < 0 {
+		return 0, false
+	}
+	start := previous.End + gap
+	if start >= cursor || start+len(origin) <= cursor || strings.Trim(source[previous.End:start], " \t\r\n") != "" {
+		return 0, false
+	}
+	return start, true
 }
 
 // doubleQuotedRange finds boundaries only. The YAML lexer validates and decodes
