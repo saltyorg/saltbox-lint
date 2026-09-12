@@ -228,9 +228,14 @@ func TestTraefikScalarDecodedNameOverridesAdapterFallback(t *testing.T) {
 		tail string
 		want int
 	}{
+		{`name=other`, 0},
+		{`name=nginx`, 2},
 		{`name\x3dother`, 0},
 		{`na\x6de=other`, 0},
 		{`name=nginx\t`, 2},
+		{`name\x1c=other`, 0},
+		{`name=\x1cnginx`, 2},
+		{`name=nginx\x1f`, 2},
 	} {
 		t.Run(tc.tail, func(t *testing.T) {
 			tasks := "- action: include_role " + tc.tail + "\n  args: {name: nginx}\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n"

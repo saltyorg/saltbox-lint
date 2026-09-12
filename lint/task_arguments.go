@@ -43,14 +43,14 @@ func scalarActionArguments(s *Source, n *Node, start int, module string) map[str
 		if equal <= 0 {
 			continue
 		}
-		key := strings.TrimSpace(decoded[:equal])
+		key := strings.TrimFunc(decoded[:equal], actionArgumentSpace)
 		// A literal payload or template containing '=' is not a named argument.
 		if !actionArgumentKey(key) || !actionAcceptsArgument(module, decoded[:equal]) {
 			continue
 		}
-		value := strings.TrimLeftFunc(decoded[equal+1:], unicode.IsSpace)
+		value := strings.TrimLeftFunc(decoded[equal+1:], actionArgumentSpace)
 		valueStart := len(decoded) - len(value)
-		value = strings.TrimRightFunc(value, unicode.IsSpace)
+		value = strings.TrimRightFunc(value, actionArgumentSpace)
 		valueEnd := valueStart + len(value)
 		span := mapSpan(mapped, Span{valueStart, valueEnd})
 		if valueStart == valueEnd {
@@ -64,6 +64,10 @@ func scalarActionArguments(s *Source, n *Node, start int, module string) map[str
 		arguments[key] = &Node{Kind: "string", Value: value, Style: "plain", Tag: n.Tag, Span: span, scalarOrigin: n, scalarMap: mapped}
 	}
 	return arguments
+}
+
+func actionArgumentSpace(r rune) bool {
+	return unicode.IsSpace(r) || r >= '\x1c' && r <= '\x1f'
 }
 
 func actionArgumentKey(key string) bool {

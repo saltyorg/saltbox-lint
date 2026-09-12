@@ -97,6 +97,85 @@ func TestTaskScalarArgumentsDecodeBeforeAssignment(t *testing.T) {
 	}
 }
 
+func TestTaskScalarArgumentsUsePythonBoundaryWhitespace(t *testing.T) {
+	for _, tc := range []struct {
+		name, tail, value string
+		span              Span
+	}{
+		{"U+001C key", `name\x1c=other`, "other", Span{32, 37}},
+		{"U+001C leading value", `name=\x1cnginx`, "nginx", Span{32, 37}},
+		{"U+001C trailing value", `name=nginx\x1c`, "nginx", Span{28, 33}},
+		{"U+001D key", `name\x1d=other`, "other", Span{32, 37}},
+		{"U+001D leading value", `name=\x1dnginx`, "nginx", Span{32, 37}},
+		{"U+001D trailing value", `name=nginx\x1d`, "nginx", Span{28, 33}},
+		{"U+001E key", `name\x1e=other`, "other", Span{32, 37}},
+		{"U+001E leading value", `name=\x1enginx`, "nginx", Span{32, 37}},
+		{"U+001E trailing value", `name=nginx\x1e`, "nginx", Span{28, 33}},
+		{"U+001F key", `name\x1f=other`, "other", Span{32, 37}},
+		{"U+001F leading value", `name=\x1fnginx`, "nginx", Span{32, 37}},
+		{"U+001F trailing value", `name=nginx\x1f`, "nginx", Span{28, 33}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ds := Parse("tasks/main.yml", []byte("- action: include_role "+tc.tail+"\n  args: {name: fallback}\n"))
+			if len(ds) != 0 {
+				t.Fatal(ds)
+			}
+			arg := TasksIn(s)[0].argument("name")
+			if arg == nil || arg.Value != tc.value || arg.Span != tc.span {
+				t.Fatalf("argument=%+v, want value=%q span=%+v", arg, tc.value, tc.span)
+			}
+		})
+	}
+}
+
+func TestTaskScalarArgumentsPreserveQuotedPythonWhitespace(t *testing.T) {
+	s, ds := Parse("tasks/main.yml", []byte("- action: include_role name='\\x1cnginx\\x1f'\n"))
+	if len(ds) != 0 {
+		t.Fatal(ds)
+	}
+	arg := TasksIn(s)[0].argument("name")
+	if arg == nil || arg.Value != "\x1cnginx\x1f" || arg.Span != (Span{28, 43}) {
+		t.Fatalf("argument=%+v", arg)
+	}
+}
+
+func TestTaskScalarArgumentsDoNotExtendCommandOptions(t *testing.T) {
+	for _, tail := range []string{`echo chdir\x1c=/tmp`, `echo \x1cchdir=/tmp`} {
+		t.Run(tail, func(t *testing.T) {
+			s, ds := Parse("tasks/main.yml", []byte("- action: command "+tail+"\n  args: {chdir: /fallback}\n"))
+			if len(ds) != 0 {
+				t.Fatal(ds)
+			}
+			task := TasksIn(s)[0]
+			if task.FreeForm != tail {
+				t.Fatalf("free form=%q, want %q", task.FreeForm, tail)
+			}
+			if arg := task.argument("chdir"); arg == nil || arg.Value != "/fallback" {
+				t.Fatalf("chdir=%+v", arg)
+			}
+		})
+	}
+}
+
+func TestTaskPythonWhitespacePreservesExpressionSpans(t *testing.T) {
+	input := "- action: copy con\\x74ent\\x1c=\\x1d'{{ target }}'\\x1e other='{{ sibling }}'\n"
+	s, ds := Parse("tasks/main.yml", []byte(input))
+	if len(ds) != 0 {
+		t.Fatal(ds)
+	}
+	value := TasksIn(s)[0].argument("content")
+	if value == nil || value.Value != "{{ target }}" || value.Span != (Span{34, 48}) {
+		t.Fatalf("content=%+v", value)
+	}
+	declaration := defaultDeclaration{Value: value}
+	for _, expressions := range [][]Expression{expressionsForDeclaration(s, declaration), newDeclarationExpressionQuery(s).expressions(declaration)} {
+		assertExpressionTokens(t, expressions, "target")
+		if got := expressions[0].Tokens[0].Span; got != (Span{38, 44}) {
+			t.Fatalf("token span=%+v", got)
+		}
+	}
+}
+
 func TestTaskDecodedArgumentPreservesExpressionSpans(t *testing.T) {
 	input := "- action: copy con\\x74ent\\x3d\\t'{{ target }}'\\t other='{{ sibling }}'\n"
 	s, ds := Parse("tasks/main.yml", []byte(input))
