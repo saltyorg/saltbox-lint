@@ -118,9 +118,14 @@ func humanWithWorkerLimit(w io.Writer, p *lint.Project, ds []Diagnostic, opts Hu
 }
 
 func (r *humanRenderer) renderSequentialFindings(ds []Diagnostic) error {
+	defer r.releaseDisplayData()
 	previousPath := ""
 	for i, d := range ds {
-		if err := r.renderFindingSection(d, i, i == 0 || d.Path != previousPath, r.write); err != nil {
+		heading := i == 0 || d.Path != previousPath
+		if heading && i > 0 {
+			r.releaseDisplayData()
+		}
+		if err := r.renderFindingSection(d, i, heading, r.write); err != nil {
 			return err
 		}
 		previousPath = d.Path

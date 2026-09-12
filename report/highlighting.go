@@ -32,6 +32,12 @@ type cachedDisplayDocument struct {
 	document    *highlight.DisplayDocument
 }
 
+func (r *humanRenderer) releaseDisplayData() {
+	r.lines = make(map[string][]sourceLine)
+	r.tokens = make(map[documentKey]cachedDocumentTokens)
+	r.prepared = cachedDisplayDocument{}
+}
+
 type highlightSession struct {
 	ctx      context.Context
 	poolSize int

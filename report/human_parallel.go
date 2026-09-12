@@ -203,6 +203,7 @@ func (r *humanRenderer) renderParallelFiles(groups []diagnosticGroup, opts Human
 
 func (r *humanRenderer) renderFileJob(job *fileRenderJob, fail func(error)) bool {
 	defer close(job.chunks)
+	defer r.releaseDisplayData()
 	r.prewarmOriginal(job.group)
 	emit := func(fragment string) error {
 		select {
