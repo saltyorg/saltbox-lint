@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml/token"
 )
 
 // These cases catch normalized source replacing original bytes, wrong rune/byte
@@ -410,5 +412,27 @@ func TestParseRetainsCompleteBlockOriginsAndEmptyFallback(t *testing.T) {
 		if string(source.Data) != tt.data {
 			t.Fatal("source bytes changed")
 		}
+	}
+}
+
+// Parser-inserted nulls bypass the lexical span map. A whole-source conversion
+// here would allocate once per empty mapping value and copy quadratic bytes.
+func TestImplicitNullFallbackDoesNotAllocatePerToken(t *testing.T) {
+	text := strings.Repeat("# padding\n", 8192) + "é😀:\r\n"
+	starts := []int{0}
+	for i, b := range text {
+		if b == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	adapter := sourceAdapter{Source: &Source{Data: []byte(text), lineStarts: starts}, text: text}
+	null := &token.Token{Type: token.ImplicitNullType, Position: &token.Position{Line: 8193, Column: 4}}
+	var got Span
+	allocs := testing.AllocsPerRun(100, func() { got = adapter.tokenSpan(null) })
+	if got != (Span{81927, 81927}) {
+		t.Fatalf("null span=%+v, want 81927:81927", got)
+	}
+	if allocs != 0 {
+		t.Fatalf("implicit-null fallback allocated %.0f times per token, want zero", allocs)
 	}
 }

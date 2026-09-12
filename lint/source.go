@@ -46,7 +46,7 @@ func parseSource(filename string, data []byte, retainIndex bool) (*Source, []Dia
 		// leaves presentation on the normal classifier fallback.
 		s.sourceIndex, _ = yamlindex.FromTokens(text, tokens)
 	}
-	a := sourceAdapter{Source: s, spans: make(map[*token.Token]Span), originEnds: make(map[*token.Token]int)}
+	a := sourceAdapter{Source: s, text: text, spans: make(map[*token.Token]Span), originEnds: make(map[*token.Token]int)}
 	err := a.locateTokens(tokens)
 	if err == nil {
 		for _, sourceToken := range tokens {
@@ -181,19 +181,20 @@ func (s *Source) Position(offset int) Position {
 	return Position{bytes.Count(s.Data[:offset], []byte{'\n'}) + 1, utf8.RuneCount(s.Data[start:offset]) + 1}
 }
 
-func (s *Source) offset(pos *token.Position) int {
-	return yamlindex.RuneOffset(string(s.Data), s.lineStarts, pos)
+func (s *sourceAdapter) offset(pos *token.Position) int {
+	return yamlindex.RuneOffset(s.text, s.lineStarts, pos)
 }
 
 // sourceAdapter keeps parser-library objects out of the shared source model.
 type sourceAdapter struct {
 	*Source
+	text       string
 	spans      map[*token.Token]Span
 	originEnds map[*token.Token]int
 }
 
 func (s *sourceAdapter) locateTokens(tokens token.Tokens) error {
-	locations, err := yamlindex.LocateTokens(string(s.Data), tokens)
+	locations, err := yamlindex.LocateTokens(s.text, tokens)
 	if err != nil {
 		return err
 	}
