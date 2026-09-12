@@ -1,0 +1,27 @@
+---
+# Defaults stay in source order.
+settings:
+  flags:
+    - true
+    - "false"
+    - null
+    - "null"
+    - 12
+    - 1.5
+  objects:
+    - name: "snow"
+      children:
+        - one
+        - two
+    - {}
+    - []
+  quoted: 'He said "hello"'
+  escaped: "snow: \u2603"
+
+################################
+# Extra Settings
+################################
+
+# Keep this documentation attached to message.
+message: "hello"
+...

@@ -1,0 +1,12 @@
+---
+-   name: Display a message
+    ansible.builtin.debug: {msg: 'hello'}
+    tags: ['setup']
+    when: ['enabled']
+
+- name: Keep literal bytes
+  ansible.builtin.copy:
+      content: |-
+        # This is data, not a YAML comment.
+        {{ literal }}
+      dest: /tmp/message
