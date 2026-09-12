@@ -46,7 +46,7 @@
 
 ## Task 3: Bound fix planning and report expansion
 
-**Files:** lint/fixes.go, lint/jinja_layout.go only if proposal production needs adjustment, report/report.go and report/json.go as required, focused lint/report tests and benchmarks, README.md for JSON documentation when applicable.
+**Files:** lint/fixes.go, lint/jinja_layout.go only if proposal production needs adjustment, report/report.go, report/json.go, report/comparison.go and renderer lifecycle code as required, focused lint/report tests and benchmarks, README.md for JSON documentation when applicable.
 
 **Interfaces:** Keep PlanFixes returning the same verified Change bytes. Preserve all diagnostic identities and human proposal deduplication. The user explicitly chose shared fixes and diagnostic references in JSON. Keep exported Go report types compatible; use dedicated JSON wire types if needed.
 
@@ -54,6 +54,7 @@
 - [ ] Deduplicate shared proposals before expanding edits, using content correctness as well as identity where necessary. Preserve conflict detection, source selection, insertion ordering and independently allocated equivalent fixes.
 - [ ] Build whitespace-validation context once per original source/candidate verification and reuse section-gap and expression knowledge across edits. Keep YAML/Jinja token checks and uncertain-edit refusal unchanged.
 - [ ] Avoid allocating repeated transformed edits for human/concise/GitHub output. JSON schema version 2 is one object with `schema_version: 2`, `diagnostics: []` and `fixes: []`. Preserve all existing diagnostic fields except inline `fix`, replaced by optional `fix_id`. Each shared fix has `id`, `path`, `message` and `edits` (existing range/span/text edit shape). Assign deterministic `fix-1`, `fix-2`, ... IDs in first diagnostic occurrence order. Deduplicate exact path/message/ordered-edit content, including distinct allocations; different files or edits never share a fix. Clean output has both arrays empty. Unfixable findings have no fix_id; manual Preview never creates one. No legacy format flag or unrelated CLI change.
+- [ ] Memoize repeated human proposal conversion/prefix work where shared Fix records would otherwise be expanded again. Release payload-bearing memo entries through the existing file/job releaseDisplayData boundary; preserve lightweight proposal-reference identity and manual preview behavior. Cover noncontiguous ordering and cleanup without restoring completed-file retention.
 - [ ] Document the v1 inline-fix to v2 reference migration in README.md. Test referential integrity, first-occurrence ordering, content/identity deduplication, different-file distinction, clean output, original byte/range positions, omission of manual previews and writer errors. The 10/20/40 case must now contain 10/20/40 edit records total, while all findings remain present and PlanFixes produces unchanged bytes.
 - [ ] Add meaningful scaling benchmarks and exact output/PlanFixes parity, conflict, idempotence, mutation and cancellation/error regressions. Run focused RED/GREEN, then go test -race ./lint ./report ./cmd. Self-review, commit exact paths as fix(lint): bound shared fix processing, and record the chosen JSON behavior.
 
