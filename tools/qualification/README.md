@@ -19,10 +19,15 @@ operator-owned inputs. Use frozen snapshots plus their recorded manifest.
   paired microbenchmark executables are `task-6-micro/{A,B}-{lint,report}.test`
   alongside the manifest. Build A from the frozen baseline source, B from final
   sources. Preserve the original baseline binary and source archive.
+- Add `--existing-only` to preparation for exactly the eight existing CLI
+  workloads (160 samples); this omits new-formatter and microbenchmark reruns.
 - `performance.py run OUTDIR`: run once, with other qualification/build work idle.
   Ten alternating AB/BA pairs per old CLI mode, real 160x48 PTYs for both palettes,
-  pipes for JSON/stdin, identical sinks and runtime concurrency. Linux `wait4`
-  records per-child CPU/RSS; selectors observe first output. Keep every raw
+  pipes for JSON/stdin, identical sinks and runtime concurrency. A fresh small
+  supervisor signals readiness before the actual child clock starts. Linux
+  `wait4` records that child's CPU/RSS; selectors observe its first output.
+  Supervisor startup/CPU/finish costs and pre-fork high-water mark are recorded
+  separately. Every old-CLI sample must exceed its supervisor RSS floor. Keep every raw
   stdout/stderr and sample. Twenty new-formatter samples per fixture are separate;
   skipped plans do not prove successful formatting latency.
 - `summarize.py OUTDIR`: retain every sample; report nearest-rank p95, median,
@@ -51,3 +56,9 @@ large orchestration process can impose a floor on small CLI results. Record that
 floor; use a separately declared fresh small supervisor for an RSS-only supplement
 and verify every child peak exceeds its supervisor high-water mark. Keep the
 original latency/CPU/first-output series and its raw RSS observations unchanged.
+
+Boundary tests: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s
+tools/qualification -p test_performance.py -v` exercises real child memory,
+stdout/stderr, exit status, delayed output, readiness timing and PTY geometry.
+The new helper and driver hashes are part of each new declaration; historical
+declarations and raw samples are never rewritten for this measurement change.

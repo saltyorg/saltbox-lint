@@ -8,21 +8,18 @@ import json
 import os
 import pathlib
 import platform
-import pty
-import selectors
-import struct
 import subprocess
 import sys
-import termios
 import time
-import fcntl
+
+from process_measurement import measure
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def prepare(baseline, candidate, manifest, output):
+def prepare(baseline, candidate, manifest, output, existing_only=False):
     out = pathlib.Path(output).resolve()
     out.mkdir(parents=True, exist_ok=False)
     corpora = json.loads(pathlib.Path(manifest).read_text())
@@ -76,7 +73,11 @@ def prepare(baseline, candidate, manifest, output):
                    "cache_policy": "No cache flush or discarded warmups. First sample identified; subsequent warm context. No outcome-filtered reruns.",
                    "environment": {key: env.get(key) for key in ("PATH", "TERM", "COLORTERM", "COLUMNS", "LINES", "LC_ALL", "LANG", "GOMAXPROCS", "GOMEMLIMIT", "NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE")},
                    "output_pattern": "NAME-pPAIR-A|B.stdout|stderr; format-NAME-SAMPLE.stdout|stderr",
-                   "harness_sha256": digest(pathlib.Path(__file__).read_bytes())}
+                   "harness_sha256": digest(pathlib.Path(__file__).read_bytes()),
+                   "measurement_modules": {name: digest(pathlib.Path(__file__).with_name(name).read_bytes())
+                                           for name in ("process_measurement.py", "process_supervisor.py")},
+                   "measurement_boundary": "Fresh supervisor ready before child timestamp; actual child wait4 RSS/CPU; output observed by controller; supervisor startup and overhead recorded separately",
+                   "existing_only": existing_only}
     micro = pathlib.Path(manifest).resolve().parent / "task-6-micro"
     declaration["microbenchmarks"] = [
         {"name": package, "pattern": pattern,
@@ -88,59 +89,12 @@ def prepare(baseline, candidate, manifest, output):
     ] if micro.exists() and (micro / "B-report.test").exists() else []
     declaration["microbench_schedule"] = ["AB" if i % 2 == 0 else "BA" for i in range(10)]
     declaration["microbench_args"] = ["-test.run=^$", "-test.benchmem", "-test.benchtime=100ms", "-test.count=1"]
+    if existing_only:
+        declaration["formatting"] = []
+        declaration["formatting_samples"] = 0
+        declaration["microbenchmarks"] = []
     (out / "declaration.json").write_text(json.dumps(declaration, indent=2) + "\n")
     print(out / "declaration.json")
-
-
-def measure(binary, work, env, cwd, prefix):
-    master = slave = None
-    if work["pty"]:
-        master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 48, 160, 0, 0))
-    stdin = open(work["stdin"], "rb") if work.get("stdin") else open(os.devnull, "rb")
-    started = time.monotonic()
-    process = subprocess.Popen([binary, *work["args"]], cwd=cwd, env=env, stdin=stdin,
-                               stdout=slave if slave is not None else subprocess.PIPE, stderr=subprocess.PIPE)
-    stdin.close()
-    if slave is not None:
-        os.close(slave)
-    outputs = {"stdout": bytearray(), "stderr": bytearray()}
-    first = None
-    with selectors.DefaultSelector() as selector:
-        selector.register(master if master is not None else process.stdout, selectors.EVENT_READ, "stdout")
-        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-        while selector.get_map():
-            for key, _ in selector.select(timeout=1):
-                try:
-                    chunk = os.read(key.fd, 65536)
-                except OSError as error:
-                    if master == key.fd and error.errno == 5:
-                        chunk = b""
-                    else:
-                        raise
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                else:
-                    if first is None:
-                        first = time.monotonic() - started
-                    outputs[key.data].extend(chunk)
-    _, status, usage = os.wait4(process.pid, 0)
-    process.returncode = os.waitstatus_to_exitcode(status)
-    wall = time.monotonic() - started
-    if master is not None:
-        os.close(master)
-    if process.stdout:
-        process.stdout.close()
-    process.stderr.close()
-    for name, data in outputs.items():
-        pathlib.Path(str(prefix) + "." + name).write_bytes(data)
-    result = {"exit": process.returncode, "wall_seconds": wall, "first_output_seconds": first,
-              "cpu_user_seconds": usage.ru_utime, "cpu_system_seconds": usage.ru_stime,
-              "peak_rss_kib": usage.ru_maxrss,
-              "outputs": {name: {"bytes": len(data), "sha256": digest(data)} for name, data in outputs.items()}}
-    if work["args"][0] == "format" and process.returncode == 0:
-        result["format_status"] = json.loads(outputs["stdout"])["status"]
-    return result
 
 
 def run(output):
@@ -148,6 +102,8 @@ def run(output):
     declaration = json.loads((out / "declaration.json").read_text())
     assert digest(pathlib.Path(__file__).read_bytes()) == declaration["harness_sha256"]
     assert digest(pathlib.Path(declaration["manifest"]).read_bytes()) == declaration["manifest_sha256"]
+    for name, expected in declaration["measurement_modules"].items():
+        assert digest(pathlib.Path(__file__).with_name(name).read_bytes()) == expected
     for identity in declaration["binaries"].values():
         assert digest(pathlib.Path(identity["path"]).read_bytes()) == identity["sha256"]
     for work in declaration["workloads"] + declaration["formatting"]:
@@ -167,6 +123,9 @@ def run(output):
             for label in item["order"]:
                 prefix = out / f'{work["name"]}-p{item["pair"]}-{label}'
                 result = measure(declaration["binaries"][label]["path"], work, env, declaration["cwd"], prefix)
+                if result["exit"] not in (0, 1) or not result["rss_exceeds_supervisor_hwm"]:
+                    failures.append({"workload": work["name"], "pair": item["pair"], "binary": label,
+                                     "reason": "invalid check exit or child RSS does not exceed supervisor floor"})
                 row = {**item, "binary": label, **result}
                 records.write(json.dumps(row) + "\n")
                 records.flush()
@@ -206,7 +165,9 @@ def run(output):
 
 if __name__ == "__main__":
     if sys.argv[1] == "prepare":
-        prepare(*sys.argv[2:])
+        args = sys.argv[2:]
+        existing_only = args[-1] == "--existing-only"
+        prepare(*(args[:-1] if existing_only else args), existing_only=existing_only)
     elif sys.argv[1] == "run":
         run(*sys.argv[2:])
     else:
