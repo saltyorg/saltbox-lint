@@ -9,6 +9,8 @@ Generated: 2026-09-12
 - goccy/go-yaml v1.19.2 validates lint sources; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
 - Embedded Ansible/Jinja TextMate grammars and authentic themes use locally patched Nuri v1.0.1; semantic data uses a frozen catalog.
 - Go testing covers table/golden fixtures, race safety and real shell/editor/terminal harnesses.
+- extension/: TypeScript 5.9.3, esbuild 0.28.2, stable VS Code APIs/types 1.100.0 and Node 24.20.0 build pin; no runtime Node dependencies.
+- Editor protocol/coordinates, canonical identities, bounded subprocess scheduling, diagnostics rendering and VS Code orchestration are separate modules. Windows editor-only invocations self-assign to a kill-on-close Job; POSIX uses extension-owned process groups.
 - Secondary languages: Bash for the Action installer/runner; YAML/JSON for workflows, packaging and VS Code tasks; pinned JavaScript/TypeScript under tools/oracles for explicit offline evidence regeneration with Node 24.20.0 (outside normal Go gates).
 
 ## Conventions
@@ -25,6 +27,7 @@ Generated: 2026-09-12
 - Explicit fixes preserve YAML/Jinja meaning and already-valid bytes. Consumer repositories remain read-only; examples are adoption templates.
 
 ## CI gates
+- Extension development gates: npm run build, npm test and npm run format:check; npm run test:host exercises the actual native CLI in VS Code. Packaging/CI integration follows separately.
 - make check: non-mutating gofmt/module-tidiness checks, vet, pinned golangci-lint and root plus patched Nuri race suites; Bash syntax, workflow/example actionlint and GoReleaser validation.
 - make build runs that gate before the CGO-free binary; make snapshot runs it before local Linux amd64/arm64 archives/checksums with third-party notices/licenses.
 - Makefile pins golangci-lint v2.13.2, actionlint v1.7.12 and GoReleaser v2.18.1; workflow actions are commit-pinned. Tools live under ignored bin/tools.

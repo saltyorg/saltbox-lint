@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 
@@ -12,6 +13,10 @@ import (
 var version = "dev"
 
 func main() {
+	if err := setupEditorProcess(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), processSignals()...)
 	// Restore normal signal termination after cancellation as a fallback for
 	// operations outside our interruptible input boundary.

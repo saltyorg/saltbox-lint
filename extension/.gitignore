@@ -1,0 +1,5 @@
+node_modules/
+dist/
+bin/
+.test-workspace/
+.vscode-test/

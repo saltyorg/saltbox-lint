@@ -1,0 +1,74 @@
+{
+  "name": "saltbox-lint",
+  "displayName": "Saltbox Lint",
+  "description": "Saltbox and Sandbox YAML diagnostics, verified fixes and formatting.",
+  "version": "0.1.0",
+  "publisher": "saltyorg",
+  "license": "GPL-3.0-only",
+  "engines": {
+    "vscode": "^1.100.0",
+    "node": "24.20.0"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "activationEvents": [
+    "onLanguage:yaml",
+    "onLanguage:ansible"
+  ],
+  "categories": [
+    "Linters",
+    "Formatters"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "saltboxLint.checkDocument",
+        "title": "Saltbox Lint: Check Document"
+      },
+      {
+        "command": "saltboxLint.checkWorkspace",
+        "title": "Saltbox Lint: Check Workspace (Saved Files)"
+      },
+      {
+        "command": "saltboxLint.fixAll",
+        "title": "Saltbox Lint: Fix All in Document"
+      }
+    ],
+    "configuration": {
+      "title": "Saltbox Lint",
+      "properties": {
+        "saltboxLint.root": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Source root, absolute or relative to this workspace folder. Empty uses the workspace folder."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "npm run check && node scripts/build.mjs",
+    "test": "node --experimental-strip-types --test test/unit/*.test.ts",
+    "test:host": "node scripts/test-host.mjs",
+    "stage:binary": "node scripts/stage-binary.mjs",
+    "stage:test-fixture": "node scripts/stage-test-fixture.mjs",
+    "format:check": "prettier --check src test scripts package.json tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.30",
+    "@types/vscode": "1.100.0",
+    "@vscode/test-electron": "3.1.0",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "prettier": "3.9.6"
+  }
+}
