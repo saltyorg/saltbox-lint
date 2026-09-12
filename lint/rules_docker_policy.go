@@ -20,21 +20,8 @@ func checkDockerVarsPolicy(p *Project, s *Source) []Diagnostic {
 	if !dockerResource(s) {
 		return nil
 	}
-	policies := map[string][]dockerPolicy{}
-	var invalid []RelatedLocation
-	for _, name := range sortedKeys(p.Sources) {
-		context := p.Sources[name]
-		if !dockerResource(context) {
-			continue
-		}
-		if len(context.parseDiagnostics) > 0 {
-			invalid = append(invalid, RelatedLocation{Path: name, Span: context.parseDiagnostics[0].Span, Message: "Docker policy context has invalid YAML"})
-			continue
-		}
-		for _, policy := range dockerPolicies(context) {
-			policies[policy.Suffix] = append(policies[policy.Suffix], policy)
-		}
-	}
+	facts := analyzeDockerPolicies(p)
+	policies, invalid := facts.policies, facts.invalid
 	var ds []Diagnostic
 	for _, suffix := range sortedKeys(policies) {
 		declarations := policies[suffix]
@@ -50,7 +37,7 @@ func checkDockerVarsPolicy(p *Project, s *Source) []Diagnostic {
 			ds = append(ds, d)
 		}
 	}
-	for _, e := range RuntimeExpressions(s) {
+	for _, e := range analysisRuntimeExpressions(p, s) {
 		for _, access := range memberAccesses(e, "_docker_vars") {
 			if !strings.HasPrefix(access.Name, "_docker_") || !sparseAccess(e, access) {
 				continue
@@ -121,10 +108,10 @@ func sparseAccess(e Expression, a variableAccess) bool {
 	}
 	return false
 }
-func dockerPolicies(s *Source) []dockerPolicy {
+func dockerPolicies(s *Source, expressions []Expression) []dockerPolicy {
 	var policies []dockerPolicy
 	tasks := TasksIn(s)
-	for _, e := range RuntimeExpressions(s) {
+	for _, e := range expressions {
 		owner := -1
 		// A nested task owns its expressions, rather than the enclosing block.
 		for i, task := range tasks {

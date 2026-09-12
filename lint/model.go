@@ -105,6 +105,7 @@ type Rule struct {
 	Check                                             func(*Project, *Source) []Diagnostic
 }
 type Project struct {
+	analysis    *analysis
 	Root, Name  string
 	Sources     map[string]*Source
 	Selected    map[string]bool

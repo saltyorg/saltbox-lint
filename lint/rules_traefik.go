@@ -54,6 +54,14 @@ func traefikRoleSources(p *Project, s *Source, kinds ...Kind) []*Source {
 	if s.RolePath == "" {
 		return sources
 	}
+	if p.analysis != nil {
+		for _, other := range p.analysis.roles[s.RolePath] {
+			if slices.Contains(kinds, other.Kind) {
+				sources = append(sources, other)
+			}
+		}
+		return sources
+	}
 	for _, name := range sortedKeys(p.Sources) {
 		other := p.Sources[name]
 		if other != nil && other.RolePath == s.RolePath && slices.Contains(kinds, other.Kind) {
@@ -73,7 +81,7 @@ func invalidTraefikContext(sources []*Source) []RelatedLocation {
 }
 func traefikContextDiagnostic(s *Source, id string, span Span, related []RelatedLocation) Diagnostic {
 	d := ansibleDiagnostic(s, id, span, "cannot validate Traefik contract because required role context is invalid", "Repair the related source context, then validate this contract again.")
-	d.Related = related
+	d.Related = slices.Clone(related)
 	return d
 }
 
@@ -245,13 +253,13 @@ type traefikRenderer struct {
 	MissingTemplate string
 }
 
-func traefikRenderConditions(s *Source, task Task) []Expression {
+func traefikRenderConditions(runtime []Expression, task Task) []Expression {
 	when := task.Node.Get("when")
 	if when == nil {
 		return nil
 	}
 	var expressions []Expression
-	for _, e := range RuntimeExpressions(s) {
+	for _, e := range runtime {
 		if e.Span.Start >= when.Span.Start && e.Span.End <= when.Span.End {
 			expressions = append(expressions, e)
 		}
@@ -263,8 +271,9 @@ func traefikRenderers(p *Project, tasks []*Source) []traefikRenderer {
 	var renderers []traefikRenderer
 	for _, s := range tasks {
 		expressions := newDeclarationExpressionQuery(s)
+		runtime := analysisRuntimeExpressions(p, s)
 		for _, task := range TasksIn(s) {
-			conditions := traefikRenderConditions(s, task)
+			conditions := traefikRenderConditions(runtime, task)
 			var value *Node
 			switch task.Module {
 			case "copy":
@@ -492,7 +501,7 @@ func hasTraefikDockerHelper(tasks []*Source) bool {
 	}
 	return false
 }
-func retiredTraefikRole(tasks []*Source) bool {
+func retiredTraefikRole(p *Project, tasks []*Source) bool {
 	for _, s := range tasks {
 		if s.Path != s.RolePath+"/tasks/main.yml" && s.Path != s.RolePath+"/tasks/main.yaml" {
 			continue
@@ -523,7 +532,7 @@ func retiredTraefikRole(tasks []*Source) bool {
 			continue
 		}
 		var condition []Token
-		for _, e := range RuntimeExpressions(s) {
+		for _, e := range analysisRuntimeExpressions(p, s) {
 			if e.node == when {
 				condition = stripGrouping(e.Tokens)
 			}
@@ -531,7 +540,7 @@ func retiredTraefikRole(tasks []*Source) bool {
 		if len(condition) == 2 && condition[0].Text == "not" && condition[1].Text == "continuous_integration" && len(list) == 1 {
 			return true
 		}
-		if len(list) == 2 && retirementMigration(list[0], condition, s) {
+		if len(list) == 2 && retirementMigration(p, list[0], condition, s) {
 			return true
 		}
 	}
@@ -553,7 +562,7 @@ func traefikSimpleRetirementTask(task Task) bool {
 	return true
 }
 
-func retirementMigration(task Task, condition []Token, s *Source) bool {
+func retirementMigration(p *Project, task Task, condition []Token, s *Source) bool {
 	if task.Module != "include_tasks" || path.Base(task.includeFile()) != "migration.yml" {
 		return false
 	}
@@ -563,7 +572,7 @@ func retirementMigration(task Task, condition []Token, s *Source) bool {
 	if !ok {
 		return false
 	}
-	for _, e := range RuntimeExpressions(s) {
+	for _, e := range analysisRuntimeExpressions(p, s) {
 		if e.node == task.Node.Get("when") {
 			other, ok := traefikMigrationGuard(e.Tokens, false)
 			return ok && other == tag
@@ -620,22 +629,9 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 	if s.Role == "" {
 		return nil
 	}
-	defaults := traefikRoleSources(p, s, Defaults)
-	var anchor *Source
-	var declaration defaultDeclaration
-	for _, def := range defaults {
-		if enabled, ok := declarationsByName(def)[s.Role+"_role_traefik_enabled"]; ok {
-			anchor = def
-			declaration = enabled
-			break
-		}
-	}
-	invalidDefaults := invalidTraefikContext(defaults)
-	if anchor == nil && len(invalidDefaults) == 0 {
-		return nil
-	}
-	tasks := traefikRoleSources(p, s, Tasks, Handlers)
-	renderers := traefikRenderers(p, tasks)
+	facts := analyzeTraefikRole(p, s)
+	anchor, declaration := facts.anchor, facts.declaration
+	invalidDefaults, renderers := facts.invalidDefaults, facts.renderers
 	if len(invalidDefaults) > 0 && s.Kind != Defaults {
 		for _, r := range renderers {
 			if r.Source == s {
@@ -646,15 +642,10 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 	if anchor == nil {
 		return nil
 	}
-	if hasTraefikDockerHelper(tasks) || retiredTraefikRole(tasks) {
+	if facts.complete {
 		return nil
 	}
-	for _, r := range renderers {
-		if len(invalidTraefikRenderer(r)) == 0 && (traefikDockerLabelsOutput(r) || len(missingTraefikConsumption(r, s.Role)) == 0) {
-			return nil
-		}
-	}
-	if invalid := invalidTraefikContext(tasks); len(invalid) > 0 {
+	if invalid := facts.invalidTasks; len(invalid) > 0 {
 		if s == anchor {
 			return []Diagnostic{traefikContextDiagnostic(s, "traefik-renderer-contract", declaration.Key.Span, invalid)}
 		}

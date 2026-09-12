@@ -12,8 +12,12 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 	if project == nil {
 		return nil
 	}
+	names := sortedKeys(project.Sources)
+	evaluation := *project
+	evaluation.analysis = newAnalysis(project, names)
+	project = &evaluation
 	diagnostics := slices.Clone(project.Diagnostics)
-	for _, name := range sortedKeys(project.Sources) {
+	for _, name := range names {
 		source := project.Sources[name]
 		if source == nil {
 			continue
