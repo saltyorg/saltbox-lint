@@ -1,0 +1,42 @@
+[
+  {
+    "name":"specific_styles_and_fallback",
+    "theme":{"tokenColors":[{"scope":"entity.name.type","settings":{"foreground":"#112233","fontStyle":"italic"}}],"semanticTokenColors":{"*":{"underline":true},"class":{"foreground":"#445566","bold":true},"class:ansible":{"italic":false}}},
+    "type":"class","modifiers":[],"language":"ansible"
+  },
+  {
+    "name":"later_equal_score",
+    "theme":{"tokenColors":[],"semanticTokenColors":{"property":{"foreground":"#112233","italic":true},"*.definition":{"foreground":"#445566"}}},
+    "type":"property","modifiers":["definition"],"language":"ansible"
+  },
+  {
+    "name":"later_equal_score_reversed",
+    "theme":{"tokenColors":[],"semanticTokenColors":{"*.definition":{"foreground":"#445566"},"property":{"foreground":"#112233","italic":true}}},
+    "type":"property","modifiers":["definition"],"language":"ansible"
+  },
+  {
+    "name":"explicit_fontstyle_overrides_flags",
+    "theme":{"tokenColors":[{"scope":"variable.other.property","settings":{"foreground":"#112233","fontStyle":"bold italic"}}],"semanticTokenColors":{"property.definition:ansible":{"fontStyle":"","bold":true}}},
+    "type":"property","modifiers":["definition"],"language":"ansible"
+  },
+  {
+    "name":"fallback_alternate_scope",
+    "theme":{"tokenColors":[{"scope":"support.class","settings":{"foreground":"#112233","fontStyle":"italic"}}],"semanticTokenColors":{}},
+    "type":"class","modifiers":[],"language":"ansible"
+  },
+  {
+    "name":"first_probe_any_property_wins",
+    "theme":{"tokenColors":[{"scope":"entity.name.type.class","settings":{"fontStyle":"italic"}},{"scope":"support.class","settings":{"foreground":"#112233"}}],"semanticTokenColors":{}},
+    "type":"class","modifiers":[],"language":"ansible"
+  },
+  {
+    "name":"language_mismatch_uses_fallback",
+    "theme":{"tokenColors":[{"scope":"keyword.control","settings":{"foreground":"#112233"}}],"semanticTokenColors":{"keyword:python":{"foreground":"#445566"}}},
+    "type":"keyword","modifiers":[],"language":"ansible"
+  },
+  {
+    "name":"modifier_specificity",
+    "theme":{"tokenColors":[],"semanticTokenColors":{"property.definition":{"foreground":"#112233"},"property:ansible":{"foreground":"#445566"}}},
+    "type":"property","modifiers":["definition"],"language":"ansible"
+  }
+]

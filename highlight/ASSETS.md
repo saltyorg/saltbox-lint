@@ -11,8 +11,14 @@ highlighter.
   `tools/import-grammars` uses the Go `highlight/importer` package to decode plist trees and
   copy JSON trees without restricting grammar fields. Manifest `injectTo` is
   added to the registered grammar data. `ansible-sha256.json` records original
-  source and converted grammar SHA256 hashes. Run `go run ./tools/import-grammars`
-  from the module root to repeat this import from that exact installation.
+  source and converted grammar SHA256 hashes. From the module root, run
+  `go run ./tools/import-grammars -extension /path/to/redhat.ansible-26.8.2 -out /path/to/assets`.
+  The full extension manifest is hash-pinned. All grammars and an existing
+  aggregate manifest are parsed before output changes; both hash manifests are
+  updated consistently and unrelated assets are preserved. The output directory
+  may be new or a copy of these assets. Source-validation failures leave prior
+  output untouched; an output I/O failure can leave a partial publication, which
+  can be repaired by rerunning the command.
 - **One Dark Pro 3.20.2**, exact installed
   `zhuangtongfa.material-theme-3.20.2/themes/OneDark-Pro.json`, MIT.
 - **Atom One Light 2.3.0**, authentic `akamud/vscode-theme-onelight`
@@ -28,7 +34,12 @@ highlighter.
   `b8fe444cbd838afb4962bb2446e67c85e0443675`, with its license copied locally.
 
 `assets/licenses` contains the source licenses. `assets/SHA256SUMS.json` records
-all embedded asset hashes. Nuri/Oniguruma/wazero notices and base-module hashes
+all embedded asset hashes. `go test ./highlight -run TestEmbeddedAssetIntegrity`
+checks every asset offline, reporting changed, missing or unlisted asset paths.
+Independent style and semantic reproduction instructions and source pins live in
+[`tools/oracles`](../tools/oracles/README.md); those explicit development tools
+require Node, while normal Go gates remain Node-free.
+Nuri/Oniguruma/wazero notices and base-module hashes
 live in `../third_party/nuri`.
 
 Theme normalization merges duplicate selectors by last-defined **property**,

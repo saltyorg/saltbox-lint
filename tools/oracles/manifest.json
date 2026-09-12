@@ -1,0 +1,45 @@
+{
+  "node": "24.20.0",
+  "upstream": {
+    "vscode": {
+      "commit": "88e44fa0e00b08f7758b4f6d05632e4fd5e4df6f",
+      "repository": "https://github.com/microsoft/vscode",
+      "sourcePaths": {
+        "textMateScopeMatcher.ts": "src/vs/workbench/services/themes/common/textMateScopeMatcher.ts",
+        "colorThemeData.ts": "src/vs/workbench/services/themes/common/colorThemeData.ts",
+        "tokenClassificationRegistry.ts": "src/vs/platform/theme/common/tokenClassificationRegistry.ts"
+      }
+    },
+    "ansible": {
+      "extension": "redhat.ansible",
+      "version": "26.8.2",
+      "manifestSHA256": "8aeee07bb22518b5ad939a8bb740b80695a91bae36b0246b1fc974a25d6d77cd",
+      "repository": "https://github.com/ansible/vscode-ansible/tree/v26.8.2"
+    }
+  },
+  "sources": {
+    "ansible/api-DforCLaL.js": "55a86f079ecba1350a3c0db9df2463e03a705ba370855dfdfb835dd3eaf3376a",
+    "ansible/dist-ZCKjkvV4.js": "023f9d8f9dfd102421b93c8563dff33bfe7594455325cde86633a5777b9eb13a",
+    "ansible/lodash-B2ZyWEav.js": "6b253a258018d455913643933a74234befa10f23d75b9ee1c2256d3e4dd8fd93",
+    "ansible/main-Cq1pXFUY.js": "a5b256cd59eb2f196c7eaa1b8aca98f16b19a0d7085184e90b3297d7d4b40c35",
+    "ansible/providers/semanticTokenProvider.js": "9f0d3c8a4323ce393dc3e41bc4b2293d5fc378b486c2d38e07c5904a86845ddb",
+    "ansible/utils/ansible.js": "41868a5b1cb23754e76ac5413b9787b81dc57d5563d968f212af8f16b5be9792",
+    "ansible/utils/yaml.js": "600d16ed8d191e16f9f0de0652c333f97e8f835e758adf9b6d426910af272cbc",
+    "module-docs.json": "fdd918595ac73b7cc08afbda709ea33e25b7313e1dec7de1aee867a3cfa6bda2",
+    "oracle-cases.json": "221063a54055aaa1c18a19fe871789058fd1b2111bf45d7f2e863d9634ff5ce7",
+    "package.json": "a90fc33418afa2b9cbf4768524b021135b965ecdf993457505bfae3ac44a8428",
+    "semantic-style-cases.json": "ffb6f6bf9b9bf67f3ef57d1644d2ae58160765235a26fb414e1de19b3cc4fca9",
+    "vscode/colorThemeData.ts": "f97b363a9168f1c3c7436b9d3748441d2e8cd0eb0c3ed42a28c3743356867961",
+    "vscode/textMateScopeMatcher.ts": "c3dc31f96d63c32b8def610dd94073881c9144b572c8d0d324a6258e8e27ec16",
+    "vscode/tokenClassificationRegistry.ts": "e1b75e1ede5bb9f404fe7c0bfc535c127e604e96960ad9d6bb6f8aba60396c8d"
+  },
+  "assets": {
+    "themes/one-dark-pro.json": "186fbbd1ef99a9fb6548fac7a1d354b925a7f9b98da97ef7649e22e20d08c756",
+    "themes/one-light.json": "6628e350875e76186f3ac007680544d54a3ea132e6b542442e7704fdfac45250"
+  },
+  "fixtures": {
+    "decorated-scalar-keys.yml": "c568e24aeae28291887281168d84999222d098ce1a15dc7029319ccf03b815d6",
+    "demo-defaults.yml": "e891bdca76e06d6b0f769c9f2a309e821959c23f06cae345f2deed2f5942e9c1",
+    "demo-tasks.yml": "c111ade95a01b6d35e369e574a696c460074840676bc7b984d0efbab536b98d2"
+  }
+}

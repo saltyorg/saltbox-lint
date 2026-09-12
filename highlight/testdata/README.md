@@ -10,9 +10,11 @@ normalization is the only color conversion in the development oracle.
 `semantic-fallback-colors.json` executes the original scope/style resolver on
 the actual embedded themes. It also records their semanticHighlighting flags.
 These fixtures are test-only: runtime colors always come from the theme assets.
-The controller's reproducible Node harness and pinned source files are retained
-in `.superpowers/sdd/demo-v4-semantics` at the repository root as local evidence;
-Node is not a build or runtime dependency of the demo.
+Tracked independent runners, original case inputs, pinned upstream sources,
+licenses and offline reproduction commands live in [`tools/oracles`](../../tools/oracles/README.md).
+The style runner reproduces both fixture families completely; Node is an explicit
+development-only regeneration tool, never a Go gate or runtime dependency.
+The older lexical snapshots are unchanged and their generator is outside this recovery.
 
 The singleton-probe selector adapter in `scope_matcher.go` follows these sources:
 

@@ -1,0 +1,2371 @@
+{
+  "method": "original Ansible 26.8.2 DocsLibrary.findModule results captured while executing 26 original cases and three committed YAML sources; scalar option types collapsed exactly as original --schemas harness",
+  "modules": {
+    "debug": {
+      "found": true,
+      "fqcn": "ansible.builtin.debug",
+      "documented": true,
+      "options": {
+        "msg": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "var": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "verbosity": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/debug.py",
+      "sourceSHA256": "1365000c5187812efc2b10a239d5e8a235f91b8a4000ccf7d9518781a3ce6cdb"
+    },
+    "made.up.module": {
+      "found": false,
+      "documented": false,
+      "options": {}
+    },
+    "naïve": {
+      "found": false,
+      "documented": false,
+      "options": {}
+    },
+    "port_assignment": {
+      "found": true,
+      "fqcn": "ansible.builtin.port_assignment",
+      "documented": true,
+      "options": {
+        "base_path": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "namespace": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "owner": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "claims": {
+          "type": "dict",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/git/saltbox/library/port_assignment.py",
+      "sourceSHA256": "19e3420696d0a5b1f7b648c977b0efe9f17b76476526584a88f18e55efa817b2"
+    },
+    "tld_parse": {
+      "found": true,
+      "fqcn": "ansible.builtin.tld_parse",
+      "documented": true,
+      "options": {
+        "url": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "record": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/git/saltbox/library/tld_parse.py",
+      "sourceSHA256": "c80cbec82a519afef1dda6b4f98bd5f95ea287ba11b82bb279204e169fd5a7b3"
+    },
+    "ansible.legacy.port_assignment": {
+      "found": false,
+      "documented": false,
+      "options": {}
+    },
+    "docker_container": {
+      "found": true,
+      "fqcn": "ansible.builtin.docker_container",
+      "documented": true,
+      "options": {
+        "auto_remove": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "blkio_weight": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "capabilities": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "cap_drop": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "cgroupns_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cgroup_parent": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cleanup": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "command": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "comparisons": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "container_default_behavior": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "command_handling": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpu_period": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpu_quota": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpus": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpuset_cpus": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpuset_mems": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpu_shares": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "default_host_ip": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "detach": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "devices": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "device_read_bps": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_write_bps": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_read_iops": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_write_iops": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_requests": {
+          "type": "list",
+          "suboptions": {
+            "capabilities": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "count": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "device_ids": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "driver": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "options": {
+              "type": "dict",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_cgroup_rules": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "dns_opts": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "dns_servers": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "dns_search_domains": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "domainname": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "env": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "env_file": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "entrypoint": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "etc_hosts": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "exposed_ports": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "exposed": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "expose": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "force_kill": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "forcekill": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "groups": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "healthcheck": {
+          "type": "dict",
+          "suboptions": {
+            "test": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "test_cli_compatible": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "interval": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "timeout": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "retries": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "start_period": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "start_interval": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "hostname": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image_comparison": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image_label_mismatch": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image_name_mismatch": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "init": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "interactive": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ipc_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "keep_volumes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "kill_signal": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "kernel_memory": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "labels": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "links": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "log_driver": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "log_options": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "log_opt": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "mac_address": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory_reservation": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory_swap": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory_swappiness": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "mounts": {
+          "type": "list",
+          "suboptions": {
+            "target": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "source": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "type": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "read_only": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "consistency": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "create_mountpoint": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "propagation": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "no_copy": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "non_recursive": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "read_only_non_recursive": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "read_only_force_recursive": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "labels": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "volume_driver": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "volume_options": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "subpath": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "tmpfs_size": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "tmpfs_mode": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "tmpfs_options": {
+              "type": "list",
+              "suboptions": {}
+            }
+          }
+        },
+        "name": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "network_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "userns_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "networks": {
+          "type": "list",
+          "suboptions": {
+            "name": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "ipv4_address": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "ipv6_address": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "links": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "aliases": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "mac_address": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "driver_opts": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "gw_priority": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "networks_cli_compatible": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "oom_killer": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "oom_score_adj": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "output_logs": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "paused": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pid_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pids_limit": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "platform": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "privileged": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "publish_all_ports": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "published_ports": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "ports": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "pull": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pull_check_mode_behavior": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "read_only": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "recreate": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "removal_wait_timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "restart": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "restart_policy": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "restart_retries": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "runtime": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "shm_size": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "security_opts": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "stop_signal": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "healthy_wait_timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "stop_timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "storage_opts": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "tmpfs": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "tty": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ulimits": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "sysctls": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "user": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "uts": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "volumes": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "volume_driver": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "volumes_from": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "working_dir": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible_collections/community/docker/plugins/modules/docker_container.py",
+      "sourceSHA256": "6279dc30df5e36d6a67f7287305ad99426b4ab1eccabf1bd045d19a145107b86"
+    },
+    "community.docker.docker_container": {
+      "found": true,
+      "fqcn": "community.docker.docker_container",
+      "documented": true,
+      "options": {
+        "auto_remove": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "blkio_weight": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "capabilities": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "cap_drop": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "cgroupns_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cgroup_parent": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cleanup": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "command": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "comparisons": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "container_default_behavior": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "command_handling": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpu_period": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpu_quota": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpus": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpuset_cpus": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpuset_mems": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cpu_shares": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "default_host_ip": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "detach": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "devices": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "device_read_bps": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_write_bps": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_read_iops": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_write_iops": {
+          "type": "list",
+          "suboptions": {
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rate": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_requests": {
+          "type": "list",
+          "suboptions": {
+            "capabilities": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "count": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "device_ids": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "driver": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "options": {
+              "type": "dict",
+              "suboptions": {}
+            }
+          }
+        },
+        "device_cgroup_rules": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "dns_opts": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "dns_servers": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "dns_search_domains": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "domainname": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "env": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "env_file": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "entrypoint": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "etc_hosts": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "exposed_ports": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "exposed": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "expose": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "force_kill": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "forcekill": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "groups": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "healthcheck": {
+          "type": "dict",
+          "suboptions": {
+            "test": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "test_cli_compatible": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "interval": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "timeout": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "retries": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "start_period": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "start_interval": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "hostname": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image_comparison": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image_label_mismatch": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "image_name_mismatch": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "init": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "interactive": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ipc_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "keep_volumes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "kill_signal": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "kernel_memory": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "labels": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "links": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "log_driver": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "log_options": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "log_opt": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "mac_address": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory_reservation": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory_swap": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "memory_swappiness": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "mounts": {
+          "type": "list",
+          "suboptions": {
+            "target": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "source": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "type": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "read_only": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "consistency": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "create_mountpoint": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "propagation": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "no_copy": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "non_recursive": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "read_only_non_recursive": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "read_only_force_recursive": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "labels": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "volume_driver": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "volume_options": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "subpath": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "tmpfs_size": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "tmpfs_mode": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "tmpfs_options": {
+              "type": "list",
+              "suboptions": {}
+            }
+          }
+        },
+        "name": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "network_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "userns_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "networks": {
+          "type": "list",
+          "suboptions": {
+            "name": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "ipv4_address": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "ipv6_address": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "links": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "aliases": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "mac_address": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "driver_opts": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "gw_priority": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "networks_cli_compatible": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "oom_killer": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "oom_score_adj": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "output_logs": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "paused": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pid_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pids_limit": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "platform": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "privileged": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "publish_all_ports": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "published_ports": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "ports": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "pull": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pull_check_mode_behavior": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "read_only": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "recreate": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "removal_wait_timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "restart": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "restart_policy": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "restart_retries": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "runtime": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "shm_size": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "security_opts": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "stop_signal": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "healthy_wait_timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "stop_timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "storage_opts": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "tmpfs": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "tty": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ulimits": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "sysctls": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "user": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "uts": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "volumes": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "volume_driver": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "volumes_from": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "working_dir": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible_collections/community/docker/plugins/modules/docker_container.py",
+      "sourceSHA256": "6279dc30df5e36d6a67f7287305ad99426b4ab1eccabf1bd045d19a145107b86"
+    },
+    "broken": {
+      "found": false,
+      "documented": false,
+      "options": {}
+    },
+    "community.general.xml": {
+      "found": true,
+      "fqcn": "community.general.xml",
+      "documented": true,
+      "options": {
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ensure": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attribute": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "value": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "add_children": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "set_children": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "count": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "print_match": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pretty_print": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "content": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "input_type": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "backup": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "huge_tree": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "insertbefore": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "insertafter": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "create_if_missing": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible_collections/community/general/plugins/modules/xml.py",
+      "sourceSHA256": "0bd06ef314a656422319d921bd611c677b450c6dafb329d072f48afa91ba5a3b"
+    },
+    "ansible.builtin.xml": {
+      "found": true,
+      "fqcn": "ansible.builtin.xml",
+      "documented": true,
+      "options": {
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ensure": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attribute": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "value": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "add_children": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "set_children": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "count": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "print_match": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pretty_print": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "content": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "input_type": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "backup": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "huge_tree": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "insertbefore": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "insertafter": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "create_if_missing": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible_collections/community/general/plugins/modules/xml.py",
+      "sourceSHA256": "0bd06ef314a656422319d921bd611c677b450c6dafb329d072f48afa91ba5a3b"
+    },
+    "ansible.builtin.assert": {
+      "found": true,
+      "fqcn": "ansible.builtin.assert",
+      "documented": true,
+      "options": {
+        "that": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "fail_msg": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "msg": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "success_msg": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "quiet": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/assert.py",
+      "sourceSHA256": "078d465c074143a5db623f46f04371dbd7e1025727c815e6f330ea6ddd539cc5"
+    },
+    "ansible.builtin.file": {
+      "found": true,
+      "fqcn": "ansible.builtin.file",
+      "documented": true,
+      "options": {
+        "mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "owner": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "group": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "seuser": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "serole": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "setype": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "selevel": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "unsafe_writes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attributes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attr": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "path": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "dest": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "name": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "src": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "recurse": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "follow": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "modification_time": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "modification_time_format": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "access_time": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "access_time_format": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/file.py",
+      "sourceSHA256": "b7b17e79159a47570956a68ea0053acea4f6a281db084c1ab21979c251ef14f5"
+    },
+    "ansible.builtin.template": {
+      "found": true,
+      "fqcn": "ansible.builtin.template",
+      "documented": true,
+      "options": {
+        "backup": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "owner": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "group": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "seuser": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "serole": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "setype": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "selevel": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "unsafe_writes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attributes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attr": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "src": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "dest": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "newline_sequence": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "block_start_string": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "block_end_string": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "variable_start_string": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "variable_end_string": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "comment_start_string": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "comment_end_string": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "trim_blocks": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "lstrip_blocks": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "output_encoding": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "validate": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "follow": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/template.py",
+      "sourceSHA256": "cb5ceef996743fe0a9c6375dce4e55e4656940d35f40bf04e6c55e01bda9951d"
+    },
+    "ansible.builtin.command": {
+      "found": true,
+      "fqcn": "ansible.builtin.command",
+      "documented": true,
+      "options": {
+        "expand_argument_vars": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "free_form": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cmd": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "argv": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "creates": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "removes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "chdir": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "stdin": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "stdin_add_newline": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "strip_empty_ends": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/command.py",
+      "sourceSHA256": "6a7f0fe7284cd0326d7fdb2af7583b09ce03b0d708cd3489d2b159ec0abb68f3"
+    },
+    "community.docker.docker_image": {
+      "found": true,
+      "fqcn": "community.docker.docker_image",
+      "documented": true,
+      "options": {
+        "source": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "build": {
+          "type": "dict",
+          "suboptions": {
+            "cache_from": {
+              "type": "list",
+              "suboptions": {}
+            },
+            "dockerfile": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "http_timeout": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "path": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "pull": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "rm": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "network": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "nocache": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "etc_hosts": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "args": {
+              "type": "dict",
+              "suboptions": {}
+            },
+            "container_limits": {
+              "type": "dict",
+              "suboptions": {
+                "memory": {
+                  "type": "scalar",
+                  "suboptions": {}
+                },
+                "memswap": {
+                  "type": "scalar",
+                  "suboptions": {}
+                },
+                "cpushares": {
+                  "type": "scalar",
+                  "suboptions": {}
+                },
+                "cpusetcpus": {
+                  "type": "scalar",
+                  "suboptions": {}
+                }
+              }
+            },
+            "use_config_proxy": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "target": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "platform": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "shm_size": {
+              "type": "scalar",
+              "suboptions": {}
+            },
+            "labels": {
+              "type": "dict",
+              "suboptions": {}
+            }
+          }
+        },
+        "archive_path": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "load_path": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force_source": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force_absent": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force_tag": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "name": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "pull": {
+          "type": "dict",
+          "suboptions": {
+            "platform": {
+              "type": "scalar",
+              "suboptions": {}
+            }
+          }
+        },
+        "push": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "repository": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "tag": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible_collections/community/docker/plugins/modules/docker_image.py",
+      "sourceSHA256": "2d90f61db617bfea6e27fe947d802c79805c0d3220f24b7e71a0f715f0106694"
+    },
+    "ansible.builtin.wait_for": {
+      "found": true,
+      "fqcn": "ansible.builtin.wait_for",
+      "documented": true,
+      "options": {
+        "host": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "connect_timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "delay": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "port": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "active_connection_states": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "state": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "path": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "search_regex": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "exclude_hosts": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "sleep": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "msg": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/wait_for.py",
+      "sourceSHA256": "d2dcc402a41008a01d0408e426c6db52f902238870fe344bc6b7608a20b43e93"
+    },
+    "ansible.builtin.uri": {
+      "found": true,
+      "fqcn": "ansible.builtin.uri",
+      "documented": true,
+      "options": {
+        "mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "owner": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "group": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "seuser": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "serole": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "setype": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "selevel": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "unsafe_writes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attributes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attr": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "follow_redirects": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ciphers": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "decompress": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "url": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "dest": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "url_username": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "user": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "url_password": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "password": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "body": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "body_format": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "method": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "return_content": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force_basic_auth": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "creates": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "removes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "status_code": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "timeout": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "headers": {
+          "type": "dict",
+          "suboptions": {}
+        },
+        "validate_certs": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "client_cert": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "client_key": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ca_path": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "src": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "remote_src": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "use_proxy": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "unix_socket": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "http_agent": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "unredirected_headers": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "use_gssapi": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "use_netrc": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/uri.py",
+      "sourceSHA256": "41ed8aff0b508a1c741d68a14f72f602c27f16b845b99dc23c86396d5fea685c"
+    },
+    "ansible.builtin.set_fact": {
+      "found": true,
+      "fqcn": "ansible.builtin.set_fact",
+      "documented": true,
+      "options": {
+        "key_value": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "cacheable": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/set_fact.py",
+      "sourceSHA256": "dcccac3f86f1d179d87afbb92fb88024f2eeabbca4a7a962c5e6ae5382ca1107"
+    },
+    "ansible.builtin.debug": {
+      "found": true,
+      "fqcn": "ansible.builtin.debug",
+      "documented": true,
+      "options": {
+        "msg": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "var": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "verbosity": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/debug.py",
+      "sourceSHA256": "1365000c5187812efc2b10a239d5e8a235f91b8a4000ccf7d9518781a3ce6cdb"
+    },
+    "ansible.builtin.include_vars": {
+      "found": true,
+      "fqcn": "ansible.builtin.include_vars",
+      "documented": true,
+      "options": {
+        "file": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "dir": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "name": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "depth": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "files_matching": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "ignore_files": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "extensions": {
+          "type": "list",
+          "suboptions": {}
+        },
+        "ignore_unknown_extensions": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "hash_behaviour": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "free-form": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/include_vars.py",
+      "sourceSHA256": "2699696494fd7789ca3d46ca61294f3a1d7f86ec99b9a4a6a6dfb3e22da8971d"
+    },
+    "ansible.builtin.copy": {
+      "found": true,
+      "fqcn": "ansible.builtin.copy",
+      "documented": true,
+      "options": {
+        "decrypt": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "owner": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "group": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "seuser": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "serole": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "setype": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "selevel": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "unsafe_writes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attributes": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "attr": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "validate": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "src": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "content": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "dest": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "backup": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "force": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "directory_mode": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "remote_src": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "follow": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "local_follow": {
+          "type": "scalar",
+          "suboptions": {}
+        },
+        "checksum": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/copy.py",
+      "sourceSHA256": "26630381c035d780439371acc611157811fae0a50eddc62ce50f3cebf55a2958"
+    },
+    "ansible.builtin.meta": {
+      "found": true,
+      "fqcn": "ansible.builtin.meta",
+      "documented": true,
+      "options": {
+        "free_form": {
+          "type": "scalar",
+          "suboptions": {}
+        }
+      },
+      "source": "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/modules/meta.py",
+      "sourceSHA256": "67eb2b6af0861e0d4b68e301543b4b090a7e0971b0d1012cf33be4df863a9c78"
+    }
+  },
+  "messages": [
+    {
+      "name": "ansible/docsLibraryReady",
+      "body": {
+        "modulesCount": 8691
+      }
+    }
+  ],
+  "roots": [
+    "/root/.ansible/collections",
+    "/usr/share/ansible/collections",
+    "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages/ansible/_internal",
+    "/srv/ansible/releases/20260820T080214.974403520-f43b6beb2901/venv/lib/python3.12/site-packages"
+  ],
+  "capture": {
+    "date": "2026-09-12",
+    "discoveredModuleCount": 8691,
+    "originalHarnessSHA256": "0b1f6d72c0546e4b196c4b8ad63b4947653d0dbcec30f185dc83dfccf084d1c7",
+    "originalConfigurationSHA256": "4eac9e19d76e86e2ca1114e839e51de445a5891b9d5d20f085f6c79379337409",
+    "originalCollectionsSHA256": "a727b764e0eccebee5ccc14217c39276184edb8615121b840f9ea80b19717579",
+    "docsLibrarySHA256": "abaeac85fe4b29dc2c066b351b826df181babf02805a9dae047c5fc3a49b14ab",
+    "docsParserSHA256": "3057f3c54aeb0d32688c1476ca4f93e1202200f1dad3dedab01367081574412f",
+    "note": "Capture wrapper delegated every findModule call to the original initialized DocsLibrary, retaining its found/FQCN/documented/option-tree results and source file hashes. It rejected inconsistent results for the same requested name. No Go catalog was read."
+  }
+}

@@ -1,0 +1,106 @@
+[
+  {
+    "name": "root_mapping",
+    "source": "debug:\n  msg: hello\n"
+  },
+  {
+    "name": "task_known",
+    "source": "- name: Test\n  debug:\n    msg: hello\n  when: ready\n"
+  },
+  {
+    "name": "play_context",
+    "source": "- hosts: localhost\n  vars:\n    value: one\n  tasks:\n    - debug:\n        msg: hello\n"
+  },
+  {
+    "name": "role_context",
+    "source": "- hosts: localhost\n  roles:\n    - role: web\n      become: true\n      web_var: hi\n"
+  },
+  {
+    "name": "task_keyword_subtrees",
+    "source": "- debug:\n    msg: hi\n  vars:\n    value: one\n  environment:\n    TEST: hi\n  loop_control:\n    loop_var: element\n  module_defaults:\n    debug:\n      msg: ignored\n  with_not_a_plugin: items\n"
+  },
+  {
+    "name": "separate_args",
+    "source": "- debug:\n  args:\n    msg: hi\n    invented_option:\n      child: value\n"
+  },
+  {
+    "name": "unknown_module",
+    "source": "- made.up.module:\n    msg: hi\n    nested:\n      value: true\n"
+  },
+  {
+    "name": "unknown_option",
+    "source": "- debug:\n    invented_option:\n      child: value\n"
+  },
+  {
+    "name": "action_forms",
+    "source": "- action: ansible.builtin.debug msg=hello\n- local_action:\n    module: debug\n    msg: hello\n"
+  },
+  {
+    "name": "quoted_keys",
+    "source": "- 'debug':\n    \"msg\": hi\n  'when': ready\n"
+  },
+  {
+    "name": "unicode_flow",
+    "source": "- { name: \"caf\u00e9 \ud83d\ude00\", debug: { msg: ok }, na\u00efve: yes }\n"
+  },
+  {
+    "name": "custom_module",
+    "source": "- port_assignment:\n    namespace: web\n    owner: example\n- tld_parse:\n    url: example.com\n"
+  },
+  {
+    "name": "explicit_legacy_custom",
+    "source": "- ansible.legacy.port_assignment:\n    namespace: web\n"
+  },
+  {
+    "name": "declared_collection",
+    "source": "- collections: [community.docker]\n  docker_container:\n    name: demo\n    networks:\n      - name: saltbox\n        ipv4_address: 172.20.0.5\n"
+  },
+  {
+    "name": "inherited_collection",
+    "source": "- hosts: localhost\n  collections: [community.docker]\n  tasks:\n    - block:\n        - docker_container:\n            name: demo\n      rescue:\n        - debug:\n            msg: rescue\n      always:\n        - debug:\n            msg: always\n"
+  },
+  {
+    "name": "nested_options_alias",
+    "source": "- community.docker.docker_container:\n    name: demo\n    hostname: example\n    mounts:\n      - src: /tmp\n        target: /mnt\n    healthcheck:\n      test: [CMD, true]\n      interval: 10s\n      invented: false\n"
+  },
+  {
+    "name": "jinja_values",
+    "source": "- debug:\n    msg: \"{{ value | default('x') | not_a_filter }} {{ value is custom_test }} {{ lookup('env', 'HOME') }}\"\n  when:\n    - value is defined\n    - value | custom_filter\n"
+  },
+  {
+    "name": "multiline_value",
+    "source": "- debug:\n    msg: |\n      {{ value | custom_filter }}\n      debug: literal\n      when: literal\n"
+  },
+  {
+    "name": "multiple_documents",
+    "source": "---\n- debug:\n    msg: first\n---\n- debug:\n    msg: second\n"
+  },
+  {
+    "name": "malformed_yaml",
+    "source": "- debug:\n    msg: hello\n  broken: [\n"
+  },
+  {
+    "name": "anchors_aliases",
+    "source": "- debug: &options\n    msg: hello\n- debug: *options\n"
+  },
+  {
+    "name": "non_scalar_keys",
+    "source": "? [one, two]\n: {child: value}\n"
+  },
+  {
+    "name": "documented_option_alias",
+    "source": "- community.general.xml:\n    ensure: present\n    xpath: /root\n    value: hi\n- community.docker.docker_container:\n    name: demo\n    ports: [8080:80]\n"
+  },
+  {
+    "name": "builtin_redirect",
+    "source": "- ansible.builtin.xml:\n    ensure: present\n    value: hi\n"
+  },
+  {
+    "name": "escaped_quoted_keys",
+    "source": "- \"\\u0064ebug\":\n    \"m\\u0073g\": hello\n  \"wh\\u0065n\": ready\n"
+  },
+  {
+    "name": "anchors_tags_and_explicit_key",
+    "source": "- debug: &options\n    ? \"msg\"\n    : hello\n- debug: *options\n- !!map\n  debug: !!map\n    msg: tagged\n"
+  }
+]

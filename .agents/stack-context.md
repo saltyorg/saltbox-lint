@@ -9,7 +9,7 @@ Generated: 2026-09-12
 - goccy/go-yaml v1.19.2 validates lint sources; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
 - Embedded Ansible/Jinja TextMate grammars and authentic themes use locally patched Nuri v1.0.1; semantic data uses a frozen catalog.
 - Go testing covers table/golden fixtures, race safety and real shell/editor/terminal harnesses.
-- Secondary languages: Bash for the Action installer/runner; YAML/JSON for workflows, packaging and VS Code tasks.
+- Secondary languages: Bash for the Action installer/runner; YAML/JSON for workflows, packaging and VS Code tasks; pinned JavaScript/TypeScript under tools/oracles for explicit offline evidence regeneration with Node 24.20.0 (outside normal Go gates).
 
 ## Conventions
 - Flat cmd, lint, report, highlight and yamlindex packages separate commands, analysis, policy and display; main owns process stdin/signals.
