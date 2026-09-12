@@ -45,3 +45,9 @@ production adapter, installed provider and application request phases separately
 `SALTBOX_TEST_LOGS` optionally preserves native SDK trace logs from the isolated
 profile before cleanup. Application request completion is not a visual paint
 completion guarantee. Profiling precedes the formal frozen experiment.
+
+RSS interpretation: Linux wait4 includes the child's pre-exec launch image. A
+large orchestration process can impose a floor on small CLI results. Record that
+floor; use a separately declared fresh small supervisor for an RSS-only supplement
+and verify every child peak exceeds its supervisor high-water mark. Keep the
+original latency/CPU/first-output series and its raw RSS observations unchanged.
