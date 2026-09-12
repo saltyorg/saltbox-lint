@@ -51,7 +51,7 @@ func splitSourceLines(data []byte) []sourceLine {
 			next = end + 1
 		}
 		contentEnd := end
-		if contentEnd > start && data[contentEnd-1] == '\r' {
+		if newline >= 0 && contentEnd > start && data[contentEnd-1] == '\r' {
 			contentEnd--
 		}
 		lines = append(lines, sourceLine{text: string(data[start:contentEnd]), ending: string(data[contentEnd:min(next, len(data))]), start: start, end: contentEnd})
