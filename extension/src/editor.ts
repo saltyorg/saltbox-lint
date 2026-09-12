@@ -600,8 +600,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.lint.cancel(`workspace:${folder}`);
       const scan = this.scans.get(folder);
       this.scans.delete(folder);
-      for (const uri of scan?.keys() ?? [])
-        this.collection.delete(vscode.Uri.parse(uri));
+      for (const uri of scan?.keys() ?? []) this.publish(vscode.Uri.parse(uri));
       for (const [uri, ownerFolder] of this.documentFolders) {
         if (ownerFolder !== folder) continue;
         this.lint.cancel(uri);

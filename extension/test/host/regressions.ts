@@ -364,6 +364,40 @@ export async function runRegressions(): Promise<void> {
     },
   );
   await run(
+    "I6 parent root refresh preserves nested open diagnostics",
+    async () => {
+      const nested = vscode.Uri.joinPath(roots[0].uri, "roles/example");
+      const index = vscode.workspace.workspaceFolders!.length;
+      await updateFolders(index, 0, { uri: nested });
+      const editor = new EditorIntegration(
+        join(
+          extension.extensionPath,
+          "bin",
+          "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+        ),
+      );
+      try {
+        const document = await open(
+          vscode.Uri.joinPath(nested, "defaults/main.yml"),
+          jinja,
+        );
+        await editor.checkWorkspace();
+        await editor.check(document);
+        const before = diagnostics(document.uri);
+        assert.ok(before.some((d) => d.code === "jinja-layout"));
+        editor.refresh([roots[0].uri]);
+        assert.deepEqual(
+          diagnostics(document.uri),
+          before,
+          "parent scan invalidation cleared the unaffected nested document owner",
+        );
+      } finally {
+        editor.dispose();
+        await updateFolders(index, 1);
+      }
+    },
+  );
+  await run(
     "I5 a retained quick fix cannot bind to a replacement report",
     async () => {
       const folder = vscode.Uri.joinPath(roots[0].uri, "roles/example/tasks");
