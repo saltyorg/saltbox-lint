@@ -189,7 +189,7 @@ func TestSocketProcessInputValidYAMLAndEOF(t *testing.T) {
 	var out, stderr bytes.Buffer
 	filename := filepath.Join(t.TempDir(), "virtual.yml")
 	code := cmd.Run(t.Context(), []string{"check", "-", "--stdin-filename", filename, "--format", "json"}, cmd.Streams{In: input, Out: &out, Err: &stderr}, "test")
-	if code != 0 || out.String() != "{\"diagnostics\":[]}\n" || stderr.Len() != 0 {
+	if code != 0 || out.String() != "{\"schema_version\":2,\"diagnostics\":[],\"fixes\":[]}\n" || stderr.Len() != 0 {
 		t.Fatalf("code=%d out=%q err=%q", code, &out, &stderr)
 	}
 	input.close()
