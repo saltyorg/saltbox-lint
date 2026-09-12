@@ -41,6 +41,8 @@ saltbox-lint check --format json -- roles/example resources/tasks
 saltbox-lint check --diff -- roles/example/defaults/main.yml
 saltbox-lint check --fix -- roles/example/defaults/main.yml
 saltbox-lint check - --stdin-filename roles/example/defaults/main.yml < saved-buffer.yml
+saltbox-lint format --root . --stdin-filename roles/example/defaults/main.yml - < editor-buffer.yml
+saltbox-lint format --mode lint-fixes --root . --stdin-filename roles/example/tasks/main.yml - < editor-buffer.yml
 saltbox-lint rules
 saltbox-lint rules ansible-static-import
 saltbox-lint --version
@@ -67,6 +69,59 @@ Diff hunks intentionally contain whole changed files and are valid for
 Exit status is **0** for clean input (including successful fixes leaving no
 findings), **1** for lint or YAML parse findings, and **2** for usage, loading,
 writing or reporting failures. The Action preserves those statuses.
+
+`format` is a read-only editor endpoint. It requires exactly one `-` input and
+`--stdin-filename PATH`; `--root` has the same identity and context meaning as
+`check`. The default `--mode canonical` formats only the supplied YAML snapshot
+and does not scan the repository or invoke Git. `--mode lint-fixes` loads the
+snapshot's required repository context, runs the normal analysis, and returns
+the nonconflicting source-edit union verified by the existing conservative fix
+planner. Neither mode writes a source file.
+
+Every successful invocation writes one compact JSON object with this schema:
+
+```json
+{
+  "schema_version": 1,
+  "path": "roles/example/defaults/main.yml",
+  "source_sha256": "b763a98d390ddd84e68a0e80ebd8b77bfde05227cf893e6b8589b0ecc2e2c8a4",
+  "status": "ready",
+  "edits": [
+    {
+      "range": {
+        "start": {"line": 1, "column": 1},
+        "end": {"line": 1, "column": 1}
+      },
+      "span": {"start": 0, "end": 0},
+      "text": "replacement"
+    }
+  ]
+}
+```
+
+`path` is the canonical root-relative slash identity and `source_sha256` hashes
+the exact stdin bytes. Status is `ready`, `unchanged`, or `skipped`; `edits` is
+always an array and is empty for the latter two statuses. A skipped response also
+has a nonempty `reason`. Ranges are half-open, one-based Unicode code-point
+positions matching check JSON, while spans are half-open UTF-8 byte offsets in
+the exact submitted snapshot. Editor consumers must verify the schema, path and
+hash, reject invalid or overlapping spans, and translate code-point positions to
+zero-based UTF-16 positions against that same snapshot before creating editor
+edits.
+
+Canonical formatting uses two-space block indentation, retains empty `{}` and
+`[]`, and normalizes structural spacing. It converts only simple quoted strings
+to double quotes. Mixed quotes, escapes, and Jinja inner quote choices are
+protected; for example, `message: 'He said "hello"'` remains unchanged. Line
+endings and final-newline state are preserved. If a final flow collection has a
+trailing blank gap but no final newline, canonical mode returns `skipped` with a
+specific reason because removing the closing delimiter cannot preserve both the
+gap location and EOF state. It never relocates that gap or adds trailing spaces.
+
+Ready, unchanged, and skipped plans exit **0**. Invalid arguments, root/path
+failures, cancellation, input failures, context loading failures, planner
+failures, and JSON output failures are operational errors on stderr with exit
+**2**. JSON stdout never contains ANSI styling or progress text.
 
 ## Output and fixes
 

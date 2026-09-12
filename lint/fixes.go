@@ -86,6 +86,17 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 	return changes, nil
 }
 
+// PlannedFixEdits projects one verified Change returned by PlanFixes back to
+// ordered edits against its original snapshot. PlanFixes remains the authority
+// that selects, combines and verifies the change.
+func PlannedFixEdits(change Change) ([]Edit, error) {
+	edits, ok := whitespaceChanges(change.Before, change.After)
+	if !ok {
+		return nil, fmt.Errorf("fix change for %s is not a whitespace-only projection", change.Path)
+	}
+	return edits, nil
+}
+
 type whitespaceValidation struct {
 	source   *Source
 	sections map[Edit]bool

@@ -326,6 +326,35 @@ func supportedSource(name string) bool {
 	return ext == ".yaml" || ext == ".yml"
 }
 
+// SourceIdentity is the canonical root and root-relative slash path for one
+// explicitly named YAML source. Resolving identity may inspect path ancestors
+// and project markers, but never scans source files or invokes Git.
+type SourceIdentity struct {
+	Root string
+	Path string
+}
+
+// ResolveSourceIdentity applies the same root, path, source-kind and symlink
+// boundaries as Load without reading the named source or discovering context.
+func ResolveSourceIdentity(root, filename string) (SourceIdentity, error) {
+	resolvedRoot, err := sourceRoot(Options{Root: root, StdinFilename: filename})
+	if err != nil {
+		return SourceIdentity{}, err
+	}
+	absolute, err := absoluteTarget(filename)
+	if err != nil {
+		return SourceIdentity{}, err
+	}
+	relative, err := relativeSource(resolvedRoot, absolute)
+	if err != nil {
+		return SourceIdentity{}, err
+	}
+	if !supportedSource(relative) || isTemplate(relative) {
+		return SourceIdentity{}, fmt.Errorf("unsupported source target %s", absolute)
+	}
+	return SourceIdentity{Root: resolvedRoot, Path: relative}, nil
+}
+
 func directorySource(name string, selected bool) bool {
 	if !supportedSource(name) {
 		return false
