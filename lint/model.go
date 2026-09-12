@@ -17,6 +17,11 @@ type Node struct {
 	Span                            Span
 	Entries                         []Entry
 	Items                           []*Node
+	// Scalar action arguments retain their original scalar's membership and a
+	// byte map after Ansible unquoting/escape decoding. These views are rebuilt
+	// by TasksIn; they never replace or cache entries in the public source tree.
+	scalarOrigin *Node
+	scalarMap    []Span
 }
 type Entry struct{ Key, Value *Node }
 

@@ -38,21 +38,25 @@ type Call struct {
 }
 
 type indexedExpression struct {
-	order      int
-	expression Expression
+	order, within int
+	expression    Expression
 }
 
-type expressionIndex map[*Node][]indexedExpression
+type expressionIndex struct {
+	expressions  map[*Node][]indexedExpression
+	scalarOrders map[*Node][]int
+}
 
 func newExpressionIndex(source *Source) expressionIndex {
-	expressions := Expressions(source)
-	if len(expressions) == 0 {
-		return nil
-	}
-	index := make(expressionIndex)
-	for order, expression := range expressions {
-		index[expression.node] = append(index[expression.node], indexedExpression{order: order, expression: expression})
-	}
+	index := expressionIndex{expressions: make(map[*Node][]indexedExpression), scalarOrders: make(map[*Node][]int)}
+	order := 0
+	walkSourceScalars(source, func(node *Node) {
+		index.scalarOrders[node] = append(index.scalarOrders[node], order)
+		for within, expression := range scalarExpressions(source, node) {
+			index.expressions[node] = append(index.expressions[node], indexedExpression{order: order, within: within, expression: expression})
+		}
+		order++
+	})
 	return index
 }
 
@@ -65,41 +69,26 @@ func Expressions(source *Source) []Expression {
 // Filtering precedes scanning, while traversal from the source documents still
 // enforces source membership and unsafe ancestors. Nil includes every scalar.
 func expressionsMatching(source *Source, include func(*Node) bool) []Expression {
-	if source == nil || len(source.parseDiagnostics) > 0 {
-		return nil
-	}
 	var out []Expression
+	walkSourceScalars(source, func(node *Node) {
+		if include == nil || include(node) {
+			out = append(out, scalarExpressions(source, node)...)
+		}
+	})
+	return out
+}
+
+func walkSourceScalars(source *Source, visit func(*Node)) {
+	if source == nil || len(source.parseDiagnostics) > 0 {
+		return
+	}
 	var walk func(*Node)
 	walk = func(n *Node) {
 		if n == nil || n.Tag == "!unsafe" {
 			return
 		}
-		if n.Kind == "string" && (include == nil || include(n)) {
-			expressions := scanExpressions(n.Value)
-			var spans []Span
-			var ok bool
-			if len(expressions) > 0 {
-				spans, ok = scalarPositions(source, n)
-			}
-			for _, e := range expressions {
-				e.node = n
-				e.mapped = ok
-				if ok {
-					e.Span = mapSpan(spans, e.Span)
-					e.opening = mapSpan(spans, e.opening)
-					if e.Complete {
-						e.closing = mapSpan(spans, e.closing)
-					}
-					for i := range e.Tokens {
-						e.Tokens[i].Span = mapSpan(spans, e.Tokens[i].Span)
-					}
-				} else {
-					e.Span = n.Span
-					e.Complete = false
-					e.Tokens = nil
-				}
-				out = append(out, e)
-			}
+		if n.Kind == "string" {
+			visit(n)
 		}
 		for _, e := range n.Entries {
 			walk(e.Key)
@@ -112,7 +101,32 @@ func expressionsMatching(source *Source, include func(*Node) bool) []Expression 
 	for _, n := range source.Documents {
 		walk(n)
 	}
-	return out
+}
+
+func scalarExpressions(source *Source, node *Node) []Expression {
+	expressions := scanExpressions(node.Value)
+	var positions []Span
+	var ok bool
+	if len(expressions) > 0 {
+		positions, ok = scalarPositions(source, node)
+	}
+	for i := range expressions {
+		e := &expressions[i]
+		e.node, e.mapped = node, ok
+		if !ok {
+			e.Span, e.Complete, e.Tokens = node.Span, false, nil
+			continue
+		}
+		e.Span = mapSpan(positions, e.Span)
+		e.opening = mapSpan(positions, e.opening)
+		if e.Complete {
+			e.closing = mapSpan(positions, e.closing)
+		}
+		for j := range e.Tokens {
+			e.Tokens[j].Span = mapSpan(positions, e.Tokens[j].Span)
+		}
+	}
+	return expressions
 }
 
 func mapSpan(positions []Span, s Span) Span {
@@ -126,6 +140,9 @@ func mapSpan(positions []Span, s Span) Span {
 // Only YAML whitespace folding may differ. No parser-library byte offsets or
 // searches for repeated token spellings are used to guess a token location.
 func scalarPositions(s *Source, n *Node) ([]Span, bool) {
+	if n.scalarOrigin != nil {
+		return n.scalarMap, len(n.scalarMap) == len(n.Value)
+	}
 	raw := string(s.Data[n.Span.Start:n.Span.End])
 	start := 0
 	end := len(raw)

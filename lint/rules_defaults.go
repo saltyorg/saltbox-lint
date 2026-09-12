@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -46,6 +47,11 @@ func expressionsForDeclaration(source *Source, declaration defaultDeclaration) [
 		return nil
 	}
 	nodes := declarationNodes(declaration.Value)
+	for node := range nodes {
+		if node.scalarOrigin != nil {
+			return newDeclarationExpressionQuery(source).expressions(declaration)
+		}
+	}
 	return expressionsMatching(source, func(node *Node) bool { return nodes[node] })
 }
 
@@ -67,7 +73,9 @@ func (query *declarationExpressionQuery) expressions(declaration defaultDeclarat
 	query.generation++
 	query.matches = query.matches[:0]
 	query.collect(declaration.Value)
-	slices.SortFunc(query.matches, func(a, b indexedExpression) int { return a.order - b.order })
+	slices.SortFunc(query.matches, func(a, b indexedExpression) int {
+		return cmp.Or(cmp.Compare(a.order, b.order), cmp.Compare(a.within, b.within))
+	})
 	expressions := make([]Expression, len(query.matches))
 	for i, match := range query.matches {
 		expressions[i] = match.expression
@@ -80,7 +88,11 @@ func (query *declarationExpressionQuery) collect(node *Node) {
 		return
 	}
 	query.visited[node] = query.generation
-	query.matches = append(query.matches, query.index[node]...)
+	if node.scalarOrigin != nil {
+		query.matches = append(query.matches, projectedArgumentExpressions(node, query.index.scalarOrders[node.scalarOrigin])...)
+	} else {
+		query.matches = append(query.matches, query.index.expressions[node]...)
+	}
 	for _, entry := range node.Entries {
 		query.collect(entry.Key)
 		query.collect(entry.Value)

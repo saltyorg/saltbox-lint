@@ -10,6 +10,8 @@ type Task struct {
 	Module                string
 	ModuleSpan            Span
 	FreeForm              string
+	projectedArguments    map[string]*Node
+	unknownArguments      bool
 }
 
 // TasksIn follows only task-list roots and play task lists, then block/rescue/
@@ -62,15 +64,21 @@ func normalizeTask(s *Source, n *Node) Task {
 			}
 			if module != nil && module.Kind == "string" {
 				text := strings.TrimSpace(module.Value)
-				name, tail, _ := strings.Cut(text, " ")
-				// Folded action strings may contain any YAML-decoded whitespace.
-				if fields := strings.Fields(text); len(fields) > 0 {
-					name = fields[0]
-					tail = strings.TrimSpace(text[len(name):])
+				name := text
+				if end := strings.IndexFunc(text, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }); end >= 0 {
+					name = text[:end]
 				}
+				tail := strings.TrimSpace(text[len(name):])
 				task.Module = strings.TrimPrefix(name, "ansible.builtin.")
 				task.FreeForm = tail
 				task.ModuleSpan = scalarTextSpan(s, module, strings.Index(module.Value, name), len(name))
+				task.projectedArguments = scalarActionArguments(s, module, strings.Index(module.Value, name)+len(name), task.Module)
+				task.unknownArguments = task.projectedArguments == nil
+			}
+			// In the legacy action mapping, nested args override the module tail.
+			if nested := entry.Value.Get("args"); nested != nil && !task.unknownArguments {
+				task.projectedArguments = mergeActionArguments(task.projectedArguments, nested, s)
+				task.unknownArguments = task.projectedArguments == nil
 			}
 			return task
 		}
@@ -82,6 +90,8 @@ func normalizeTask(s *Source, n *Node) Task {
 		task.Arguments = entry.Value
 		if entry.Value.Kind == "string" {
 			task.FreeForm = entry.Value.Value
+			task.projectedArguments = scalarActionArguments(s, entry.Value, 0, task.Module)
+			task.unknownArguments = task.projectedArguments == nil
 		}
 		return task
 	}
@@ -119,6 +129,12 @@ func scalarTextSpan(s *Source, n *Node, start, length int) Span {
 	return mapSpan(positions, Span{start, start + length})
 }
 func (t Task) argument(key string) *Node {
+	if t.unknownArguments {
+		return nil
+	}
+	if v, present := t.projectedArguments[key]; present {
+		return v
+	}
 	if v := t.Arguments.Get(key); v != nil {
 		return v
 	}

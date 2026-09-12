@@ -34,6 +34,17 @@ arbitrary data mappings. The checker checks `task.Module` for `import_tasks` or
 `import_role`, selects `include_tasks` or `include_role` for its Expected hint,
 and returns an error diagnostic spanning `task.ModuleSpan` in `s.Path`.
 
+`task.argument(key)` also projects legacy scalar `key=value` arguments, retaining
+their original value spans and expression provenance. Precedence follows Ansible:
+task `args` are defaults, action mapping fields override those defaults, inline
+module arguments override those fields, and nested action `args` override the
+inline arguments. Quoting, Jinja delimiters and recognized escapes belong to this
+shared analysis, not individual rules. Command payloads stay in `FreeForm`; only
+Ansible's recognized command options become named arguments. Malformed tails and
+values that cannot be mapped reliably provide no argument evidence. Named Unicode
+escapes are currently declined. Projections and expression queries belong to one
+analysis invocation and never replace nodes in the mutable public source tree.
+
 ```yaml
 # Invalid task (tasks/main.yml)
 - ansible.builtin.import_tasks: setup.yml

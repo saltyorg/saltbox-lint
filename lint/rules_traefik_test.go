@@ -164,6 +164,63 @@ func TestTraefikAdapterDefaultOwnershipAndSelection(t *testing.T) {
 		}
 	}
 }
+
+// Scalar include arguments must identify the same adapter as mapping arguments;
+// otherwise both the missing defaults and missing forwarding checks are skipped.
+func TestTraefikScalarActionAdapterContract(t *testing.T) {
+	for _, action := range []string{
+		"include_role: {name: nginx}",
+		"action: include_role name=nginx",
+		"local_action: ansible.builtin.include_role name='nginx'",
+		"action:\n    module: include_role name=nginx",
+		"action: >-\n    include_role\n    name=nginx",
+	} {
+		t.Run(action, func(t *testing.T) {
+			tasks := "- " + action + "\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n"
+			p := traefikProject(map[string]string{traefikDefaultsPath: "example_role_nginx_web_subdomain: nginx\n", traefikTasksPath: tasks})
+			full := Analyze(p, traefikRules("traefik-adapter-contract"))
+			if len(full) != 2 {
+				t.Fatalf("diagnostics=%+v, want two adapter contract findings", full)
+			}
+			for _, selected := range []string{traefikDefaultsPath, traefikTasksPath} {
+				p.Selected = map[string]bool{selected: true}
+				ds := Analyze(p, traefikRules("traefik-adapter-contract"))
+				want := slices.DeleteFunc(slices.Clone(full), func(d Diagnostic) bool { return d.Path != selected })
+				if len(ds) != 1 || !reflect.DeepEqual(ds, want) {
+					t.Fatalf("selected=%s diagnostics=%+v, want=%+v", selected, ds, want)
+				}
+			}
+		})
+	}
+}
+
+func TestTraefikScalarActionRendererArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		want         int
+	}{
+		{"copy output", "action: copy dest=/router.yml content='{{ traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 0},
+		{"action escape creates output", "action: copy content='\\x7b\\x7b traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 0},
+		{"labels output", "action: community.docker.docker_container labels={{ docker_labels_common }}", 0},
+		{"sibling cannot supply content", "action: copy content=literal other='{{ traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 1},
+		{"sibling cannot supply labels", "action: community.docker.docker_container labels=literal other={{ docker_labels_common }}", 1},
+		{"literal text", "action: copy content='traefik_middleware_api example_role_traefik_api_endpoint'", 1},
+		{"unsafe action", "action: !unsafe copy content='{{ traefik_middleware_api }} {{ example_role_traefik_api_endpoint }}'", 1},
+		{"template file", "action: template src=router.yml.j2 dest=/router.yml", 0},
+		{"docker include", "action: include_tasks file='{{ resources_tasks_path }}/docker/create_docker_container.yml' apply=unused", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := traefikProject(map[string]string{
+				traefikDefaultsPath: traefikFixture(t, "api.good.yml"),
+				traefikTasksPath:    "- " + tc.action + "\n  when: example_role_traefik_api_enabled\n",
+				traefikTemplatePath: traefikFixture(t, "renderer.good.j2"),
+			})
+			if ds := Analyze(p, traefikRules("traefik-renderer-contract")); len(ds) != tc.want {
+				t.Fatalf("diagnostics=%+v, want=%d", ds, tc.want)
+			}
+		})
+	}
+}
 func TestTraefikRenderersNeedLiveOutputConsumption(t *testing.T) {
 	defaults := traefikFixture(t, "api.good.yml")
 	good := traefikFixture(t, "renderer.good.j2")
