@@ -42,6 +42,9 @@ export class EditorIntegration implements vscode.Disposable {
   readonly onDidChangeEligibility = this.eligibilityChanged.event;
   private readonly rootListener: vscode.Disposable;
   private readonly fileListener: vscode.Disposable;
+  private readonly displayListeners: vscode.Disposable;
+  private activeFile = vscode.window.activeTextEditor?.document.uri;
+  private activeProjectOnly = this.displayActiveProjectOnly();
   private readonly lint = new Scheduler();
   private readonly formatting = new Scheduler();
   private readonly collection =
@@ -81,12 +84,39 @@ export class EditorIntegration implements vscode.Disposable {
       for (const [uri, owner] of this.documentFolders)
         if (owner === folder) this.sourceOwners.delete(uri);
       this.refreshFolders(new Set([folder]));
+      this.repaint();
       this.eligibilityChanged.fire();
     });
     this.fileListener = this.roots.onDidChangeFile((uri) =>
       this.queueFile(uri),
     );
+    if (this.activeFile?.scheme !== "file") this.activeFile = undefined;
+    this.displayListeners = vscode.Disposable.from(
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor?.document.uri.scheme !== "file") return;
+        this.activeFile = editor.document.uri;
+        this.repaint();
+      }),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!event.affectsConfiguration("saltboxLint.activeProjectOnly"))
+          return;
+        this.activeProjectOnly = this.displayActiveProjectOnly();
+        this.repaint();
+      }),
+    );
     this.roots.configure();
+  }
+  private displayActiveProjectOnly(): boolean {
+    return vscode.workspace
+      .getConfiguration("saltboxLint")
+      .get<boolean>("activeProjectOnly", true);
+  }
+  private repaint(): void {
+    const uris = new Set(this.documents.keys());
+    for (const scan of this.scans.values())
+      for (const uri of scan.keys()) uris.add(uri);
+    this.collection.forEach((uri) => uris.add(uri.toString()));
+    for (const uri of uris) this.publish(vscode.Uri.parse(uri));
   }
   private eligible(document: vscode.TextDocument): boolean {
     return (
@@ -114,6 +144,7 @@ export class EditorIntegration implements vscode.Disposable {
   }
   configureRoots(): void {
     this.roots.configure();
+    this.repaint();
   }
   providerDocuments(): vscode.TextDocument[] {
     return vscode.workspace.textDocuments.filter(
@@ -230,6 +261,17 @@ export class EditorIntegration implements vscode.Disposable {
   }
   private publish(uri: vscode.Uri): void {
     const key = uri.toString();
+    const folder = this.roots.folder(uri)?.uri.toString();
+    const activeFolder =
+      this.activeFile && this.roots.folder(this.activeFile)?.uri.toString();
+    if (
+      !folder ||
+      !this.roots.get(folder) ||
+      (this.activeProjectOnly && this.activeFile && folder !== activeFolder)
+    ) {
+      this.collection.delete(uri);
+      return;
+    }
     const document = vscode.workspace.textDocuments.find(
       (doc) => doc.uri.toString() === key,
     );
@@ -247,9 +289,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.collection.delete(uri);
       return;
     }
-    const folder = this.roots.folder(uri);
-    const diagnostics =
-      folder && this.scans.get(folder.uri.toString())?.get(key);
+    const diagnostics = this.scans.get(folder)?.get(key);
     if (diagnostics) {
       this.collection.set(uri, diagnostics);
       return;
@@ -424,6 +464,7 @@ export class EditorIntegration implements vscode.Disposable {
         group.push(finding);
         grouped.set(finding.path, group);
       }
+      const relatedRevision = this.relatedRevision;
       const entries = new Map<string, vscode.Diagnostic[]>();
       const accepted = new Set<string>();
       for (const [relative, findings] of grouped) {
@@ -457,6 +498,10 @@ export class EditorIntegration implements vscode.Disposable {
       if (!current()) return;
       await this.synchronizeSources();
       if (!current()) return;
+      if (relatedRevision !== this.relatedRevision)
+        for (const diagnostics of entries.values())
+          for (const diagnostic of diagnostics)
+            diagnostic.relatedInformation = undefined;
       const previous = this.scans.get(folderKey);
       this.scans.set(
         folderKey,
@@ -644,16 +689,19 @@ export class EditorIntegration implements vscode.Disposable {
     if (identity) this.publish(vscode.Uri.file(identity.filename));
     // Saved related coordinates may now point into a dirty buffer. Primary
     // snapshots and proposals in other documents remain valid.
-    this.collection.forEach((uri, diagnostics) => {
-      if (diagnostics.some((d) => d.relatedInformation?.length))
-        this.collection.set(
-          uri,
-          diagnostics.map((d) => {
-            d.relatedInformation = undefined;
-            return d;
-          }),
-        );
-    });
+    const changed = new Set<string>();
+    const invalidate = (uri: string, diagnostics: vscode.Diagnostic[]) => {
+      for (const diagnostic of diagnostics) {
+        if (!diagnostic.relatedInformation?.length) continue;
+        diagnostic.relatedInformation = undefined;
+        changed.add(uri);
+      }
+    };
+    for (const [uri, result] of this.documents)
+      invalidate(uri, result.diagnostics);
+    for (const scan of this.scans.values())
+      for (const [uri, diagnostics] of scan) invalidate(uri, diagnostics);
+    for (const uri of changed) this.publish(vscode.Uri.parse(uri));
   }
   open(document: vscode.TextDocument): void {
     this.closedTabs.delete(document.uri.toString());
@@ -671,6 +719,12 @@ export class EditorIntegration implements vscode.Disposable {
     this.eligibilityChanged.fire();
     this.change(document);
     this.documents.delete(key);
+    // A later display repaint must not restore the saved scan behind a closed tab.
+    const canonical = this.sourceOwners.get(key)?.filename;
+    for (const scan of this.scans.values()) {
+      scan.delete(key);
+      if (canonical) scan.delete(vscode.Uri.file(canonical).toString());
+    }
     this.collection.delete(document.uri);
     if (document.isClosed) {
       this.closedTabs.delete(key);
@@ -931,6 +985,7 @@ export class EditorIntegration implements vscode.Disposable {
     this.disposed = true;
     this.rootListener.dispose();
     this.fileListener.dispose();
+    this.displayListeners.dispose();
     this.roots.dispose();
     this.eligibilityChanged.dispose();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);

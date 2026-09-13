@@ -45,6 +45,12 @@
     "configuration": {
       "title": "Saltbox Lint",
       "properties": {
+        "saltboxLint.activeProjectOnly": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Show cached Saltbox Lint diagnostics only for the active file's project. Disable to show all marked projects. Also hides inactive-project squiggles; checking continues in all marked projects."
+        },
         "saltboxLint.root": {
           "type": "string",
           "default": "",

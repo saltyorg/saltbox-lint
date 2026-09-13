@@ -6,6 +6,8 @@
 - Check Saltbox and Sandbox YAML on open/save or through document/workspace commands.
 - Scan marked roots at startup, scope save/watch checks to changed files, and retain
   displayed diagnostics while editing or awaiting replacement results.
+- Show cached diagnostics for the active project by default, with an option to
+  show all marked projects; preserve background checks and panel focus context.
 - Apply verified quick fixes, document Fix All and canonical Format Document edits
   with undo/redo and snapshot validation.
 - Run a bundled native CLI beside trusted workspace files, including remote hosts.

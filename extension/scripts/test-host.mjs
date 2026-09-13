@@ -31,6 +31,30 @@ for (const name of ["one", "two"]) {
   writeFileSync(resolve(root, name, ".gitignore"), "ignored.yml\n");
   writeFileSync(resolve(root, name, "ignored.yml"), 'value: "{{ value\n }}"\n');
 }
+if (process.env.SALTBOX_TEST_ACTIVE_PROJECT === "1") {
+  for (const name of ["one", "two"]) {
+    writeFileSync(resolve(root, name, "README.md"), "Project context\n");
+    writeFileSync(
+      resolve(root, name, "roles/example/defaults/saved.yml"),
+      'value: "{{ saved\n }}"\n',
+    );
+  }
+  writeFileSync(
+    resolve(root, "one/roles/example/defaults/closed.yml"),
+    'value: "{{ closed\n }}"\n',
+  );
+  for (const name of [
+    "related.yml",
+    "related-closed.yml",
+    "a-related.yml",
+    "z-gate.yml",
+  ])
+    writeFileSync(
+      resolve(root, "one/roles/example/defaults", name),
+      "################################\n# Settings\n################################\nfirst: 1\n" +
+        "################################\n# Settings\n################################\nsecond: 2\n",
+    );
+}
 if (process.env.SALTBOX_TEST_REGRESSIONS === "1") {
   for (const name of [
     "independent.yml",
@@ -51,7 +75,13 @@ writeFileSync(
   workspace,
   JSON.stringify({
     folders: [{ path: "one" }, { path: "two" }],
-    settings: { "files.autoSave": "off", "editor.formatOnSave": false },
+    settings: {
+      "files.autoSave": "off",
+      "editor.formatOnSave": false,
+      ...(process.env.SALTBOX_TEST_ACTIVE_PROJECT === "1"
+        ? {}
+        : { "saltboxLint.activeProjectOnly": false }),
+    },
   }),
 );
 const untrusted = process.env.SALTBOX_TEST_UNTRUSTED === "1";

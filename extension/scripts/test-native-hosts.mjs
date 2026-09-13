@@ -11,6 +11,8 @@ for (const version of ["1.100.0", "1.137.0"]) {
     "regressions",
     "markers",
     "save-scope",
+    "active-project",
+    "active-project-cache",
     "untrusted",
     "disabled",
   ]) {
@@ -23,9 +25,21 @@ for (const version of ["1.100.0", "1.137.0"]) {
         SALTBOX_TEST_VSIX: vsix,
         SALTBOX_TEST_REGRESSIONS: mode === "regressions" ? "1" : "0",
         SALTBOX_TEST_MARKERS: mode === "markers" ? "1" : "0",
-        SALTBOX_TEST_SAVE_SCOPE: mode === "save-scope" ? "1" : "0",
+        SALTBOX_TEST_SAVE_SCOPE: [
+          "save-scope",
+          "active-project-cache",
+        ].includes(mode)
+          ? "1"
+          : "0",
+        SALTBOX_TEST_ACTIVE_PROJECT: mode.startsWith("active-project")
+          ? "1"
+          : "0",
         SALTBOX_TEST_UNTRUSTED: mode === "untrusted" ? "1" : "0",
-        SALTBOX_TEST_DISABLED: ["disabled", "save-scope"].includes(mode)
+        SALTBOX_TEST_DISABLED: [
+          "disabled",
+          "save-scope",
+          "active-project-cache",
+        ].includes(mode)
           ? "1"
           : "0",
       },

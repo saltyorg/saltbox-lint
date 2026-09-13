@@ -39,6 +39,22 @@ pull or other disk operation recheck the changed files; closed files use bounded
 selected-path batches without opening editor tabs. There is no separate Git-pull
 trigger or Git polling. Startup and background failures go to the Output channel.
 
+By default, **Saltbox Lint: Active Project Only** (`saltboxLint.activeProjectOnly`)
+shows this extension's Problems entries and squiggles for the active file's
+project. Any file type selects its project, including a README. An unmarked
+workspace folder hides Saltbox Lint findings. Before selecting a file, the view
+shows all marked projects; focusing a panel or a non-file editor then retains
+the last file's project. Turn the setting off at window/workspace level to show
+all marked projects.
+
+Switching files or this setting only republishes cached findings. Startup and
+background checks still cover all marked projects, and other extensions' findings
+are unaffected. VS Code controls Problems scrolling through its native
+`problems.autoReveal` setting. After switching projects, the refreshed list may
+not scroll to the active file immediately; switching files within that project
+uses VS Code's usual auto-reveal behavior. The extension does not pin files,
+change Problems sorting, move focus, or rewrite your VS Code settings.
+
 Quick fixes say “this file” because a shared proposal may fix several findings
 in the document. Fixes are checked against the current document before applying.
 They use VS Code edits and preserve undo/redo. **Format Document With… → Saltbox
