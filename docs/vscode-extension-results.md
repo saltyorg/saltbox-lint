@@ -533,3 +533,13 @@ raw runs, UI observations and artifact identities are retained under
 unexplained; the shared-memory adjustment does not establish its cause. SDK/Git
 noise and the foreign-code-action fixture correction remain recorded. No
 benchmarks, consumer edits, user-setting changes or remote mutations were made.
+
+## Automatic rule fixes — 2026-09-13
+
+The later local packages identify code `1d52c2f` and add seven conservative rule
+fixes through the existing CLI/editor authority. Full build, 878-file corpus
+qualification, copy-only CLI writes, measured checking costs and all sixteen
+installed-package runs are recorded in
+[Automatic fix qualification](automatic-fix-results.md). That record supersedes
+the preceding package identity for current local testing while preserving its
+historical results.
