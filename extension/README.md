@@ -27,7 +27,7 @@ a failed check reports its error and retains the last findings. Typing does not
 start checks. Commands are available from the Command Palette:
 
 - **Saltbox Lint: Check Document** checks the current buffer, including unsaved edits.
-- **Saltbox Lint: Check Workspace (Saved Files)** checks each marked source root on disk.
+- **Saltbox Lint: Check Workspace** checks each marked source root on disk.
   Clean open documents are rechecked too; dirty buffers retain their displayed
   findings until saved or explicitly checked, including opened ignored files.
 - **Saltbox Lint: Fix All in Document** requests verified conservative lint fixes.
