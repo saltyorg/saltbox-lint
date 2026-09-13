@@ -274,6 +274,10 @@ export async function runRegressions(): Promise<void> {
       await mkdir(join(diskRoot, "roles/example/defaults"), {
         recursive: true,
       });
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.file(join(diskRoot, ".saltbox-lint")),
+        new Uint8Array(),
+      );
       spawnSync("git", ["init", "-q", diskRoot]);
       try {
         await symlink(
@@ -367,6 +371,10 @@ export async function runRegressions(): Promise<void> {
     "I6 parent root refresh preserves nested open diagnostics",
     async () => {
       const nested = vscode.Uri.joinPath(roots[0].uri, "roles/example");
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.joinPath(nested, ".saltbox-lint"),
+        new Uint8Array(),
+      );
       const index = vscode.workspace.workspaceFolders!.length;
       await updateFolders(index, 0, { uri: nested });
       const editor = new EditorIntegration(
@@ -401,6 +409,10 @@ export async function runRegressions(): Promise<void> {
     "I6 installed parent save preserves nested document diagnostics",
     async () => {
       const nested = vscode.Uri.joinPath(roots[0].uri, "roles/example");
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.joinPath(nested, ".saltbox-lint"),
+        new Uint8Array(),
+      );
       const index = vscode.workspace.workspaceFolders!.length;
       await updateFolders(index, 0, { uri: nested });
       try {
@@ -467,6 +479,10 @@ export async function runRegressions(): Promise<void> {
     async () => {
       const folder = vscode.Uri.joinPath(roots[0].uri, "roles/example/tasks");
       await vscode.workspace.fs.createDirectory(folder);
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.joinPath(folder, ".saltbox-lint"),
+        new Uint8Array(),
+      );
       const source =
         '################################\n# Settings\n################################\nvalue: "{{ a\n | f }}"\n';
       const document = await open(

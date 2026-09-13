@@ -56,6 +56,10 @@ export async function run(): Promise<void> {
     console.log("PASS installed extension disabled");
     return;
   }
+  if (process.env.SALTBOX_TEST_MARKERS === "1") {
+    const { runMarkers } = await import("./markers.ts");
+    return runMarkers();
+  }
   if (process.env.SALTBOX_TEST_PROFILE === "1") {
     const { runProfile } = await import("./profile.ts");
     return runProfile();
@@ -90,13 +94,16 @@ export async function run(): Promise<void> {
   }
   const extension = vscode.extensions.getExtension("saltyorg.saltbox-lint");
   assert.ok(extension);
-  await extension.activate();
   const roots = vscode.workspace.workspaceFolders!;
   assert.equal(roots.length, 2);
   const document = await vscode.workspace.openTextDocument(
     vscode.Uri.joinPath(roots[0].uri, "roles/example/defaults/main.yml"),
   );
   await vscode.window.showTextDocument(document);
+  await waitFor(
+    () => extension.isActive,
+    "marked workspace activates without a manual command",
+  );
   await waitFor(
     () => diagnostics(document.uri).some((d) => d.code === "jinja-layout"),
     "open should publish real CLI Jinja diagnostics",

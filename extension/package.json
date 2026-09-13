@@ -21,8 +21,7 @@
     "virtualWorkspaces": false
   },
   "activationEvents": [
-    "onLanguage:yaml",
-    "onLanguage:ansible"
+    "workspaceContains:**/.saltbox-lint"
   ],
   "categories": [
     "Linters",

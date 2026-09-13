@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { canonicalRoot, identify, resolveSource } from "./identity.ts";
+import { identify, resolveSource } from "./identity.ts";
 import type { Identity } from "./identity.ts";
 import { hash, parseCheck, parseFormat, SnapshotIndex } from "./protocol.ts";
 import type {
@@ -14,6 +14,7 @@ import type {
 import { runProcess } from "./process.ts";
 import { range, renderDiagnostics } from "./diagnostics.ts";
 import { Scheduler } from "./scheduler.ts";
+import { MarkedRoots } from "./roots.ts";
 
 interface Snapshot extends Identity {
   uri: vscode.Uri;
@@ -36,6 +37,10 @@ function textEdits(edits: EditorEdit[]): vscode.TextEdit[] {
 }
 
 export class EditorIntegration implements vscode.Disposable {
+  private readonly roots = new MarkedRoots();
+  private readonly eligibilityChanged = new vscode.EventEmitter<void>();
+  readonly onDidChangeEligibility = this.eligibilityChanged.event;
+  private readonly rootListener: vscode.Disposable;
   private readonly lint = new Scheduler();
   private readonly formatting = new Scheduler();
   private readonly collection =
@@ -61,6 +66,13 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly executable: string;
   constructor(executable: string) {
     this.executable = executable;
+    this.rootListener = this.roots.onDidChange((folder) => {
+      for (const [uri, owner] of this.documentFolders)
+        if (owner === folder) this.sourceOwners.delete(uri);
+      this.refreshFolders(new Set([folder]));
+      this.eligibilityChanged.fire();
+    });
+    this.roots.configure();
   }
   private eligible(document: vscode.TextDocument): boolean {
     return (
@@ -71,7 +83,9 @@ export class EditorIntegration implements vscode.Disposable {
       document.uri.scheme === "file" &&
       ["yaml", "ansible"].includes(document.languageId) &&
       /\.ya?ml$/i.test(document.uri.path) &&
-      !!vscode.workspace.getWorkspaceFolder(document.uri)
+      !!this.roots.get(
+        vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString() ?? "",
+      )
     );
   }
   private rootRevision(folder: string): number {
@@ -84,16 +98,22 @@ export class EditorIntegration implements vscode.Disposable {
       this.documentRevisions.set(document, ++this.nextRevision);
     return this.documentRevisions.get(document)!;
   }
-  private async root(folder: vscode.WorkspaceFolder): Promise<string> {
-    const revision = this.rootRevision(folder.uri.toString());
-    const root = await canonicalRoot(
-      folder.uri.fsPath,
-      vscode.workspace
-        .getConfiguration("saltboxLint", folder.uri)
-        .get<string>("root", ""),
+  configureRoots(): void {
+    this.roots.configure();
+  }
+  providerDocuments(): vscode.TextDocument[] {
+    return vscode.workspace.textDocuments.filter(
+      (document) =>
+        this.eligible(document) &&
+        this.sourceOwners.has(document.uri.toString()),
     );
-    if (revision === this.rootRevision(folder.uri.toString()))
-      this.canonicalRoots.set(folder.uri.toString(), root);
+  }
+  private async root(
+    folder: vscode.WorkspaceFolder,
+  ): Promise<string | undefined> {
+    await this.roots.ready();
+    const root = this.roots.get(folder.uri.toString());
+    if (root) this.canonicalRoots.set(folder.uri.toString(), root);
     return root;
   }
   private rememberSource(
@@ -101,6 +121,7 @@ export class EditorIntegration implements vscode.Disposable {
     identity: Identity,
   ): void {
     this.sourceOwners.set(document.uri.toString(), identity);
+    this.eligibilityChanged.fire();
     const canonical = vscode.Uri.file(identity.filename);
     if (canonical.toString() !== document.uri.toString())
       this.publish(canonical);
@@ -129,10 +150,9 @@ export class EditorIntegration implements vscode.Disposable {
       if (!folder) continue;
       const revision = this.rootRevision(folder.uri.toString());
       try {
-        const identity = await identify(
-          await this.root(folder),
-          document.uri.fsPath,
-        );
+        const root = await this.root(folder);
+        if (!root) continue;
+        const identity = await identify(root, document.uri.fsPath);
         if (
           revision === this.rootRevision(folder.uri.toString()) &&
           !document.isClosed
@@ -152,6 +172,7 @@ export class EditorIntegration implements vscode.Disposable {
   private async snapshot(
     document: vscode.TextDocument,
   ): Promise<Snapshot | undefined> {
+    await this.roots.ready();
     if (!this.eligible(document)) return;
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
@@ -161,10 +182,11 @@ export class EditorIntegration implements vscode.Disposable {
     this.documentFolders.set(document.uri.toString(), folder);
     const version = document.version;
     const text = document.getText();
-    const identity = await identify(
-      await this.root(vscode.workspace.getWorkspaceFolder(document.uri)!),
-      document.uri.fsPath,
+    const root = await this.root(
+      vscode.workspace.getWorkspaceFolder(document.uri)!,
     );
+    if (!root) return;
+    const identity = await identify(root, document.uri.fsPath);
     const snapshot = {
       ...identity,
       uri: document.uri,
@@ -224,6 +246,11 @@ export class EditorIntegration implements vscode.Disposable {
     if (manual) void vscode.window.showErrorMessage(`Saltbox Lint: ${message}`);
   }
   async check(document: vscode.TextDocument, manual = false): Promise<void> {
+    if (manual) {
+      const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+      if (folder) await this.roots.refresh(folder.uri.toString());
+    }
+    await this.roots.ready();
     if (!this.eligible(document)) return;
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
@@ -313,12 +340,15 @@ export class EditorIntegration implements vscode.Disposable {
   }
   async checkWorkspace(): Promise<void> {
     if (!vscode.workspace.isTrusted || this.disposed) return;
+    await this.roots.refresh();
+    await this.roots.ready();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       if (folder.uri.scheme !== "file") continue;
       const folderKey = folder.uri.toString();
       const revision = this.rootRevision(folderKey);
       try {
         const root = await this.root(folder);
+        if (!root || revision !== this.rootRevision(folderKey)) continue;
         const wire = await this.lint.submit(
           `workspace:${folder.uri}`,
           0,
@@ -346,6 +376,8 @@ export class EditorIntegration implements vscode.Disposable {
         for (const [relative, findings] of grouped) {
           const filename = await resolveSource(root, relative);
           const uri = vscode.Uri.file(filename);
+          const owner = vscode.workspace.getWorkspaceFolder(uri);
+          if (owner && owner.uri.toString() !== folderKey) continue;
           const index = new SnapshotIndex(await readFile(filename, "utf8"));
           for (const fix of report.fixes.values())
             if (fix.path === relative) index.edits(fix.edits);
@@ -418,6 +450,8 @@ export class EditorIntegration implements vscode.Disposable {
     id: string,
     reportId: string,
   ): Promise<void> {
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (folder) await this.roots.refresh(folder.uri.toString());
     const document = vscode.workspace.textDocuments.find(
       (doc) => doc.uri.toString() === uri.toString(),
     );
@@ -502,6 +536,7 @@ export class EditorIntegration implements vscode.Disposable {
       .getWorkspaceFolder(document.uri)
       ?.uri.toString();
     if (!folder) return;
+    await this.roots.refresh(folder);
     const revision = this.rootRevision(folder);
     const documentRevision = this.documentRevision(document);
     const edits = await this.format(document, "lint-fixes");
@@ -561,6 +596,7 @@ export class EditorIntegration implements vscode.Disposable {
     );
     if (!document.isClosed && stillOwned) return;
     this.closedTabs.add(key);
+    this.eligibilityChanged.fire();
     this.change(document);
     this.collection.delete(document.uri);
     if (document.isClosed) {
@@ -594,6 +630,9 @@ export class EditorIntegration implements vscode.Disposable {
         }
       }
     }
+    this.refreshFolders(affected);
+  }
+  private refreshFolders(affected: Set<string>): void {
     for (const folder of affected) {
       this.rootRevisions.set(folder, ++this.nextRevision);
       this.pendingRefresh.add(folder);
@@ -625,10 +664,12 @@ export class EditorIntegration implements vscode.Disposable {
       this.pendingRefresh.clear();
       for (const document of vscode.workspace.textDocuments) {
         const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        const result = this.documents.get(document.uri.toString());
         if (
           folder &&
           pending.has(folder.uri.toString()) &&
-          this.eligible(document)
+          this.eligible(document) &&
+          (!result || !this.current(document, result.snapshot))
         )
           void this.check(document);
       }
@@ -636,6 +677,9 @@ export class EditorIntegration implements vscode.Disposable {
   }
   dispose(): void {
     this.disposed = true;
+    this.rootListener.dispose();
+    this.roots.dispose();
+    this.eligibilityChanged.dispose();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.lint.dispose();
     this.formatting.dispose();

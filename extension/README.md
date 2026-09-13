@@ -5,12 +5,26 @@ Requires VS Code 1.100 or newer and Git for repository-aware checks. The bundled
 CLI runs beside workspace files, including Remote SSH, WSL, and Dev Containers.
 Untrusted and virtual workspaces are unsupported.
 
-Open or save a workspace `.yml` / `.yaml` document in YAML or Ansible language
+Create an empty regular file named `.saltbox-lint` in each source root to opt
+that root in. The source root is the workspace folder by default, or the path
+selected by `saltboxLint.root`. Marker contents are ignored; a directory or
+symlink with that name does not opt in. The same requirement applies on native
+and remote workspace hosts. The extension never creates markers automatically.
+
+When adding the first marker to an already open workspace, run **Developer:
+Reload Window** if the extension has not activated yet. For an override outside
+the workspace, run **Saltbox Lint: Check Document** or **Check Workspace** once
+to activate the extension and its marker watchers; the workspace activation
+search cannot see an external marker. The same command/reload fallback applies
+if a marker is created immediately while root configuration and its watchers
+are being set up. Manual commands refresh marker eligibility before acting.
+
+Open or save a marked workspace `.yml` / `.yaml` document in YAML or Ansible language
 mode to check it. Editing clears stale findings; checking does not run on every
 keystroke. Commands are available from the Command Palette:
 
 - **Saltbox Lint: Check Document** checks the current buffer, including unsaved edits.
-- **Saltbox Lint: Check Workspace (Saved Files)** checks each workspace root on disk.
+- **Saltbox Lint: Check Workspace (Saved Files)** checks each marked source root on disk.
   Open-buffer diagnostics remain separate, including explicitly opened ignored files.
 - **Saltbox Lint: Fix All in Document** requests verified conservative lint fixes.
 
@@ -24,8 +38,13 @@ remain installed.
 
 `Saltbox Lint: Root` (`saltboxLint.root`) is a folder-scoped source-root override,
 absolute or relative to its workspace folder. Empty uses that folder. Each root
-has independent source identities. Symlink paths retain their originating editor
-buffer while the CLI receives canonical disk paths. Files outside the selected
+has independent source identities and its own marker requirement, including
+nested workspace folders. Unmarked roots provide no diagnostics, quick fixes
+or formatter, and manual commands do no work for them. Removing or renaming
+the marker clears that root's diagnostics, cancels pending work and withdraws its
+providers. Re-adding it starts fresh checks once the extension is loaded. Symlink
+paths retain their originating editor buffer while the CLI receives canonical
+disk paths. Files outside the selected
 source root are rejected.
 
 Operational errors and skipped-format reasons appear in the **Saltbox Lint**

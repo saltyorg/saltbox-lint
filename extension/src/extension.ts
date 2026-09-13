@@ -1,11 +1,8 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import { EditorIntegration, tabDocumentUris } from "./editor.ts";
+import { rootMarker } from "./roots.ts";
 
-const selector: vscode.DocumentSelector = [
-  { scheme: "file", language: "yaml", pattern: "**/*.{yml,yaml}" },
-  { scheme: "file", language: "ansible", pattern: "**/*.{yml,yaml}" },
-];
 export function activate(context: vscode.ExtensionContext): void {
   if (!vscode.workspace.isTrusted) return;
   const editor = new EditorIntegration(
@@ -16,7 +13,66 @@ export function activate(context: vscode.ExtensionContext): void {
       ),
     ),
   );
-  context.subscriptions.push(editor);
+  const providers = new Map<
+    string,
+    { language: string; disposable: vscode.Disposable }
+  >();
+  const updateProviders = () => {
+    const documents = new Map(
+      editor
+        .providerDocuments()
+        .map((document) => [document.uri.toString(), document]),
+    );
+    for (const [key, registration] of providers) {
+      if (documents.get(key)?.languageId === registration.language) continue;
+      registration.disposable.dispose();
+      providers.delete(key);
+    }
+    for (const [key, document] of documents) {
+      if (providers.has(key)) continue;
+      const selector: vscode.DocumentSelector = [
+        {
+          scheme: "file",
+          language: document.languageId,
+          pattern: new vscode.RelativePattern(
+            vscode.Uri.file(path.dirname(document.uri.fsPath)),
+            path.basename(document.uri.fsPath).replace(/[?*{}[\]]/g, "[$&]"),
+          ),
+        },
+      ];
+      providers.set(key, {
+        language: document.languageId,
+        disposable: vscode.Disposable.from(
+          vscode.languages.registerCodeActionsProvider(
+            selector,
+            {
+              provideCodeActions: (document, range) =>
+                editor.actions(document, range),
+            },
+            {
+              providedCodeActionKinds: [
+                vscode.CodeActionKind.QuickFix,
+                vscode.CodeActionKind.SourceFixAll.append("saltboxLint"),
+              ],
+            },
+          ),
+          vscode.languages.registerDocumentFormattingEditProvider(selector, {
+            provideDocumentFormattingEdits: (document, _options, token) =>
+              editor.format(document, "canonical", token),
+          }),
+        ),
+      });
+    }
+  };
+  context.subscriptions.push(
+    editor,
+    editor.onDidChangeEligibility(updateProviders),
+    new vscode.Disposable(() => {
+      for (const registration of providers.values())
+        registration.disposable.dispose();
+      providers.clear();
+    }),
+  );
   context.subscriptions.push(
     vscode.commands.registerCommand("saltboxLint.checkDocument", () => {
       const document = vscode.window.activeTextEditor?.document;
@@ -33,23 +89,6 @@ export function activate(context: vscode.ExtensionContext): void {
       (uri: vscode.Uri, hash: string, id: string, reportId: string) =>
         editor.applyShared(uri, hash, id, reportId),
     ),
-    vscode.languages.registerCodeActionsProvider(
-      selector,
-      {
-        provideCodeActions: (document, range) =>
-          editor.actions(document, range),
-      },
-      {
-        providedCodeActionKinds: [
-          vscode.CodeActionKind.QuickFix,
-          vscode.CodeActionKind.SourceFixAll.append("saltboxLint"),
-        ],
-      },
-    ),
-    vscode.languages.registerDocumentFormattingEditProvider(selector, {
-      provideDocumentFormattingEdits: (document, _options, token) =>
-        editor.format(document, "canonical", token),
-    }),
     vscode.window.tabGroups.onDidChangeTabs((event) => {
       for (const tab of event.closed)
         for (const uri of tabDocumentUris(tab)) {
@@ -77,18 +116,27 @@ export function activate(context: vscode.ExtensionContext): void {
       editor.close(document),
     ),
     vscode.workspace.onDidRenameFiles((event) =>
-      editor.refresh(event.files.flatMap((file) => [file.oldUri, file.newUri])),
-    ),
-    vscode.workspace.onDidChangeWorkspaceFolders((event) =>
       editor.refresh(
-        [...event.added, ...event.removed].map((folder) => folder.uri),
+        event.files
+          .filter((file) =>
+            [file.oldUri, file.newUri].every(
+              (uri) => path.basename(uri.fsPath) !== rootMarker,
+            ),
+          )
+          .flatMap((file) => [file.oldUri, file.newUri]),
       ),
     ),
+    vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+      editor.configureRoots();
+      editor.refresh(
+        [...event.added, ...event.removed].map((folder) => folder.uri),
+      );
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       const affected = (vscode.workspace.workspaceFolders ?? []).filter(
         (folder) => event.affectsConfiguration("saltboxLint.root", folder.uri),
       );
-      if (affected.length) editor.refresh(affected.map((folder) => folder.uri));
+      if (affected.length) editor.configureRoots();
     }),
   );
   const watcher = vscode.workspace.createFileSystemWatcher("**/*.{yml,yaml}");

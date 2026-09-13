@@ -2,6 +2,7 @@
 
 ## 0.1.0 — unreleased
 
+- Require a `.saltbox-lint` source-root marker for editor diagnostics, fixes and formatting.
 - Check Saltbox and Sandbox YAML on open/save or through document/workspace commands.
 - Apply verified quick fixes, document Fix All and canonical Format Document edits
   with undo/redo and snapshot validation.

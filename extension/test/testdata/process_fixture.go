@@ -10,6 +10,17 @@ import (
 )
 
 func main() {
+	if filename := os.Getenv("SALTBOX_TEST_PROCESS_LOG"); filename != "" {
+		file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			os.Exit(2)
+		}
+		_, err = fmt.Fprintln(file, os.Getpid(), strings.Join(os.Args[1:], " "))
+		closeErr := file.Close()
+		if err != nil || closeErr != nil {
+			os.Exit(2)
+		}
+	}
 	source, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		os.Exit(2)

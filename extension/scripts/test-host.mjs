@@ -16,9 +16,12 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { spawnSync } from "node:child_process";
 const root = resolve(".test-workspace");
+rmSync(root, { recursive: true, force: true });
 for (const name of ["one", "two"]) {
   mkdirSync(resolve(root, name, "roles/example/defaults"), { recursive: true });
   spawnSync("git", ["init", "-q", resolve(root, name)], { stdio: "inherit" });
+  if (process.env.SALTBOX_TEST_MARKERS !== "1")
+    writeFileSync(resolve(root, name, ".saltbox-lint"), "");
   writeFileSync(
     resolve(root, name, "roles/example/defaults/main.yml"),
     '---\nexample_value: "{{ value\n }}"\n',
@@ -69,6 +72,7 @@ writeFileSync(
     publisher: "local-test",
     version: "0.0.0",
     engines: { vscode: "^1.100.0" },
+    contributes: { languages: [{ id: "ansible", aliases: ["Ansible"] }] },
   }),
 );
 let executable = process.env.VSCODE_EXECUTABLE_PATH;
@@ -115,7 +119,11 @@ if (vsix) {
 const options = {
   vscodeExecutablePath: executable,
   version: process.env.VSCODE_VERSION ?? "1.137.0",
-  extensionDevelopmentPath: vsix ? controller : resolve("."),
+  extensionDevelopmentPath: vsix
+    ? controller
+    : process.env.SALTBOX_TEST_MARKERS === "1"
+      ? [resolve("."), controller]
+      : resolve("."),
   extensionTestsEnv: {
     SALTBOX_TEST_EXTENSIONS_DIR: extensionsDir,
     SALTBOX_TEST_FIXTURE_PATH: resolve(
