@@ -1,9 +1,13 @@
 # VS Code extension implementation record
 
 Independent final review approved local code quality and integration.
-Existing-CLI performance qualification remains **blocked** by unresolved resource
-increases. Large-file editor latency also misses the separately dispositioned
-500 ms target. Other native platforms, remote hosts and publication remain pending.
+The user clarified on 2026-09-13 that increased memory usage alone is not a
+regression unless speed is materially affected; no memory leak was established.
+The historical RSS-only blocking disposition below is superseded by that
+criterion. Measurements remain unchanged, and this clarification does not claim
+statistical speed equivalence. Large-file editor latency still misses the
+separately dispositioned 500 ms target. Other native platforms, remote hosts and
+publication remain pending.
 Code approval does not grant performance acceptance or publication readiness.
 
 Plan: [portable extension implementation](superpowers/plans/2026-09-12-vscode-extension.md).
