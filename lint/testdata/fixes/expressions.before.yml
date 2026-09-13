@@ -1,0 +1,37 @@
+- name: Group a condition while preserving a quote and comment
+  ansible.builtin.debug: {msg: ok}
+  when: 'café == ''oui''' # keep 🌨
+- name: Split boolean operands in order
+  ansible.builtin.debug: {msg: ok}
+  when: (value is defined and value | length > 0) and other is defined
+- name: Preserve an explicit Cloudflare group
+  ansible.builtin.debug: {msg: ok}
+  when: (cloudflare is defined and cloudflare | length > 0)
+- name: Preserve unknown operand types
+  ansible.builtin.debug: {msg: ok}
+  when: unknown and true
+- name: Preserve nonboolean operand types
+  ansible.builtin.debug: {msg: ok}
+  when: "'nonempty' and true"
+- name: Preserve typed booleans
+  ansible.builtin.debug: {msg: ok}
+  when: true
+- name: Preserve decorated conditions
+  ansible.builtin.debug: {msg: ok}
+  when: &condition value is defined
+- name: Remove standalone result grouping
+  ansible.builtin.debug:
+    msg: "{{- ((a if (x and y) else (b if z else c))) -}}"
+- name: Preserve a result tuple
+  ansible.builtin.debug:
+    msg: "{{ (a if flag else b,) }}"
+- name: Preserve unsafe and literal text
+  ansible.builtin.debug:
+    msg: !unsafe "{{ (a if flag else b) }}"
+- name: Preserve a block condition
+  ansible.builtin.debug: {msg: ok}
+  when: >-
+    value is defined
+- name: Fix two standalone results in one scalar
+  ansible.builtin.debug:
+    msg: "{{ (a if flag else b) }} / {{ (c if flag else d) }}"

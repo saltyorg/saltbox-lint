@@ -77,9 +77,6 @@ func TestWhenListCloudflareGroupedCondition(t *testing.T) {
 // Decode and re-lint the actual advertised YAML, with hand-derived operand values.
 func assertWhenListHint(t *testing.T, d Diagnostic, want []string) {
 	t.Helper()
-	if d.Fix != nil {
-		t.Fatal("list rule must not offer a fix")
-	}
 	_, hint, ok := strings.Cut(d.Expected, "\n")
 	if !ok {
 		t.Fatalf("missing YAML hint: %q", d.Expected)

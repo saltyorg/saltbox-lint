@@ -111,7 +111,7 @@ func TestConditionalPoliciesAndRuleMetadata(t *testing.T) {
 				if d.Expected == "" {
 					t.Error("missing hint")
 				}
-				if tc.id != "jinja-layout" && d.Fix != nil {
+				if tc.id == "lookup-conditional-argument" && d.Fix != nil {
 					t.Error("semantic rule offered fix")
 				}
 			}
@@ -302,7 +302,7 @@ func TestOmittedElseConditionalPolicies(t *testing.T) {
 		for _, d := range ds {
 			if d.RuleID == tc.id {
 				n++
-				if d.Fix != nil {
+				if tc.id == "lookup-conditional-argument" && d.Fix != nil {
 					t.Fatalf("semantic correction: %+v", d)
 				}
 				if strings.Contains(d.Expected, "if and else") {

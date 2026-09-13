@@ -81,8 +81,9 @@ type Edit struct {
 	Text string
 }
 type Fix struct {
-	Message string
-	Edits   []Edit
+	fixRules []string
+	Message  string
+	Edits    []Edit
 }
 
 // Preview is a display-only suggestion. It never authorizes automatic edits.
@@ -118,6 +119,8 @@ type Options struct {
 	Stdin         []byte
 }
 type Change struct {
+	fixRules      []string
+	fixEdits      []Edit
 	Path          string
 	Before, After []byte
 }

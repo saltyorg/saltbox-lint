@@ -26,11 +26,15 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 			diagnostics = append(diagnostics, source.parseDiagnostics...)
 			continue
 		}
+		first := len(diagnostics)
 		for _, rule := range rules {
 			if rule.Check == nil || (len(rule.Kinds) > 0 && !slices.Contains(rule.Kinds, source.Kind)) {
 				continue
 			}
 			diagnostics = append(diagnostics, rule.Check(project, source)...)
+		}
+		if project.Selected[name] {
+			attachStructuralFixes(source, diagnostics[first:])
 		}
 	}
 	type diagnosticKey struct {

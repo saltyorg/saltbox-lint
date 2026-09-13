@@ -92,7 +92,8 @@ func TestManualPreviewProducers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := ansibleProject(t, "saltbox", map[string]string{tc.path: tc.input})
 			ds := Analyze(p, dockerRules(tc.id))
-			if len(ds) != 1 || ds[0].Preview == nil || ds[0].Fix != nil {
+			safe := tc.name == "parentheses" || tc.name == "quoted parentheses" || tc.name == "conditional"
+			if len(ds) != 1 || ds[0].Preview == nil || (ds[0].Fix != nil) != safe {
 				t.Fatalf("diagnostics=%+v", ds)
 			}
 			change, _, ok := PreviewChange(p.Sources[tc.path], ds[0])
@@ -103,8 +104,8 @@ func TestManualPreviewProducers(t *testing.T) {
 				t.Fatalf("target remains: %+v", remaining)
 			}
 			changes, err := PlanFixes(p, ds)
-			if err != nil || len(changes) != 0 {
-				t.Fatalf("manual preview became fix: %v %v", changes, err)
+			if err != nil || (len(changes) != 0) != safe {
+				t.Fatalf("preview/fix eligibility: %v %v", changes, err)
 			}
 			if string(p.Sources[tc.path].Data) != tc.input {
 				t.Fatal("source modified")
@@ -143,7 +144,7 @@ func TestPreviewDoesNotChangeDiagnosticIdentity(t *testing.T) {
 }
 
 func TestPreviewsPreserveExistingFixPlans(t *testing.T) {
-	input := "- ansible.builtin.debug:\n    msg: '{{value}} {{other}}'\n  tags: restart_web\n  when: a or b\n"
+	input := "- ansible.builtin.debug:\n    msg: '{{value}} {{other}}'\n  tags: restart_web\n  when: true\n"
 	p := ansibleProject(t, "saltbox", map[string]string{"tasks/main.yml": input, "vars.yml": "one: \"{{ a\n | f }}\"\ntwo: \"{{ b\n | g }}\"\n"})
 	ds := Analyze(p, dockerRules("jinja-layout", "ansible-tag-name", "ansible-when-parentheses"))
 	before := slices.Clone(ds)

@@ -229,7 +229,7 @@ func (a *layoutAnalysis) region(lo, hi, content, conditional int, force bool) {
 				start = x + 2
 				anchor = a.column(ts[start].Span.Start)
 			}
-			a.region(start, y, anchor, anchor, false)
+			a.region(start, y, anchor, anchor, force)
 		}
 		if a.block && a.lineStart(ts[close].Span.Start) && v == "(" {
 			start := bytes.LastIndexByte(a.source.Data[:ts[i].Span.Start], '\n') + 1

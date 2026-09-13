@@ -242,3 +242,42 @@ func TestFormatReportsReadAndWriteFailuresOnErrorChannel(t *testing.T) {
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestFormatLintStructuralFixMatchesCheck(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tasks", "main.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	input := "- name: Example\r\n  ansible.builtin.debug: {msg: ok}\r\n  when: \"café == '🌨'\" # keep\r\n"
+	want := "- name: Example\r\n  ansible.builtin.debug: {msg: ok}\r\n  when: \"(café == '🌨')\" # keep\r\n"
+	if err := os.WriteFile(path, []byte(input), 0640); err != nil {
+		t.Fatal(err)
+	}
+	response, stderr, code := invokeFormat(t, input, "format", "--mode", "lint-fixes", "--root", root, "--stdin-filename", path, "-")
+	if code != 0 || stderr != "" || response.Status != "ready" || applyWireEdits(t, input, response.Edits) != want {
+		t.Fatalf("format: %+v %s %d", response, stderr, code)
+	}
+	disk, err := os.ReadFile(path)
+	if err != nil || string(disk) != input {
+		t.Fatal("format wrote its source")
+	}
+	for _, edit := range response.Edits {
+		line, column := wirePosition([]byte(input), edit.Span.Start)
+		if edit.Range.Start.Line != line || edit.Range.Start.Column != column {
+			t.Fatalf("start coordinate: %+v", edit)
+		}
+		line, column = wirePosition([]byte(input), edit.Span.End)
+		if edit.Range.End.Line != line || edit.Range.End.Column != column {
+			t.Fatalf("end coordinate: %+v", edit)
+		}
+	}
+	code, _, stderr = invoke(t, "", "check", "--fix", "--root", root, "--", path)
+	if code != 0 || stderr != "" {
+		t.Fatalf("check fix: %d %q", code, stderr)
+	}
+	disk, err = os.ReadFile(path)
+	if err != nil || string(disk) != want {
+		t.Fatalf("check diverged: %q %v", disk, err)
+	}
+}

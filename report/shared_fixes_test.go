@@ -314,3 +314,41 @@ func TestSharedFixNoncontiguousGroupsRetainReference(t *testing.T) {
 	}
 	assertDisplayDataReleased(t, r)
 }
+
+func TestStructuralFixJSONReferencesMatchPlanner(t *testing.T) {
+	input := "- debug: {msg: '{{ (a if flag else b) }}'}\n  when: value is defined\n"
+	s, ds := lint.Parse("tasks/main.yml", []byte(input))
+	if len(ds) > 0 {
+		t.Fatal(ds)
+	}
+	p := &lint.Project{Sources: map[string]*lint.Source{s.Path: s}, Selected: map[string]bool{s.Path: true}}
+	ds = lint.Analyze(p, lint.Rules())
+	changes, err := lint.PlanFixes(p, ds)
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("plan: %+v %v", changes, err)
+	}
+	result := renderJSONV2(t, p, ds)
+	if len(result.Fixes) != 1 {
+		t.Fatalf("shared fixes=%d", len(result.Fixes))
+	}
+	refs := 0
+	for _, d := range result.Diagnostics {
+		if d.FixID != "" {
+			refs++
+			if d.FixID != result.Fixes[0].ID {
+				t.Fatal("dangling fix reference")
+			}
+		}
+	}
+	if refs != 2 {
+		t.Fatalf("references=%d", refs)
+	}
+	actual := []byte(input)
+	for i := len(result.Fixes[0].Edits) - 1; i >= 0; i-- {
+		e := result.Fixes[0].Edits[i]
+		actual = append(append(append([]byte{}, actual[:e.Span.Start]...), []byte(e.Text)...), actual[e.Span.End:]...)
+	}
+	if !bytes.Equal(actual, changes[0].After) {
+		t.Fatalf("JSON planner disagreement: %q %q", actual, changes[0].After)
+	}
+}

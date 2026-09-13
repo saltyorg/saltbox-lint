@@ -82,7 +82,7 @@ func TestConditionalResultParentheses(t *testing.T) {
 			if expression == "((a if condition else b))" {
 				hint = "{{ a if condition else b }}"
 			}
-			if ds[0].Fix != nil || !strings.Contains(ds[0].Expected, hint) {
+			if ds[0].Fix == nil || !strings.Contains(ds[0].Expected, hint) {
 				t.Fatal(ds[0])
 			}
 		})
@@ -131,8 +131,13 @@ func TestParenthesesSourcePositionsAndSelection(t *testing.T) {
 			t.Fatal("selected diagnostic differs from full analysis")
 		}
 		changes, err := PlanFixes(p, selected)
-		if err != nil || len(changes) != 0 || !bytes.Equal(p.Sources[tc.path].Data, []byte(tc.input)) {
-			t.Fatalf("no-fix preservation: %v %v", changes, err)
+		if err != nil || !bytes.Equal(p.Sources[tc.path].Data, []byte(tc.input)) {
+			t.Fatalf("source preservation: %v %v", changes, err)
+		}
+		for _, change := range changes {
+			if change.Path != tc.path {
+				t.Fatal("changed unselected source")
+			}
 		}
 	}
 }
@@ -152,7 +157,7 @@ func TestParenthesesFixtures(t *testing.T) {
 				t.Fatalf("%s/%s: %+v", tc.fixture, kind, ds)
 			}
 			for _, d := range ds {
-				if d.Fix != nil || d.Expected == "" {
+				if d.Expected == "" {
 					t.Fatal(d)
 				}
 			}

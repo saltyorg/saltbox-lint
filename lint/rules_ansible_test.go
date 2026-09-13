@@ -36,7 +36,7 @@ func assertAnsible(t *testing.T, path, input, id, span, hint string) {
 	if got := input[d.Span.Start:d.Span.End]; got != span {
 		t.Errorf("span=%q want %q", got, span)
 	}
-	if !strings.Contains(d.Expected, hint) || d.Fix != nil {
+	if !strings.Contains(d.Expected, hint) || d.Fix != nil && id != "ansible-when-parentheses" {
 		t.Errorf("hint/fix=%+v", d)
 	}
 }

@@ -20,6 +20,7 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 		return nil, nil
 	}
 	grouped := map[string][]Edit{}
+	structural := map[string][]string{}
 	// Skip repeated proposal identities, then collect each distinct source edit
 	// once. Planning owns the union of edits, not proposal order or messages.
 	type proposal struct {
@@ -34,6 +35,9 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 			continue
 		}
 		seen[identity] = true
+		if len(d.Fix.fixRules) > 0 {
+			structural[d.Path] = append(structural[d.Path], d.Fix.fixRules...)
+		}
 		if contents[d.Path] == nil {
 			contents[d.Path] = map[Edit]bool{}
 			// Even an empty fix requires its selected source to be available.
@@ -60,6 +64,15 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 		edits, err := orderedEdits(grouped[path])
 		if err != nil {
 			return nil, fmt.Errorf("plan fixes for %s: %w", path, err)
+		}
+		if rules := structural[path]; len(rules) > 0 {
+			slices.Sort(rules)
+			rules = slices.Compact(rules)
+			change, _, ok := buildStructuralChange(source, rules)
+			if ok && slices.Equal(edits, change.fixEdits) {
+				changes = append(changes, change)
+			}
+			continue
 		}
 		validation := newWhitespaceValidation(source)
 		valid := true
@@ -90,6 +103,14 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 // ordered edits against its original snapshot. PlanFixes remains the authority
 // that selects, combines and verifies the change.
 func PlannedFixEdits(change Change) ([]Edit, error) {
+	if len(change.fixRules) > 0 {
+		source, _ := Parse(change.Path, change.Before)
+		verified, _, ok := buildStructuralChange(source, change.fixRules)
+		if !ok || !bytes.Equal(change.After, verified.After) || !slices.Equal(change.fixEdits, verified.fixEdits) {
+			return nil, fmt.Errorf("unverified structural change for %s", change.Path)
+		}
+		return slices.Clone(verified.fixEdits), nil
+	}
 	edits, ok := whitespaceChanges(change.Before, change.After)
 	if !ok {
 		return nil, fmt.Errorf("fix change for %s is not a whitespace-only projection", change.Path)
@@ -260,7 +281,7 @@ func WriteChanges(project *Project, changes []Change) error {
 		}
 		seen[change.Path] = true
 		s := project.Sources[change.Path]
-		if s == nil || !bytes.Equal(change.Before, s.Data) || !verifiedCandidate(s, change.After) {
+		if s == nil || !bytes.Equal(change.Before, s.Data) || !verifiedChange(s, change) {
 			return fmt.Errorf("refuse unverified changes for %s", change.Path)
 		}
 		candidate, _ := Parse(change.Path, change.After)
@@ -351,4 +372,12 @@ func replaceFile(root *os.Root, path string, change Change, info os.FileInfo) er
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil
+}
+
+func verifiedChange(s *Source, change Change) bool {
+	if len(change.fixRules) == 0 {
+		return verifiedCandidate(s, change.After)
+	}
+	expected, _, ok := buildStructuralChange(s, change.fixRules)
+	return ok && bytes.Equal(change.After, expected.After) && slices.Equal(change.fixEdits, expected.fixEdits)
 }

@@ -154,7 +154,7 @@ adds subtle removed/added backgrounds while preserving syntax colors. Identical
 shared formatting proposals appear once, with references from later findings.
 A suggestion is **not permission to apply it**: only findings marked **Fix
 available** participate in `--fix`. Manual suggestions, such as tag renames and
-conditional rewrites, remain manual. Where no exact suggestion is available,
+lookup rewrites, remain manual. Where no exact suggestion is available,
 the report retains the marked source excerpt and Expected guidance. Related
 locations, every changed line, and every marked source line remain visible.
 Comparisons show two unchanged context lines around each hunk and label gaps;
@@ -229,6 +229,32 @@ settings as human findings, with readable plain details when redirected.
 Only explicit `check --fix` writes source files. Safe whitespace edits preserve
 YAML structure, comments, scalar styles/tags, exact Jinja string contents and
 non-whitespace tokens. Already-valid formatting stays byte-for-byte unchanged.
+The expression rules also support these verified corrections:
+
+- `jinja-conditional-length` wraps violating inline conditionals, including forms
+  without `else`, using the existing alignment policy and unchanged tokens.
+- `ansible-when-parentheses` groups a complete parsed string condition. Fixes
+  support undecorated, single-line plain or quoted scalars, including list items.
+  Typed YAML booleans, anchors, tags and block conditions retain guidance only.
+- `jinja-redundant-conditional-parentheses` removes complete outer result groups
+  around standalone output conditionals with `else`. Tuples, call/filter/operator
+  groups, nested branch groups, literal text and whitespace controls are preserved.
+- `ansible-when-list` splits a standalone, undecorated plain `when` field only
+  when every top-level conjunction operand is known to produce a boolean. It
+  preserves operand order, short circuiting and explicit groups. Boolean literals,
+  comparisons, negation and supported zero-argument built-in boolean tests can
+  qualify. Unknown variables or lookup results used as operands, unknown tests,
+  and results modified by filters or conditional expressions do not qualify.
+  Existing list items, quoted/block scalars and inline comments retain guidance.
+
+Structural fixes use a bounded Jinja grammar: names, literals, direct reads,
+subscriptions, calls, filters/tests, comparisons, boolean operators and
+conditionals. Arithmetic, tuples, container literals and other unsupported syntax
+remain manual. No Python or Ansible runtime dependency is required. Interacting
+expression and layout corrections share one source edit plan; the planner,
+read-only editor endpoint and disk writer rederive the exact authorized
+transformation from the original bytes. A preview never authorizes a fix.
+
 Unsupported or uncertain edits remain diagnostics. Tag renames, source headers,
 lookup semantics, section moves and healthcheck conversion require manual edits.
 `examples.yaml` is an optional, gitignored local scratch file for cases that
