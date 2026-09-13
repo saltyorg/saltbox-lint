@@ -294,3 +294,23 @@ func TestFormatLintKeepsInlineNestedElseConditional(t *testing.T) {
 		t.Fatalf("valid layout changed: %+v %s %d", response, stderr, code)
 	}
 }
+
+func TestFormatLintRefusesUnboundedHeaderComments(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "roles", "demo", "defaults", "main.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	input := "# Author(s): salty\n# GNU General Public License v3.0\n# URL: https://example.com\n# Title: Demo\n\n# User-facing documentation for demo_role_enabled\ndemo_role_enabled: true\n"
+	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response, stderr, code := invokeFormat(t, input, "format", "--mode", "lint-fixes", "--root", root, "--stdin-filename", path, "-")
+	if code != 0 || stderr != "" || response.Status != "unchanged" || len(response.Edits) != 0 {
+		t.Fatalf("ambiguous comments moved: %+v %s %d", response, stderr, code)
+	}
+	disk, err := os.ReadFile(path)
+	if err != nil || string(disk) != input {
+		t.Fatalf("source written: %q %v", disk, err)
+	}
+}

@@ -234,3 +234,47 @@ func TestRepresentationHeaderAndComputedCompose(t *testing.T) {
 		t.Fatalf("plan %+v %v", cs, err)
 	}
 }
+
+func TestRepresentationHeaderRefusesUnboundedCommentSuffix(t *testing.T) {
+	const metadata = "# Author(s): salty\n# GNU General Public License v3.0\n# URL: https://example.com\n# Title: Demo\n"
+	for _, marker := range []string{"", "---\n"} {
+		for _, suffix := range []string{"\n# User-facing documentation for demo_role_enabled\n", "# User-facing documentation for demo_role_enabled\n", "#   Ambiguous title continuation\n", "\n# Notes\n# Skip docs\n"} {
+			for _, newline := range []string{"\n", "\r\n"} {
+				input := strings.ReplaceAll(marker+metadata+suffix+"demo_role_enabled: true\n", "\n", newline)
+				p := expressionFixProject(t, "roles/demo/defaults/main.yml", input)
+				ds := Analyze(p, Rules())
+				found := false
+				for _, d := range ds {
+					if d.RuleID == "ansible-source-header" {
+						found = true
+						if d.Fix != nil {
+							t.Errorf("ambiguous header offered fix: %q", input)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("header diagnostic disappeared")
+				}
+				changes, err := PlanFixes(p, ds)
+				if err != nil || len(changes) != 0 {
+					t.Fatalf("ambiguous comments moved: input=%q changes=%+v err=%v", input, changes, err)
+				}
+			}
+		}
+	}
+}
+
+func TestRepresentationHeaderMarkerBoundsContinuations(t *testing.T) {
+	input := "# Author(s): salty\n#   Coauthor continuation\n# GNU General Public License v3.0\n# URL: https://example.com\n# Title: Demo\n#   Title continuation\n\n---\n# User-facing documentation for demo_role_enabled\ndemo_role_enabled: true\n"
+	want := "####################\n# Title: Demo\n#   Title continuation\n\n# Author(s): salty\n#   Coauthor continuation\n# URL: https://example.com\n# GNU General Public License v3.0\n---\n# User-facing documentation for demo_role_enabled\ndemo_role_enabled: true\n"
+	p := expressionFixProject(t, "roles/demo/defaults/main.yml", input)
+	changes, err := PlanFixes(p, Analyze(p, Rules()))
+	if err != nil || len(changes) != 1 || string(changes[0].After) != want {
+		t.Fatalf("marker-bounded comments: %+v %v", changes, err)
+	}
+	next := expressionFixProject(t, changes[0].Path, want)
+	again, err := PlanFixes(next, Analyze(next, Rules()))
+	if err != nil || len(again) != 0 {
+		t.Fatalf("not idempotent: %+v %v", again, err)
+	}
+}

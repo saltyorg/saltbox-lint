@@ -260,7 +260,9 @@ The expression rules also support these verified corrections:
   marker only when complete existing Title, Author(s), URL and GPL metadata can
   form a header within 20 lines. Metadata values and associated comments are
   retained. Incomplete or ambiguous headers, multiple documents, BOMs and YAML
-  directives remain manual. Representation fixes require consistent LF or CRLF.
+  directives remain manual. Without a marker after the metadata, ordinary trailing comments
+  or blank lines are ambiguous and header repair is declined. Representation fixes
+  require consistent LF or CRLF.
 
 Expression fixes use a bounded Jinja grammar: names, literals, direct reads,
 subscriptions, calls, filters/tests, comparisons, boolean operators and

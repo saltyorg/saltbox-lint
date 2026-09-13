@@ -166,8 +166,9 @@ func healthcheckGap(gap string, minCommas, maxCommas int, indent, newline string
 	return result.String(), commas >= minCommas && commas <= maxCommas
 }
 
-// Metadata blocks move with all following continuation/unknown comments. No
-// metadata values are fabricated or rewritten. Ambiguous envelopes fail closed.
+// Metadata blocks retain their continuation comments within a bounded header.
+// Without a following marker, a trailing comment suffix may instead document
+// the first declaration, so ambiguous envelopes fail closed.
 func sourceHeaderFix(s *Source, newline string) (structuralFix, bool) {
 	diagnostics := checkAnsibleSourceHeader(nil, s)
 	if len(diagnostics) == 0 || bytes.HasPrefix(s.Data, []byte("\xef\xbb\xbf")) {
@@ -179,6 +180,7 @@ func sourceHeaderFix(s *Source, newline string) (structuralFix, bool) {
 	group := -1
 	marker := -1
 	payload := -1
+	unboundedComments := false
 	border := "####################"
 	for i, line := range lines {
 		if line.Text == "---" {
@@ -187,6 +189,7 @@ func sourceHeaderFix(s *Source, newline string) (structuralFix, bool) {
 			}
 			marker = i
 			if completeHeaderGroups(groups) {
+				unboundedComments = false
 				payload = i + 1
 			}
 			continue
@@ -224,13 +227,16 @@ func sourceHeaderFix(s *Source, newline string) (structuralFix, bool) {
 			}
 			group = field
 		}
+		if field < 0 && completeHeaderGroups(groups) {
+			unboundedComments = true
+		}
 		if group >= 0 {
 			groups[group] = append(groups[group], line.Text)
 		} else {
 			preamble = append(preamble, line.Text)
 		}
 	}
-	if payload < 0 || payload >= len(lines) {
+	if payload < 0 || payload >= len(lines) || unboundedComments {
 		return structuralFix{}, false
 	}
 	result := []string{border}
