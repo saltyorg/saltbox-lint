@@ -13,6 +13,8 @@ Code approval does not grant performance acceptance or publication readiness.
 Plan: [portable extension implementation](superpowers/plans/2026-09-12-vscode-extension.md).
 Baseline: `ef533311fc48a5001d497d99e462f0968bbceb16`.
 
+The latest local packages include the [marker and save lifecycle update](#marker-and-save-lifecycle-update-5099928).
+
 ## Reviewed stages
 
 - Portable CLI: `9095823`, corrected by `2d66fd7`. Independent review clean.
@@ -344,9 +346,9 @@ including task-6-report.md, declarations, all raw samples, retained development
 failures/prototypes, per-file semantic records, SDK logs and artifact manifests.
 
 
-## Current corrected-policy code: 2ea5ac4; performance remains blocked
+## Historical policy-matched qualification: 2ea5ac4
 
-Current packaged code is `2ea5ac4771324b342d2257dec41c2e4b2e737c49`, including the
+This stage qualified `2ea5ac4771324b342d2257dec41c2e4b2e737c49`, including the
 reviewed grouping correction `4bb7eea`. Explicitly grouped Cloudflare conditions
 now remain intact. The original 39d9740 results above are retained as history;
 the policy correction intentionally changes diagnostics and output volume.
@@ -448,3 +450,45 @@ identities, all attempts, paired-results.json, native/SDK/semantic logs and
 integrity records. Local implementation review does not grant performance or
 publication acceptance. Native Windows/macOS/ARM, remote placement, manual
 upgrade, stable tagged qualification and publication gates remain external.
+
+## Marker and save lifecycle update: 5099928
+
+Current local snapshot packages identify clean code
+`5099928d7a197ad52ba2f759b80771fda7b44a20`. Independent task and final integration
+reviews approved the update with no unresolved findings. An empty regular `.saltbox-lint` file
+opts a source root in; the root defaults to the workspace folder and honors
+`saltboxLint.root`. Unmarked roots do not provide diagnostics, fixes or formatting.
+Each marked root receives one startup saved-file scan. Saves recheck only the
+saved file; watcher echoes are deduplicated and changed closed files are batched.
+No dedicated Git pull/commit trigger or polling was added.
+
+Last diagnostics remain visible while typing and during pending or failed
+replacement checks. Source/version guards immediately revoke stale fix authority.
+Manual workspace checks refresh clean open documents while preserving dirty
+buffer ownership. Marker removal clears and cancels affected-root work. External
+configured roots, overlapping watches and saved symlink aliases are covered.
+Manual commands re-probe markers; initial watcher setup may require a manual
+check or Reload Window to observe a newly created marker.
+
+Marker-only local consumer commits are Saltbox `7a22a30c1` and Sandbox `377cb190`.
+Their existing role changes were not staged or rewritten. Sandbox's offline
+Ansible lint and existing CI Saltbox linter both passed. No roles were executed.
+
+`make build` and `make snapshot` passed. All twelve minimum/current SDK runs
+(1.100.0 and 1.137.0; normal, regressions, markers, save-scope, untrusted and
+disabled) exited zero. Normal/marker/regression modes use the installed product;
+save-scope runs the production component with production-owned watchers and the
+actual installed CLI behind a recording proxy. Its eleven cases cover file-only
+saves, retained diagnostics, stale results, selected batches and external roots.
+Native Linux x64 and Alpine x64 package probes passed. Native Windows/macOS/ARM
+and actual remote-host qualification remain pending.
+
+Eight VSIXs and all seventeen distribution checksums were verified. Matching
+source archive SHA-256:
+`3b44bcfe40867eff6e3636d425cdbc471ddf87527ced0788e4403e967538a6a5`.
+Previous `2ea5ac4` packages remain hash-verified in the ignored evidence archive.
+Current commands, reports, reviews and hashes are retained under
+`.superpowers/sdd/2026-09-13-marker-activation/`. SDK/container warnings and failed
+development probes remain recorded separately from passing assertions. No
+benchmark was rerun, no historical measurements were relabeled, and nothing was
+pushed or published by this workflow.
