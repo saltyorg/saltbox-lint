@@ -57,7 +57,12 @@ change Problems sorting, move focus, or rewrite your VS Code settings.
 
 Quick fixes say “this file” because a shared proposal may fix several findings
 in the document. Fixes are checked against the current document before applying.
-They use VS Code edits and preserve undo/redo. **Format Document With… → Saltbox
+They use VS Code edits and preserve undo/redo. Eligible fixes include conservative
+Jinja/condition rewrites, flow healthcheck lists, missing computed-default
+`# Skip docs` comments and complete source-header repairs. Healthcheck scalar
+values and shell allowances are retained; incomplete headers, ambiguous source
+forms and defaults-section ordering require manual edits. Mixed corrections use
+one verified plan shared with CLI `check --fix`, and stale actions are refused. **Format Document With… → Saltbox
 Lint** requests canonical formatting from the read-only CLI endpoint. The
 extension never selects a default formatter or enables format-on-save. Configure
 VS Code's own formatter preferences when desired; other YAML extensions can

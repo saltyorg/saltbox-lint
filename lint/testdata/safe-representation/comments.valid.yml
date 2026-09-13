@@ -1,0 +1,11 @@
+# Owner notes stay above the directive.
+# Skip docs
+demo_role_secret_lookup: "{{ a if flag else b }}"
+demo_role_docker_healthcheck:
+  test:  # healthcheck comment
+    # marker
+    - CMD # command mode
+    - 'curl'
+    # keep argument notes
+    - "🌨" # final argument
+valid: 'unchanged'

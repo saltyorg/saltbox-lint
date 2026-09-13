@@ -77,7 +77,7 @@ func assertSingleDefaultsDiagnostic(t *testing.T, path, input, id, spanText stri
 			t.Errorf("%s expected hint %q in %q", id, part, diagnostic.Expected)
 		}
 	}
-	if diagnostic.Fix != nil {
+	if diagnostic.Fix != nil && id != "computed-default-documentation" {
 		t.Fatalf("%s offered semantic fix: %+v", id, diagnostic.Fix)
 	}
 	return diagnostic
@@ -100,7 +100,7 @@ func TestDefaultsRuleFixtures(t *testing.T) {
 	got := make([]string, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		got = append(got, diagnostic.RuleID)
-		if diagnostic.Expected == "" || diagnostic.Fix != nil {
+		if diagnostic.Expected == "" || (diagnostic.Fix != nil && diagnostic.RuleID != "computed-default-documentation") {
 			t.Errorf("incomplete semantic diagnostic: %+v", diagnostic)
 		}
 	}

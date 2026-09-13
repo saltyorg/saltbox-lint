@@ -247,16 +247,34 @@ The expression rules also support these verified corrections:
   and results modified by filters or conditional expressions do not qualify.
   Existing list items, quoted/block scalars and inline comments retain guidance.
 
-Structural fixes use a bounded Jinja grammar: names, literals, direct reads,
+- `docker-healthcheck-shape` converts otherwise valid flow test lists in block
+  healthcheck mappings to block lists. Scalar spellings, quotes, types, command
+  markers, order and comments are preserved, including line-local shell allowances.
+  Invalid cardinality, missing commands, nulls, collections, aliases, anchors,
+  tags, multiline scalars and ambiguous comment/allowance placement remain manual.
+- `computed-default-documentation` inserts `# Skip docs` immediately above an
+  owner-local computed declaration at a safe block declaration boundary. Existing
+  directives and all YAML data remain unchanged; generated inventory documentation
+  intentionally excludes the computed value.
+- `ansible-source-header` repairs borders, metadata order and the initial document
+  marker only when complete existing Title, Author(s), URL and GPL metadata can
+  form a header within 20 lines. Metadata values and associated comments are
+  retained. Incomplete or ambiguous headers, multiple documents, BOMs and YAML
+  directives remain manual. Representation fixes require consistent LF or CRLF.
+
+Expression fixes use a bounded Jinja grammar: names, literals, direct reads,
 subscriptions, calls, filters/tests, comparisons, boolean operators and
 conditionals. Arithmetic, tuples, container literals and other unsupported syntax
 remain manual. No Python or Ansible runtime dependency is required. Interacting
-expression and layout corrections share one source edit plan; the planner,
+expression, representation, documentation and layout corrections share one source
+edit plan; the planner,
 read-only editor endpoint and disk writer rederive the exact authorized
 transformation from the original bytes. A preview never authorizes a fix.
 
-Unsupported or uncertain edits remain diagnostics. Tag renames, source headers,
-lookup semantics, section moves and healthcheck conversion require manual edits.
+Unsupported or uncertain edits remain diagnostics. Tag renames and lookup
+semantics require manual edits. `defaults-sections` remains diagnostic-only:
+reordering declarations changes the mapping iteration order retained by Ansible.
+Section comments are never relabeled over existing values to satisfy ordering.
 `examples.yaml` is an optional, gitignored local scratch file for cases that
 should fail. Check it explicitly when needed and test fixes on copies. Automated
 tests use committed regression fixtures in `lint/testdata` and do not require it.

@@ -40,7 +40,7 @@ func assertDockerDiagnostic(t *testing.T, input, id, span string, hints ...strin
 			t.Errorf("hint %q missing from %q", hint, d.Expected)
 		}
 	}
-	if d.Fix != nil {
+	if d.Fix != nil && id != "docker-healthcheck-shape" {
 		t.Errorf("semantic fix=%+v", d.Fix)
 	}
 }
@@ -196,7 +196,7 @@ func TestDockerRuleFixturesAndMetadata(t *testing.T) {
 	}
 	for _, rule := range rules {
 		t.Run(rule.ID, func(t *testing.T) {
-			if rule.Fixable || rule.Scope != "file" || rule.Explanation == "" || rule.Summary == "" {
+			if (rule.Fixable != (rule.ID == "docker-healthcheck-shape")) || rule.Scope != "file" || rule.Explanation == "" || rule.Summary == "" {
 				t.Errorf("incomplete metadata %+v", rule)
 			}
 			if ds := dockerDiagnostics(t, rule.GoodExample, rule.ID); len(ds) != 0 {

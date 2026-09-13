@@ -170,7 +170,7 @@ func TestAnsibleRegistry(t *testing.T) {
 		t.Fatalf("registered=%d", len(rules))
 	}
 	for _, r := range rules {
-		if r.Explanation == "" || r.GoodExample == "" || r.BadExample == "" || len(r.Kinds) == 0 || r.Scope == "" || r.Fixable || !slices.Contains(ansibleRuleIDs, r.ID) {
+		if r.Explanation == "" || r.GoodExample == "" || r.BadExample == "" || len(r.Kinds) == 0 || r.Scope == "" || (r.Fixable != (r.ID == "ansible-source-header")) || !slices.Contains(ansibleRuleIDs, r.ID) {
 			t.Errorf("metadata %+v", r)
 		}
 	}

@@ -11,17 +11,18 @@ import (
 // semantics before returning it; the common verifier checks every other node.
 // Task-specific providers extend structuralFixes, never the whitespace policy.
 type structuralFix struct {
-	rule       string
-	span       Span
-	edits      []Edit
-	node       *Node
-	value      string
-	items      []string
-	valueEdits []Edit
+	rule          string
+	span          Span
+	edits         []Edit
+	node          *Node
+	value         string
+	items         []string
+	valueEdits    []Edit
+	sequenceStyle string
 }
 
 func structuralFixes(s *Source) []structuralFix {
-	return expressionStructuralFixes(s)
+	return append(expressionStructuralFixes(s), representationStructuralFixes(s)...)
 }
 
 func structuralNodesEquivalent(a, b *Node, changes map[*Node]structuralFix) bool {
@@ -29,6 +30,17 @@ func structuralNodesEquivalent(a, b *Node, changes map[*Node]structuralFix) bool
 		return a == b
 	}
 	if change, ok := changes[a]; ok {
+		if change.sequenceStyle != "" {
+			if a.Kind != "sequence" || b.Kind != a.Kind || b.Style != change.sequenceStyle || a.Tag != b.Tag || a.Anchor != b.Anchor || len(a.Items) != len(b.Items) {
+				return false
+			}
+			for i, item := range a.Items {
+				if !structuralNodesEquivalent(item, b.Items[i], changes) {
+					return false
+				}
+			}
+			return true
+		}
 		if change.items != nil {
 			if b.Kind != "sequence" || b.Style != "block" || b.Tag != "" || b.Anchor != "" || len(b.Items) != len(change.items) {
 				return false
@@ -215,8 +227,21 @@ func replacementEdits(before, after []byte) []Edit {
 
 func attachStructuralFixes(s *Source, ds []Diagnostic) {
 	var rules []string
+	var representations []structuralFix
+	checkedRepresentations := false
 	for _, d := range ds {
 		switch d.RuleID {
+		case "docker-healthcheck-shape", "computed-default-documentation", "ansible-source-header":
+			if !checkedRepresentations {
+				representations = representationStructuralFixes(s)
+				checkedRepresentations = true
+			}
+			for _, proposal := range representations {
+				if proposal.rule == d.RuleID && proposal.span == d.Span {
+					rules = append(rules, d.RuleID)
+					break
+				}
+			}
 		case "ansible-when-parentheses", "ansible-when-list", "jinja-redundant-conditional-parentheses", "jinja-conditional-length":
 			rules = append(rules, d.RuleID)
 		}

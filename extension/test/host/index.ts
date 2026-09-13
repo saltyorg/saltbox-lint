@@ -123,7 +123,11 @@ export async function run(): Promise<void> {
     document.uri,
     new vscode.Range(0, 0, document.lineCount - 1, 100),
   );
-  const fix = actions.find((a) => a.title.includes("this file"));
+  const fix = actions.find(
+    (a) =>
+      a.command?.command.startsWith("saltboxLint.") &&
+      a.title.includes("this file"),
+  );
   assert.ok(fix?.command);
   await vscode.commands.executeCommand(
     fix.command.command,
@@ -136,6 +140,8 @@ export async function run(): Promise<void> {
   await vscode.commands.executeCommand("redo");
   assert.ok(document.getText().includes("{{ value }}"));
   console.log("PASS shared quick fix and undo/redo");
+  const { runSafeRuleFixes } = await import("./safe-rule-fixes.ts");
+  await runSafeRuleFixes(document);
   await replace(document, '---\nexample_value: ["😀",1]\n');
   const before = document.getText();
   const formats = await vscode.commands.executeCommand<vscode.TextEdit[]>(
@@ -255,7 +261,11 @@ export async function run(): Promise<void> {
       document.uri,
       new vscode.Range(0, 0, 3, 0),
     )
-  ).find((a) => a.title.includes("this file"))!;
+  ).find(
+    (a) =>
+      a.command?.command.startsWith("saltboxLint.") &&
+      a.title.includes("this file"),
+  )!;
   assert.ok(stale?.command);
   const retainedDiagnostics = diagnostics(document.uri);
   await replace(document, "---\nexample_value: untouched\n");
