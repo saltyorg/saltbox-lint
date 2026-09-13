@@ -20,13 +20,24 @@ if a marker is created immediately while root configuration and its watchers
 are being set up. Manual commands refresh marker eligibility before acting.
 
 Open or save a marked workspace `.yml` / `.yaml` document in YAML or Ansible language
-mode to check it. Editing clears stale findings; checking does not run on every
-keystroke. Commands are available from the Command Palette:
+mode to check it. Editing keeps the last displayed findings visible, while
+outdated fixes and formatting requests are invalidated immediately. Findings
+update when the saved-file check completes, or after an explicit Check Document;
+a failed check reports its error and retains the last findings. Typing does not
+start checks. Commands are available from the Command Palette:
 
 - **Saltbox Lint: Check Document** checks the current buffer, including unsaved edits.
 - **Saltbox Lint: Check Workspace (Saved Files)** checks each marked source root on disk.
-  Open-buffer diagnostics remain separate, including explicitly opened ignored files.
+  Clean open documents are rechecked too; dirty buffers retain their displayed
+  findings until saved or explicitly checked, including opened ignored files.
 - **Saltbox Lint: Fix All in Document** requests verified conservative lint fixes.
+
+Each marked root also receives one saved-workspace scan on startup or first
+enablement. Saving a file rechecks only that file, preserving other documents'
+findings and actions. Watcher echoes are coalesced. File changes from a checkout,
+pull or other disk operation recheck the changed files; closed files use bounded
+selected-path batches without opening editor tabs. There is no separate Git-pull
+trigger or Git polling. Startup and background failures go to the Output channel.
 
 Quick fixes say “this file” because a shared proposal may fix several findings
 in the document. Fixes are checked against the current document before applying.

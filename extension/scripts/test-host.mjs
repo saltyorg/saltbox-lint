@@ -7,6 +7,7 @@ import {
 import {
   cpSync,
   existsSync,
+  readdirSync,
   mkdirSync,
   writeFileSync,
   mkdtempSync,
@@ -116,16 +117,33 @@ if (vsix) {
     /^saltyorg\.saltbox-lint@/m,
   );
 }
+const binaryName =
+  "saltbox-lint" + (process.platform === "win32" ? ".exe" : "");
+const realCLI = vsix
+  ? readdirSync(extensionsDir)
+      .map((directory) => join(extensionsDir, directory, "bin", binaryName))
+      .find((filename) => existsSync(filename))
+  : resolve("bin", binaryName);
+if (process.env.SALTBOX_TEST_SAVE_SCOPE === "1") {
+  assert.ok(
+    realCLI && existsSync(realCLI),
+    "recording proxy requires the real platform CLI",
+  );
+  console.log(`Save-scope component host uses real CLI: ${realCLI}`);
+}
 const options = {
   vscodeExecutablePath: executable,
   version: process.env.VSCODE_VERSION ?? "1.137.0",
-  extensionDevelopmentPath: vsix
-    ? controller
-    : process.env.SALTBOX_TEST_MARKERS === "1"
-      ? [resolve("."), controller]
-      : resolve("."),
+  extensionDevelopmentPath:
+    vsix || process.env.SALTBOX_TEST_SAVE_SCOPE === "1"
+      ? controller
+      : process.env.SALTBOX_TEST_MARKERS === "1"
+        ? [resolve("."), controller]
+        : resolve("."),
   extensionTestsEnv: {
     SALTBOX_TEST_EXTENSIONS_DIR: extensionsDir,
+    SALTBOX_TEST_REAL_CLI:
+      process.env.SALTBOX_TEST_SAVE_SCOPE === "1" ? realCLI : "",
     SALTBOX_TEST_FIXTURE_PATH: resolve(
       "bin/process-fixture" + (process.platform === "win32" ? ".exe" : ""),
     ),

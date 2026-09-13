@@ -4,6 +4,8 @@
 
 - Require a `.saltbox-lint` source-root marker for editor diagnostics, fixes and formatting.
 - Check Saltbox and Sandbox YAML on open/save or through document/workspace commands.
+- Scan marked roots at startup, scope save/watch checks to changed files, and retain
+  displayed diagnostics while editing or awaiting replacement results.
 - Apply verified quick fixes, document Fix All and canonical Format Document edits
   with undo/redo and snapshot validation.
 - Run a bundled native CLI beside trusted workspace files, including remote hosts.

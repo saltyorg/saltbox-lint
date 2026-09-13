@@ -106,9 +106,9 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     }),
     vscode.workspace.onDidOpenTextDocument((document) => editor.open(document)),
-    vscode.workspace.onDidSaveTextDocument((document) => {
-      if (/\.ya?ml$/i.test(document.uri.path)) editor.refresh([document.uri]);
-    }),
+    vscode.workspace.onDidSaveTextDocument((document) =>
+      editor.saved(document),
+    ),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length) editor.change(event.document);
     }),
@@ -144,7 +144,7 @@ export function activate(context: vscode.ExtensionContext): void {
     watcher,
     watcher.onDidChange((uri) => editor.refresh([uri])),
     watcher.onDidCreate((uri) => editor.refresh([uri])),
-    watcher.onDidDelete((uri) => editor.refresh([uri])),
+    watcher.onDidDelete((uri) => editor.removeFile(uri)),
   );
   for (const document of vscode.workspace.textDocuments)
     void editor.check(document);

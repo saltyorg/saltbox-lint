@@ -32,6 +32,10 @@ function diagnostics(uri: vscode.Uri) {
     .filter((d) => d.source === "saltbox-lint");
 }
 export async function run(): Promise<void> {
+  if (process.env.SALTBOX_TEST_SAVE_SCOPE === "1") {
+    const { runSaveScope } = await import("./save-scope.ts");
+    return runSaveScope();
+  }
   const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
   if (
     process.env.SALTBOX_TEST_VSIX &&
@@ -249,14 +253,17 @@ export async function run(): Promise<void> {
     )
   ).find((a) => a.title.includes("this file"))!;
   assert.ok(stale?.command);
+  const retainedDiagnostics = diagnostics(document.uri);
   await replace(document, "---\nexample_value: untouched\n");
   await vscode.commands.executeCommand(
     stale.command!.command,
     ...(stale.command!.arguments ?? []),
   );
   assert.equal(document.getText(), "---\nexample_value: untouched\n");
-  assert.equal(diagnostics(document.uri).length, 0);
-  console.log("PASS stale quick fix refusal and change invalidation");
+  assert.deepEqual(diagnostics(document.uri), retainedDiagnostics);
+  console.log(
+    "PASS stale quick fix refusal and displayed diagnostic retention",
+  );
   const ignored = await vscode.workspace.openTextDocument(
     vscode.Uri.joinPath(roots[0].uri, "ignored.yml"),
   );
