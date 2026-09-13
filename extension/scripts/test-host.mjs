@@ -8,6 +8,7 @@ import {
   cpSync,
   existsSync,
   readdirSync,
+  readFileSync,
   mkdirSync,
   writeFileSync,
   mkdtempSync,
@@ -73,7 +74,16 @@ writeFileSync(
     publisher: "local-test",
     version: "0.0.0",
     engines: { vscode: "^1.100.0" },
-    contributes: { languages: [{ id: "ansible", aliases: ["Ansible"] }] },
+    contributes: {
+      languages: [{ id: "ansible", aliases: ["Ansible"] }],
+      ...(process.env.SALTBOX_TEST_SAVE_SCOPE === "1"
+        ? {
+            configuration: JSON.parse(
+              readFileSync(resolve("package.json"), "utf8"),
+            ).contributes.configuration,
+          }
+        : {}),
+    },
   }),
 );
 let executable = process.env.VSCODE_EXECUTABLE_PATH;

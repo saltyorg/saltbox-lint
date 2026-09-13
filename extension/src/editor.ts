@@ -41,6 +41,7 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly eligibilityChanged = new vscode.EventEmitter<void>();
   readonly onDidChangeEligibility = this.eligibilityChanged.event;
   private readonly rootListener: vscode.Disposable;
+  private readonly fileListener: vscode.Disposable;
   private readonly lint = new Scheduler();
   private readonly formatting = new Scheduler();
   private readonly collection =
@@ -82,6 +83,9 @@ export class EditorIntegration implements vscode.Disposable {
       this.refreshFolders(new Set([folder]));
       this.eligibilityChanged.fire();
     });
+    this.fileListener = this.roots.onDidChangeFile((uri) =>
+      this.queueFile(uri),
+    );
     this.roots.configure();
   }
   private eligible(document: vscode.TextDocument): boolean {
@@ -243,12 +247,12 @@ export class EditorIntegration implements vscode.Disposable {
       this.collection.delete(uri);
       return;
     }
-    for (const scan of this.scans.values()) {
-      const diagnostics = scan.get(key);
-      if (diagnostics) {
-        this.collection.set(uri, diagnostics);
-        return;
-      }
+    const folder = this.roots.folder(uri);
+    const diagnostics =
+      folder && this.scans.get(folder.uri.toString())?.get(key);
+    if (diagnostics) {
+      this.collection.set(uri, diagnostics);
+      return;
     }
     this.collection.delete(uri);
   }
@@ -438,7 +442,7 @@ export class EditorIntegration implements vscode.Disposable {
           throw error;
         }
         const uri = vscode.Uri.file(filename);
-        const owner = vscode.workspace.getWorkspaceFolder(uri);
+        const owner = this.roots.folder(uri);
         if (owner && owner.uri.toString() !== folderKey) continue;
         if (selected && text !== selected.get(relative)!.text) continue;
         const index = new SnapshotIndex(text);
@@ -681,12 +685,21 @@ export class EditorIntegration implements vscode.Disposable {
   private queueFile(uri: vscode.Uri, force = false, version?: number): void {
     if (this.disposed || uri.scheme !== "file" || !/\.ya?ml$/i.test(uri.path))
       return;
-    const key = uri.toString();
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (folder) {
-      this.scanRevisions.set(folder.uri.toString(), ++this.nextRevision);
-      this.lint.cancel(`workspace:${folder.uri}`);
+    const folder = this.roots.folder(uri);
+    if (!folder || !this.roots.get(folder.uri.toString())) return;
+    // Canonical watcher events share the originating open buffer's save key.
+    // Keep canonical root cancellation even when that buffer uses an alias.
+    if (!force && !this.sourceOwners.has(uri.toString())) {
+      for (const [origin, identity] of this.sourceOwners) {
+        if (vscode.Uri.file(identity.filename).toString() !== uri.toString())
+          continue;
+        uri = vscode.Uri.parse(origin);
+        break;
+      }
     }
+    const key = uri.toString();
+    this.scanRevisions.set(folder.uri.toString(), ++this.nextRevision);
+    this.lint.cancel(`workspace:${folder.uri}`);
     this.pendingFiles.set(key, {
       uri,
       force: force || (this.pendingFiles.get(key)?.force ?? false),
@@ -712,7 +725,7 @@ export class EditorIntegration implements vscode.Disposable {
     >();
     try {
       for (const { uri, force, version } of pending) {
-        const folder = vscode.workspace.getWorkspaceFolder(uri);
+        const folder = this.roots.folder(uri);
         if (!folder) continue;
         const root = await this.root(folder);
         if (!root) continue;
@@ -825,7 +838,7 @@ export class EditorIntegration implements vscode.Disposable {
       for (const scan of this.scans.values()) scan.delete(target);
       this.collection.delete(vscode.Uri.parse(target));
     }
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    const folder = this.roots.folder(uri);
     if (folder) {
       this.scanRevisions.set(folder.uri.toString(), ++this.nextRevision);
       this.lint.cancel(`workspace:${folder.uri}`);
@@ -917,6 +930,7 @@ export class EditorIntegration implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     this.rootListener.dispose();
+    this.fileListener.dispose();
     this.roots.dispose();
     this.eligibilityChanged.dispose();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);

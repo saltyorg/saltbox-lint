@@ -1,9 +1,10 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { EditorIntegration } from "../../src/editor.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,7 +39,6 @@ export async function runSaveScope(): Promise<void> {
       ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
       : [];
   const editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
-  const watcher = vscode.workspace.createFileSystemWatcher("**/*.{yml,yaml}");
   const subscriptions = [
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length) editor.change(event.document);
@@ -46,9 +46,6 @@ export async function runSaveScope(): Promise<void> {
     vscode.workspace.onDidSaveTextDocument((document) =>
       editor.saved(document),
     ),
-    watcher.onDidChange((uri) => editor.refresh([uri])),
-    watcher.onDidCreate((uri) => editor.refresh([uri])),
-    watcher.onDidDelete((uri) => editor.removeFile(uri)),
   ];
   const failures: string[] = [];
   const run = async (name: string, test: () => Promise<void>) => {
@@ -446,9 +443,176 @@ export async function runSaveScope(): Promise<void> {
         }
       },
     );
+    await run(
+      "external source roots watch closed siblings and deduplicate overlapping watches",
+      async () => {
+        const parent = vscode.Uri.joinPath(roots[0].uri, "..");
+        const marker = vscode.Uri.joinPath(parent, ".saltbox-lint");
+        const sibling = vscode.Uri.joinPath(
+          parent,
+          "roles/external/defaults/main.yml",
+        );
+        await vscode.workspace.fs.createDirectory(
+          vscode.Uri.joinPath(parent, "roles/external/defaults"),
+        );
+        const config = vscode.workspace.getConfiguration(
+          "saltboxLint",
+          roots[0].uri,
+        );
+        assert.equal(spawnSync("git", ["init", "-q", parent.fsPath]).status, 0);
+        await vscode.workspace.fs.writeFile(marker, new Uint8Array());
+        await vscode.workspace.fs.writeFile(
+          sibling,
+          Buffer.from('value: "{{ sibling\n }}"\n'),
+        );
+        await config.update(
+          "root",
+          "..",
+          vscode.ConfigurationTarget.WorkspaceFolder,
+        );
+        editor.configureRoots();
+        try {
+          assert.equal(vscode.workspace.getWorkspaceFolder(sibling), undefined);
+
+          await waitFor(
+            () => findings(sibling).length > 0,
+            "startup diagnoses a closed file outside workspace folders",
+          );
+          await waitFor(
+            () =>
+              [document, other].every(
+                (doc) =>
+                  editor.actions(doc, new vscode.Range(0, 0, doc.lineCount, 0))
+                    .length > 0,
+              ),
+            "startup open-document reports are current before counting file changes",
+          );
+          await writeFile(log, "");
+          await vscode.workspace.fs.writeFile(
+            sibling,
+            Buffer.from("value: 1\n"),
+          );
+          await waitFor(
+            () => !findings(sibling).some((d) => d.code === "jinja-layout"),
+            "external sibling write refreshes its diagnostics",
+          );
+          assert.equal(invocations().length, 1, JSON.stringify(invocations()));
+          assert.ok(
+            invocations()[0].includes("roles/external/defaults/main.yml"),
+          );
+          assert.ok(!invocations()[0].endsWith(" ."));
+          await vscode.workspace.fs.writeFile(
+            sibling,
+            Buffer.from('value: "{{ sibling\n }}"\n'),
+          );
+          await waitFor(
+            () => findings(sibling).some((d) => d.code === "jinja-layout"),
+            "external sibling is diagnosed again",
+          );
+          await vscode.workspace.fs.delete(sibling);
+          await waitFor(
+            () => findings(sibling).length === 0,
+            "external sibling deletion clears diagnostics",
+          );
+          assert.equal(
+            vscode.workspace.textDocuments.some(
+              (doc) => doc.uri.toString() === sibling.toString(),
+            ),
+            false,
+          );
+          const overlap = vscode.Uri.joinPath(roots[1].uri, "overlap.yml");
+          await writeFile(log, "");
+          await vscode.workspace.fs.writeFile(
+            overlap,
+            Buffer.from('value: "{{ overlap\n }}"\n'),
+          );
+          await waitFor(
+            () => findings(overlap).length > 0,
+            "known nested marked owner receives its changed-file result",
+          );
+          await pause(250);
+          assert.equal(
+            invocations().length,
+            1,
+            "overlapping source-root watcher echoes must coalesce",
+          );
+          await vscode.workspace.fs.writeFile(
+            sibling,
+            Buffer.from('value: "{{ alias\n }}"\n'),
+          );
+          const aliasDirectory = vscode.Uri.joinPath(
+            roots[0].uri,
+            "external-link",
+          );
+          await symlink(
+            vscode.Uri.joinPath(parent, "roles/external").fsPath,
+            aliasDirectory.fsPath,
+            process.platform === "win32" ? "junction" : "dir",
+          );
+          const aliasDocument = await vscode.workspace.openTextDocument(
+            vscode.Uri.joinPath(aliasDirectory, "defaults/main.yml"),
+          );
+          await vscode.window.showTextDocument(aliasDocument, {
+            preview: false,
+          });
+          await editor.check(aliasDocument, true);
+          await pause(300);
+          await writeFile(log, "");
+          await replace(aliasDocument, "value: 1\n");
+          assert.equal(await aliasDocument.save(), true);
+          await waitFor(
+            () =>
+              !findings(aliasDocument.uri).some(
+                (d) => d.code === "jinja-layout",
+              ),
+            "saved alias receives fresh diagnostics",
+          );
+          await pause(250);
+          assert.equal(
+            invocations().length,
+            1,
+            "canonical watcher and saved alias must share one check",
+          );
+          await vscode.workspace.fs.delete(marker);
+          await waitFor(
+            () =>
+              editor
+                .providerDocuments()
+                .every(
+                  (doc) =>
+                    vscode.workspace
+                      .getWorkspaceFolder(doc.uri)
+                      ?.uri.toString() !== roots[0].uri.toString(),
+                ),
+            "parent root opt-out is observed",
+          );
+          await pause(150);
+          await writeFile(log, "");
+          await vscode.workspace.fs.writeFile(
+            sibling,
+            Buffer.from('value: "{{ disabled\n }}"\n'),
+          );
+          await pause(350);
+          assert.deepEqual(findings(sibling), []);
+          assert.equal(
+            invocations().length,
+            0,
+            "disabled external root must stop watching and checking siblings",
+          );
+        } finally {
+          await config.update(
+            "root",
+            undefined,
+            vscode.ConfigurationTarget.WorkspaceFolder,
+          );
+          editor.configureRoots();
+          await rm(marker.fsPath, { force: true });
+          await rm(sibling.fsPath, { force: true });
+        }
+      },
+    );
   } finally {
     subscriptions.forEach((subscription) => subscription.dispose());
-    watcher.dispose();
     editor.dispose();
     delete process.env.SALTBOX_TEST_PROCESS_LOG;
     await rm(temporary, { recursive: true, force: true });

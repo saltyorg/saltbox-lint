@@ -139,13 +139,6 @@ export function activate(context: vscode.ExtensionContext): void {
       if (affected.length) editor.configureRoots();
     }),
   );
-  const watcher = vscode.workspace.createFileSystemWatcher("**/*.{yml,yaml}");
-  context.subscriptions.push(
-    watcher,
-    watcher.onDidChange((uri) => editor.refresh([uri])),
-    watcher.onDidCreate((uri) => editor.refresh([uri])),
-    watcher.onDidDelete((uri) => editor.removeFile(uri)),
-  );
   for (const document of vscode.workspace.textDocuments)
     void editor.check(document);
 }

@@ -18,6 +18,60 @@ export class MarkedRoots implements vscode.Disposable {
   private readonly roots = new Map<string, Root>();
   private readonly changed = new vscode.EventEmitter<string>();
   readonly onDidChange = this.changed.event;
+  private readonly fileChanged = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChangeFile = this.fileChanged.event;
+  private readonly fileWatchers = new Map<string, vscode.Disposable>();
+
+  // Known workspace owners (including unmarked folders) take precedence.
+  // Ownerless canonical files belong to the most specific active source root.
+  folder(uri: vscode.Uri): vscode.WorkspaceFolder | undefined {
+    const owner = vscode.workspace.getWorkspaceFolder(uri);
+    if (owner) return owner;
+    let selected: vscode.WorkspaceFolder | undefined;
+    let length = -1;
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      const root = this.get(folder.uri.toString());
+      if (!root || root.length <= length) continue;
+      const relative = path.relative(root, uri.fsPath);
+      if (
+        relative !== ".." &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      ) {
+        selected = folder;
+        length = root.length;
+      }
+    }
+    return selected;
+  }
+  private synchronizeFileWatchers(): void {
+    const active = new Set(
+      [...this.roots.values()].flatMap((root) =>
+        root.canonical ? [root.canonical] : [],
+      ),
+    );
+    for (const [root, watcher] of this.fileWatchers) {
+      if (active.has(root)) continue;
+      watcher.dispose();
+      this.fileWatchers.delete(root);
+    }
+    for (const root of active) {
+      if (this.fileWatchers.has(root)) continue;
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(vscode.Uri.file(root), "**/*.{yml,yaml}"),
+      );
+      const changed = (uri: vscode.Uri) => this.fileChanged.fire(uri);
+      this.fileWatchers.set(
+        root,
+        vscode.Disposable.from(
+          watcher,
+          watcher.onDidCreate(changed),
+          watcher.onDidChange(changed),
+          watcher.onDidDelete(changed),
+        ),
+      );
+    }
+  }
 
   configure(): void {
     const folders = new Set<string>();
@@ -61,6 +115,7 @@ export class MarkedRoots implements vscode.Disposable {
     root.revision++;
     root.watcher.dispose();
     this.roots.delete(key);
+    this.synchronizeFileWatchers();
     this.changed.fire(key);
   }
   async refresh(folder?: string): Promise<void> {
@@ -74,6 +129,7 @@ export class MarkedRoots implements vscode.Disposable {
     const revision = ++root.revision;
     if (invalidate) {
       root.canonical = undefined;
+      this.synchronizeFileWatchers();
       this.changed.fire(key);
     }
     root.ready = (async () => {
@@ -87,6 +143,7 @@ export class MarkedRoots implements vscode.Disposable {
       if (root.revision !== revision || this.roots.get(key) !== root) return;
       if (invalidate || root.canonical !== canonical) {
         root.canonical = canonical;
+        this.synchronizeFileWatchers();
         this.changed.fire(key);
       }
     })();
@@ -104,6 +161,8 @@ export class MarkedRoots implements vscode.Disposable {
       root.watcher.dispose();
     }
     this.roots.clear();
+    this.synchronizeFileWatchers();
+    this.fileChanged.dispose();
     this.changed.dispose();
   }
 }
