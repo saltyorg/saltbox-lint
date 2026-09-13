@@ -13,7 +13,7 @@ Code approval does not grant performance acceptance or publication readiness.
 Plan: [portable extension implementation](superpowers/plans/2026-09-12-vscode-extension.md).
 Baseline: `ef533311fc48a5001d497d99e462f0968bbceb16`.
 
-The latest local packages include the [marker and save lifecycle update](#marker-and-save-lifecycle-update-5099928).
+The latest local packages include the [active-project display update](#active-project-display-update-0ec7aa4).
 
 ## Reviewed stages
 
@@ -453,7 +453,7 @@ upgrade, stable tagged qualification and publication gates remain external.
 
 ## Marker and save lifecycle update: 5099928
 
-Current local snapshot packages identify clean code
+The marker-stage local snapshot packages identify clean code
 `5099928d7a197ad52ba2f759b80771fda7b44a20`. Independent task and final integration
 reviews approved the update with no unresolved findings. An empty regular `.saltbox-lint` file
 opts a source root in; the root defaults to the workspace folder and honors
@@ -492,3 +492,44 @@ Current commands, reports, reviews and hashes are retained under
 development probes remain recorded separately from passing assertions. No
 benchmark was rerun, no historical measurements were relabeled, and nothing was
 pushed or published by this workflow.
+
+## Active-project display update: 0ec7aa4
+
+The latest local snapshots identify clean code
+`0ec7aa427093007e11088c4e25d50e1ae534afe3`. The window-scoped
+`saltboxLint.activeProjectOnly` setting defaults to true, as requested. Only this
+extension's active-project findings and squiggles are published; false restores
+all marked projects. Other extensions are unaffected. Startup without a file
+context shows an overview; panels and non-file editors retain the last context.
+
+Switching between already-open files or toggling the setting republishes cached
+results without filesystem probes, CLI checks or authority-revision changes.
+Background results continue updating while hidden. Related locations invalidate
+in hidden caches and across saved-render races, and repaint cannot restore
+obsolete closed-file findings or stale fix authority. Existing marker eligibility,
+save-only checks, dirty-buffer retention and ownership behavior remain intact.
+
+Native `problems.autoReveal` is not rewritten. An isolated VS Code 1.137 renderer
+probe showed that auto-reveal can miss the first cached project-list replacement,
+while subsequent within-project file switches reveal the active file. This was
+an SDK-only probe, not product UI qualification. No custom sorting, pinning,
+focus-stealing or private API workaround was added; the README records the limit.
+
+Independent task and integration reviews approved the change. `make build` and
+`make snapshot` passed. All sixteen installed-package host runs exited zero:
+VS Code 1.100.0/1.137.0 each ran normal, regressions, markers, save-scope,
+active-project, active-project-cache, untrusted and disabled modes. Active-project
+tests the installed product; active-project-cache tests the production component
+with the installed CLI and recording/read gates. Linux and Alpine x64 native
+package probes passed; other native platforms and actual remote hosts remain
+pending. Sixteen runs used isolated containers with 512 MiB shared memory.
+
+All eight VSIX hashes and seventeen distribution checksums passed. Corresponding
+source archive SHA-256:
+`e42819f14885f53e405a2842720fe6e245ba62ac7f11c7d58de0fd201013cd20`.
+Previous `5099928` packages were preserved with verified hashes. Current reports,
+raw runs, UI observations and artifact identities are retained under
+`.superpowers/sdd/2026-09-13-active-project/`. An earlier renderer exit 133 remains
+unexplained; the shared-memory adjustment does not establish its cause. SDK/Git
+noise and the foreign-code-action fixture correction remain recorded. No
+benchmarks, consumer edits, user-setting changes or remote mutations were made.
