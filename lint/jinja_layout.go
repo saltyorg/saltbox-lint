@@ -15,6 +15,9 @@ type layoutAnalysis struct {
 	newline     string
 	block       bool
 	base        int
+	// Only the length fixer may wrap inline conditionals inside argument regions.
+	// The recursive force parameter also serves existing else-branch alignment.
+	wrapNestedConditionals bool
 }
 
 func layoutFindings(s *Source) ([]Diagnostic, []Edit) {
@@ -229,7 +232,7 @@ func (a *layoutAnalysis) region(lo, hi, content, conditional int, force bool) {
 				start = x + 2
 				anchor = a.column(ts[start].Span.Start)
 			}
-			a.region(start, y, anchor, anchor, force)
+			a.region(start, y, anchor, anchor, force && a.wrapNestedConditionals)
 		}
 		if a.block && a.lineStart(ts[close].Span.Start) && v == "(" {
 			start := bytes.LastIndexByte(a.source.Data[:ts[i].Span.Start], '\n') + 1

@@ -349,3 +349,16 @@ func TestLookupDiagnosticOwnsTheActualConditionalToken(t *testing.T) {
 		}
 	}
 }
+
+func TestLayoutKeepsInlineNestedElseConditional(t *testing.T) {
+	input := "v: \"{{ a\n    if flag\n    else fn(b if z else c) }}\"\n"
+	p := layoutProject(t, input)
+	ds := Analyze(p, jinjaRules())
+	if len(ds) != 0 {
+		t.Fatalf("already-valid layout diagnosed: %+v", ds)
+	}
+	changes, err := PlanFixes(p, ds)
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("already-valid layout changed: %+v %v", changes, err)
+	}
+}

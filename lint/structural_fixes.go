@@ -120,7 +120,7 @@ func buildStructuralChange(source *Source, rules []string) (Change, []structural
 			if !long[e.Span] || !e.mapped || !layoutSupported(e) {
 				continue
 			}
-			a := layoutAnalysis{source: candidate, expression: e, newline: "\n"}
+			a := layoutAnalysis{source: candidate, expression: e, newline: "\n", wrapNestedConditionals: true}
 			if bytes.Contains(candidate.Data, []byte("\r\n")) {
 				a.newline = "\r\n"
 			}

@@ -224,3 +224,13 @@ func TestStructuralFixRejectsExternalPreviewPromotion(t *testing.T) {
 		}
 	}
 }
+
+func TestStructuralFixPreservesValidNestedElseLayout(t *testing.T) {
+	input := "v: \"{{ a\n    if flag\n    else fn(b if z else c) }}\"\nw: \"{{ (a if flag else b) }}\"\n"
+	want := "v: \"{{ a\n    if flag\n    else fn(b if z else c) }}\"\nw: \"{{ a if flag else b }}\"\n"
+	p := expressionFixProject(t, "values.yml", input)
+	changes, err := PlanFixes(p, Analyze(p, Rules()))
+	if err != nil || len(changes) != 1 || string(changes[0].After) != want {
+		t.Fatalf("unrelated layout changed: %+v %v", changes, err)
+	}
+}

@@ -281,3 +281,16 @@ func TestFormatLintStructuralFixMatchesCheck(t *testing.T) {
 		t.Fatalf("check diverged: %q %v", disk, err)
 	}
 }
+
+func TestFormatLintKeepsInlineNestedElseConditional(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "values.yml")
+	input := "v: \"{{ a\n    if flag\n    else fn(b if z else c) }}\"\n"
+	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response, stderr, code := invokeFormat(t, input, "format", "--mode", "lint-fixes", "--root", root, "--stdin-filename", path, "-")
+	if code != 0 || stderr != "" || response.Status != "unchanged" || len(response.Edits) != 0 {
+		t.Fatalf("valid layout changed: %+v %s %d", response, stderr, code)
+	}
+}
