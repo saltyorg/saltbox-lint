@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/saltyorg/saltbox-lint/lint"
 )
@@ -56,8 +54,32 @@ func diffLines(data []byte) []string {
 	return lines
 }
 func diffPath(path string) string {
-	if strings.ContainsFunc(path, func(r rune) bool { return unicode.IsSpace(r) || r == '"' || r == '\\' }) {
-		return strconv.Quote(path)
+	quoted := false
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		if c <= ' ' || c >= 0x7f || c == '"' || c == '\\' {
+			quoted = true
+			break
+		}
 	}
-	return path
+	if !quoted {
+		return path
+	}
+	var b strings.Builder
+	b.Grow(len(path) + 2)
+	b.WriteByte('"')
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		switch {
+		case c == '"' || c == '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case c < ' ' || c >= 0x7f:
+			fmt.Fprintf(&b, "\\%03o", c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
