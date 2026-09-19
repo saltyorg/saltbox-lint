@@ -58,7 +58,10 @@ export class MarkedRoots implements vscode.Disposable {
     for (const root of active) {
       if (this.fileWatchers.has(root)) continue;
       const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(vscode.Uri.file(root), "**/*.{yml,yaml}"),
+        new vscode.RelativePattern(
+          vscode.Uri.file(root),
+          "**/*.{[yY][mM][lL],[yY][aA][mM][lL]}",
+        ),
       );
       const changed = (uri: vscode.Uri) => this.fileChanged.fire(uri);
       this.fileWatchers.set(

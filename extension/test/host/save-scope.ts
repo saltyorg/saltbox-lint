@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, rename, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -440,6 +440,54 @@ export async function runSaveScope(): Promise<void> {
           delete process.env.SALTBOX_TEST_PROCESS_GATE;
           await rm(gate, { force: true });
           await scan;
+        }
+      },
+    );
+    await run(
+      "external mixed-case YAML events refresh only affected diagnostics",
+      async () => {
+        const upper = vscode.Uri.joinPath(roots[0].uri, "external-event.YML");
+        const mixed = vscode.Uri.joinPath(roots[0].uri, "external-event.YaMl");
+        const unrelated = findings(other.uri);
+        assert.ok(unrelated.length > 0);
+        try {
+          await writeFile(upper.fsPath, 'value: "{{ external\n }}"\n');
+          await waitFor(
+            () => findings(upper).some((d) => d.code === "jinja-layout"),
+            "external uppercase YAML creation refreshes diagnostics",
+          );
+          assert.deepEqual(findings(other.uri), unrelated);
+
+          await writeFile(upper.fsPath, "value: 1\n");
+          await waitFor(
+            () => findings(upper).length === 0,
+            "external uppercase YAML change clears diagnostics",
+          );
+          assert.deepEqual(findings(other.uri), unrelated);
+
+          await writeFile(upper.fsPath, 'value: "{{ external\n }}"\n');
+          await waitFor(
+            () => findings(upper).some((d) => d.code === "jinja-layout"),
+            "external uppercase YAML change restores diagnostics",
+          );
+          await rename(upper.fsPath, mixed.fsPath);
+          await waitFor(
+            () =>
+              findings(upper).length === 0 &&
+              findings(mixed).some((d) => d.code === "jinja-layout"),
+            "external mixed-case YAML rename moves diagnostics",
+          );
+          assert.deepEqual(findings(other.uri), unrelated);
+
+          await rm(mixed.fsPath);
+          await waitFor(
+            () => findings(mixed).length === 0,
+            "external mixed-case YAML deletion clears diagnostics",
+          );
+          assert.deepEqual(findings(other.uri), unrelated);
+        } finally {
+          await rm(upper.fsPath, { force: true });
+          await rm(mixed.fsPath, { force: true });
         }
       },
     );
