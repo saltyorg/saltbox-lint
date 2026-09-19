@@ -296,7 +296,16 @@ func directlyComposedEndpoint(value *Node, expressions []Expression) (string, st
 // Decompose only grouping and top-level string concatenation. Nested call
 // arguments, collections, and conditional alternatives are opaque operands.
 func composedRoleVarLookups(tokens []Token) []roleVarLookup {
-	tokens = stripGrouping(tokens)
+	for len(tokens) >= 2 && tokens[0].Text == "(" && balancedEnd(tokens, 0, len(tokens)) == len(tokens)-1 {
+		inner := tokens[1 : len(tokens)-1]
+		if hasTopLevelComma(inner) {
+			return nil
+		}
+		tokens = inner
+	}
+	if hasTopLevelComma(tokens) {
+		return nil
+	}
 	if syntax := inspectRegion(tokens, 0, len(tokens)); syntax.If >= 0 {
 		return nil
 	}
@@ -324,6 +333,23 @@ func composedRoleVarLookups(tokens []Token) []roleVarLookup {
 		return append(parts, composedRoleVarLookups(tokens[start:])...)
 	}
 	return nil
+}
+
+// A comma at this depth makes the region a tuple, not one concatenated value.
+func hasTopLevelComma(tokens []Token) bool {
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i].Text {
+		case "(", "[", "{":
+			end := balancedEnd(tokens, i, len(tokens))
+			if end < 0 {
+				return false
+			}
+			i = end
+		case ",":
+			return true
+		}
+	}
+	return false
 }
 
 func pairedEndpoint(lookups []roleVarLookup) (string, string, bool) {

@@ -56,7 +56,6 @@ additional role files; repository scope requires shared-resource context.
 | `lookup-conditional-argument` | `lookup-conditional-argument` | File: resolve conditionals outside lookup arguments. |
 | `docker-healthcheck-shape` | `docker-healthcheck-test-layout` | File: valid marker-specific block-list shapes. |
 | `docker-healthcheck-mode` | `docker-healthcheck-command-mode` | File: CMD preference with explicit CMD-SHELL allowance. |
-
 | `lint-directive` | `saltbox-lint-directive` | File: known syntax, allowance, placement, and necessity. |
 | `svm-github-api-resource` | `svm-github-api-resource` | File with exact resource identity: direct SVM access belongs to its canonical fallback resource. |
 | `git-clone-resource` | `git-clone-resource` | File with exact resource identity: direct Git actions belong to the clone resource. |
