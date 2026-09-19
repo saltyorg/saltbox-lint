@@ -280,7 +280,7 @@ func directlyComposedEndpoint(value *Node, expressions []Expression) (string, st
 		}
 		start += end
 		parts := composedRoleVarLookups(expression.Tokens)
-		if first || strings.TrimSpace(value.Value[end:start]) != "." || len(parts) == 0 {
+		if first || value.Value[end:start] != "." || len(parts) == 0 {
 			if role, endpoint, ok := pairedEndpoint(chain); ok {
 				return role, endpoint, true
 			}

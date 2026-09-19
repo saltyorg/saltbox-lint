@@ -57,17 +57,6 @@ additional role files; repository scope requires shared-resource context.
 | `docker-healthcheck-shape` | `docker-healthcheck-test-layout` | File: valid marker-specific block-list shapes. |
 | `docker-healthcheck-mode` | `docker-healthcheck-command-mode` | File: CMD preference with explicit CMD-SHELL allowance. |
 
-For repeated web components, the rule recognizes lookups with matching literal
-role and endpoint targets within a string default when directly joined by Jinja
-`~` or `+`, including grouped concatenation, or when neighboring output tags
-are separated by a literal dot. The canonical endpoint-family and HTTPS host
-fallback checks also apply. Independent YAML mapping fields and sequence items,
-Jinja dict/list entries, conditional alternatives, and unrelated function
-arguments do not establish a composition. Dynamic role or endpoint arguments,
-complex expressions that do not expose a direct join, and output tags separated
-by anything other than a literal dot remain deliberately unsupported. In
-particular, a top-level YAML mapping or sequence never receives a string-valued
-`role_web` replacement hint merely because its children contain both lookups.
 | `lint-directive` | `saltbox-lint-directive` | File: known syntax, allowance, placement, and necessity. |
 | `svm-github-api-resource` | `svm-github-api-resource` | File with exact resource identity: direct SVM access belongs to its canonical fallback resource. |
 | `git-clone-resource` | `git-clone-resource` | File with exact resource identity: direct Git actions belong to the clone resource. |
@@ -76,6 +65,19 @@ particular, a top-level YAML mapping or sequence never receives a string-valued
 | `role-docker-state` | `role-docker-state` | File: shared Docker helpers own container state. |
 | `role-directory-name` | `role-directory-name` | Role path: snake_case directory names. |
 | `ansible-source-header` | `ansible-source-header` | File: ordered standard role YAML header. |
+
+For repeated web components, the rule recognizes lookups with matching literal
+role and endpoint targets within a string default when directly joined by Jinja
+`~` or `+`, including grouped concatenation, or when neighboring output tags
+are separated by exactly one literal dot. The canonical endpoint-family and
+HTTPS host fallback checks also apply. Independent YAML mapping fields and
+sequence items, Jinja dict/list entries, conditional alternatives, and
+unrelated function arguments do not establish a composition. Dynamic role or
+endpoint arguments, complex expressions that do not expose a direct join, and
+output tags separated by anything other than exactly `.` remain deliberately
+unsupported. In particular, a top-level YAML mapping or sequence never
+receives a string-valued `role_web` replacement hint merely because its children
+contain both lookups.
 
 The reductions merge repeated knowledge: seven formatting checks, four aggregate
 checks, two web checks, and two static-import checks. Do not merge healthcheck
