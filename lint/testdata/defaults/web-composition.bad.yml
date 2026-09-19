@@ -1,0 +1,4 @@
+example_role_external_host: "{{ lookup('role_var', '_api_subdomain', role='other') }}.{{ lookup('role_var', '_api_domain', role='other') }}"
+example_role_joined_url: "{{ lookup('role_var', '_web_subdomain', role='example') ~ '.' ~ lookup('role_var', '_web_domain', role='example') }}"
+example_role_grouped_host: "{{ (lookup('role_var', '_api_subdomain', role='other') + ('.' + lookup('role_var', '_api_domain', role='other'))) }}"
+example_role_multiple_host: "{{ lookup('role_var', '_api_subdomain', role='first') ~ lookup('role_var', '_api_subdomain', role='second') ~ '.' ~ lookup('role_var', '_api_domain', role='second') ~ lookup('role_var', '_api_domain', role='first') }}"

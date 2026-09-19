@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -118,6 +119,43 @@ example_role_web_url: "{{ lookup('role_var', '_web_subdomain', role='example') }
 		if strings.Contains(diagnostic.Expected, "second") {
 			t.Fatalf("later endpoint selected: %+v", diagnostic)
 		}
+	}
+}
+
+func TestRoleWebCompositionFixtures(t *testing.T) {
+	for _, test := range []struct {
+		file string
+		want []string
+	}{
+		{"web-composition.good.yml", nil},
+		{"web-composition.bad.yml", []string{"example_role_external_host", "example_role_joined_url", "example_role_grouped_host", "example_role_multiple_host"}},
+	} {
+		t.Run(test.file, func(t *testing.T) {
+			data, err := os.ReadFile("testdata/defaults/" + test.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := string(data)
+			project := defaultsProject(t, "roles/example/defaults/main.yml", input)
+			diagnostics := defaultsDiagnostics(t, "roles/example/defaults/main.yml", input, "role-web-contract")
+			if len(diagnostics) != len(test.want) {
+				t.Fatalf("diagnostics=%+v; want keys %q", diagnostics, test.want)
+			}
+			for i, d := range diagnostics {
+				if got := string(project.Sources[d.Path].Data[d.Span.Start:d.Span.End]); got != test.want[i] {
+					t.Errorf("diagnostic %d on %q; want %q", i, got, test.want[i])
+				}
+				if d.Fix != nil || !strings.Contains(d.Expected, "lookup('role_web'") {
+					t.Errorf("diagnostic %d has invalid fix or hint: %+v", i, d)
+				}
+			}
+			if test.file == "web-composition.bad.yml" && !strings.Contains(diagnostics[0].Expected, "role='other', endpoint='api'") {
+				t.Errorf("cross-role hint: %+v", diagnostics[0])
+			}
+			if test.file == "web-composition.bad.yml" && !strings.Contains(diagnostics[3].Expected, "role='first', endpoint='api'") {
+				t.Errorf("first-match hint: %+v", diagnostics[3])
+			}
+		})
 	}
 }
 

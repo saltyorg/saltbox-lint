@@ -159,7 +159,7 @@ func checkRoleWebContract(_ *Project, source *Source) []Diagnostic {
 			reported[declaration.Name] = true
 		}
 
-		targetRole, endpoint, composed := directlyComposedEndpoint(declarationExpressions)
+		targetRole, endpoint, composed := directlyComposedEndpoint(declaration.Value, declarationExpressions)
 		if !composed || reported[declaration.Name] {
 			continue
 		}
@@ -261,43 +261,100 @@ func hasCanonicalHostFallback(source *Source, declaration defaultDeclaration, en
 	return suffixOK && roleOK && suffix == "_"+endpoint+"_host" && role == source.Role
 }
 
-func directlyComposedEndpoint(expressions []Expression) (string, string, bool) {
-	components := make(map[string]map[string]bool)
-	var order []string
+// Only one string scalar can form a web default. Its output expressions may
+// join across a literal dot; separate YAML entries never share a composition.
+func directlyComposedEndpoint(value *Node, expressions []Expression) (string, string, bool) {
+	if value == nil || value.Kind != "string" {
+		return "", "", false
+	}
+	var chain []roleVarLookup
+	end := 0
+	first := true
 	for _, expression := range expressions {
-		for _, call := range Calls(expression, "lookup") {
-			plugin, pluginOK := lookupPlugin(call)
-			suffix, suffixOK := lookupPositionalLiteral(call, 1)
-			role, roleOK := lookupNamedLiteral(call, "role")
-			if !pluginOK || !suffixOK || !roleOK || plugin != "role_var" {
-				continue
+		if expression.node != value || expression.Kind != "output" || !expression.Complete {
+			continue
+		}
+		start := strings.Index(value.Value[end:], expression.text)
+		if start < 0 {
+			return "", "", false
+		}
+		start += end
+		parts := composedRoleVarLookups(expression.Tokens)
+		if first || strings.TrimSpace(value.Value[end:start]) != "." || len(parts) == 0 {
+			if role, endpoint, ok := pairedEndpoint(chain); ok {
+				return role, endpoint, true
 			}
-			component := ""
-			switch {
-			case strings.HasSuffix(suffix, "_subdomain"):
-				component = "subdomain"
-			case strings.HasSuffix(suffix, "_domain"):
-				component = "domain"
-			default:
-				continue
+			chain = nil
+		}
+		chain = append(chain, parts...)
+		end = start + len(expression.text)
+		first = false
+	}
+	return pairedEndpoint(chain)
+}
+
+// Decompose only grouping and top-level string concatenation. Nested call
+// arguments, collections, and conditional alternatives are opaque operands.
+func composedRoleVarLookups(tokens []Token) []roleVarLookup {
+	tokens = stripGrouping(tokens)
+	if syntax := inspectRegion(tokens, 0, len(tokens)); syntax.If >= 0 {
+		return nil
+	}
+	if found, ok := directRoleVarLookup(tokens); ok {
+		return []roleVarLookup{found}
+	}
+	var parts []roleVarLookup
+	start := 0
+	joined := false
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i].Text {
+		case "(", "[", "{":
+			end := balancedEnd(tokens, i, len(tokens))
+			if end < 0 {
+				return nil
 			}
-			endpoint := strings.TrimPrefix(strings.TrimSuffix(suffix, "_"+component), "_")
-			if endpoint == "" {
-				continue
-			}
-			key := role + "\x00" + endpoint
-			if components[key] == nil {
-				components[key] = make(map[string]bool)
-				order = append(order, key)
-			}
-			components[key][component] = true
+			i = end
+		case "~", "+":
+			joined = true
+			parts = append(parts, composedRoleVarLookups(tokens[start:i])...)
+			start = i + 1
 		}
 	}
-	for _, key := range order {
+	if joined {
+		return append(parts, composedRoleVarLookups(tokens[start:])...)
+	}
+	return nil
+}
+
+func pairedEndpoint(lookups []roleVarLookup) (string, string, bool) {
+	components := make(map[roleVarLookup]endpointComponents)
+	var order []roleVarLookup
+	for _, lookup := range lookups {
+		component := ""
+		switch {
+		case strings.HasSuffix(lookup.Suffix, "_subdomain"):
+			component = "subdomain"
+		case strings.HasSuffix(lookup.Suffix, "_domain"):
+			component = "domain"
+		default:
+			continue
+		}
+		endpoint := strings.TrimPrefix(strings.TrimSuffix(lookup.Suffix, "_"+component), "_")
+		if endpoint == "" || lookup.Suffix != "_"+endpoint+"_"+component {
+			continue
+		}
+		key := roleVarLookup{Role: lookup.Role, Suffix: endpoint}
+		if _, exists := components[key]; !exists {
+			order = append(order, key)
+		}
 		found := components[key]
-		if found["subdomain"] && found["domain"] {
-			role, endpoint, _ := strings.Cut(key, "\x00")
-			return role, endpoint, true
+		found.Subdomain = found.Subdomain || component == "subdomain"
+		found.Domain = found.Domain || component == "domain"
+		components[key] = found
+	}
+	for _, key := range order {
+		if found := components[key]; found.Subdomain && found.Domain {
+			return key.Role, key.Suffix, true
 		}
 	}
 	return "", "", false
