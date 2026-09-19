@@ -7,14 +7,14 @@ interface Request {
   fail: (reason: unknown) => void;
   detach: () => void;
 }
-/** A single lane: bounded pending work, latest key wins, canceled work is joined. */
+/** A single lane: latest key wins, canceled work is joined. */
 export class Scheduler {
   private readonly pending = new Map<string, Request>();
   private active?: Request;
   private stopped = false;
   private readonly limit: number;
-  constructor(limit = 32) {
-    this.limit = limit;
+  constructor(limit: number | "retain" = 32) {
+    this.limit = limit === "retain" ? Infinity : limit;
   }
   submit<T>(
     key: string,

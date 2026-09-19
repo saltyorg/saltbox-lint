@@ -45,7 +45,7 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly displayListeners: vscode.Disposable;
   private activeFile = vscode.window.activeTextEditor?.document.uri;
   private activeProjectOnly = this.displayActiveProjectOnly();
-  private readonly lint = new Scheduler();
+  private readonly lint = new Scheduler("retain");
   private readonly formatting = new Scheduler();
   private readonly collection =
     vscode.languages.createDiagnosticCollection("saltbox-lint");
@@ -307,21 +307,26 @@ export class EditorIntegration implements vscode.Disposable {
     manual = false,
     expectedVersion?: number,
   ): Promise<void> {
+    const version = expectedVersion ?? document.version;
+    const revision = this.documentRevision(document);
     if (manual) {
       const folder = vscode.workspace.getWorkspaceFolder(document.uri);
       if (folder) await this.roots.refresh(folder.uri.toString());
     }
     await this.roots.ready();
-    if (expectedVersion !== undefined && document.version !== expectedVersion)
+    if (
+      document.version !== version ||
+      this.documentRevision(document) !== revision
+    )
       return;
     if (!this.eligible(document)) return;
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
-    const requestKey = `${document.uri}:${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}`;
+    const requestKey = `${document.uri}:${version}:${revision}:${this.rootRevision(folder)}`;
     const existing = this.checking.get(requestKey);
     if (existing) return existing;
-    const work = this.checkSnapshot(document, manual, expectedVersion);
+    const work = this.checkSnapshot(document, manual, version);
     this.checking.set(requestKey, work);
     try {
       await work;
@@ -333,7 +338,7 @@ export class EditorIntegration implements vscode.Disposable {
   private async checkSnapshot(
     document: vscode.TextDocument,
     manual: boolean,
-    expectedVersion?: number,
+    version: number,
   ): Promise<void> {
     const key = document.uri.toString();
     const revision = this.documentRevision(document);
@@ -341,31 +346,46 @@ export class EditorIntegration implements vscode.Disposable {
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
     const rootRevision = this.rootRevision(folder);
+    // Ownership must exist while the request is queued, before any source copy.
+    this.documentFolders.set(key, folder);
+    const current = () =>
+      this.eligible(document) &&
+      document.version === version &&
+      revision === this.documentRevision(document) &&
+      rootRevision === this.rootRevision(folder);
     try {
-      const snapshot = await this.snapshot(document, expectedVersion);
-      if (!snapshot) return;
-      const wire = await this.lint.submit(key, manual ? 2 : 1, (signal) =>
-        runProcess(
-          {
-            executable: this.executable,
-            cwd: snapshot.root,
-            args: [
-              "check",
-              "--root",
-              snapshot.root,
-              "--stdin-filename",
-              snapshot.filename,
-              "--format",
-              "json",
-              "-",
-            ],
-            input: snapshot.text,
-            successCodes: [0, 1],
-          },
-          signal,
-        ),
+      const result = await this.lint.submit(
+        key,
+        manual ? 2 : 1,
+        async (signal) => {
+          if (signal.aborted || !current()) return;
+          const snapshot = await this.snapshot(document, version);
+          if (!snapshot || signal.aborted || !current()) return;
+          const wire = await runProcess(
+            {
+              executable: this.executable,
+              cwd: snapshot.root,
+              args: [
+                "check",
+                "--root",
+                snapshot.root,
+                "--stdin-filename",
+                snapshot.filename,
+                "--format",
+                "json",
+                "-",
+              ],
+              input: snapshot.text,
+              successCodes: [0, 1],
+            },
+            signal,
+          );
+          return { wire, snapshot };
+        },
       );
-      if (wire === undefined || !this.current(document, snapshot)) return;
+      if (!result || !current()) return;
+      const { wire, snapshot } = result;
+      if (!this.current(document, snapshot)) return;
       const report = parseCheck(wire);
       if (
         report.diagnostics.some((finding) => finding.path !== snapshot.path) ||
@@ -391,13 +411,7 @@ export class EditorIntegration implements vscode.Disposable {
       });
       this.publish(document.uri);
     } catch (error) {
-      if (
-        this.disposed ||
-        revision !== this.documentRevision(document) ||
-        rootRevision !== this.rootRevision(folder)
-      )
-        return;
-      this.error(error, manual);
+      if (current()) this.error(error, manual);
     }
   }
   async checkWorkspace(): Promise<void> {
@@ -430,8 +444,9 @@ export class EditorIntegration implements vscode.Disposable {
       const wire = await this.lint.submit(
         `${selected ? "files" : "workspace"}:${folder.uri}`,
         0,
-        (signal) =>
-          runProcess(
+        async (signal) => {
+          if (!current() || !this.roots.get(folderKey)) return;
+          return runProcess(
             {
               executable: this.executable,
               cwd: root,
@@ -447,7 +462,8 @@ export class EditorIntegration implements vscode.Disposable {
               successCodes: [0, 1],
             },
             signal,
-          ),
+          );
+        },
       );
       if (wire === undefined || !current()) return;
       const report = parseCheck(wire);

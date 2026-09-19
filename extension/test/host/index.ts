@@ -32,6 +32,10 @@ function diagnostics(uri: vscode.Uri) {
     .filter((d) => d.source === "saltbox-lint");
 }
 export async function run(): Promise<void> {
+  if (process.env.SALTBOX_TEST_QUEUE === "1") {
+    const { runQueue } = await import("./queue.ts");
+    return runQueue();
+  }
   if (process.env.SALTBOX_TEST_ACTIVE_PROJECT === "1") {
     const { runActiveProject } = await import("./active-project.ts");
     return runActiveProject();

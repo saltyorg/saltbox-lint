@@ -70,6 +70,14 @@ if (process.env.SALTBOX_TEST_REGRESSIONS === "1") {
     '################################\n# Settings\n################################\nvalue: "{{ a\n | f }}"\n',
   );
 }
+if (process.env.SALTBOX_TEST_QUEUE === "1") {
+  for (const folder of ["one", "two"])
+    for (let index = 0; index < 46; index++)
+      writeFileSync(
+        resolve(root, folder, `queue-${index}.yml`),
+        'value: "{{ value\n }}"\n',
+      );
+}
 const workspace = resolve(root, "test.code-workspace");
 writeFileSync(
   workspace,

@@ -134,3 +134,95 @@ test("a superseded request's token cannot cancel its replacement", async () => {
   assert.equal(await replacement, "replacement");
   scheduler.dispose();
 });
+
+for (const count of [40, 100]) {
+  test(`retaining queue executes all ${count} distinct requests with one active operation`, async () => {
+    const scheduler = new Scheduler("retain");
+    const gate = latch();
+    let active = 0;
+    let maximum = 0;
+    const seen: number[] = [];
+    const first = scheduler.submit("held", 0, async () => {
+      active++;
+      maximum = Math.max(maximum, active);
+      await gate.promise;
+      active--;
+    });
+    const pending = Array.from({ length: count }, (_, index) =>
+      scheduler.submit(String(index), 1, async () => {
+        active++;
+        maximum = Math.max(maximum, active);
+        seen.push(index);
+        await Promise.resolve();
+        active--;
+        return index;
+      }),
+    );
+    assert.deepEqual(seen, [], "pending operations must remain lazy");
+    gate.resolve();
+    await first;
+    assert.deepEqual(
+      await Promise.all(pending),
+      Array.from({ length: count }, (_, i) => i),
+    );
+    assert.deepEqual(
+      seen,
+      Array.from({ length: count }, (_, i) => i),
+    );
+    assert.equal(maximum, 1);
+    scheduler.dispose();
+  });
+}
+
+test("retaining queue coalesces keys and preserves priority and FIFO", async () => {
+  const scheduler = new Scheduler("retain");
+  const gate = latch();
+  const seen: string[] = [];
+  const first = scheduler.submit("held", 0, async () => gate.promise);
+  const submit = (key: string, priority: number, value = key) =>
+    scheduler.submit(key, priority, async () => {
+      seen.push(value);
+      return value;
+    });
+  const background = submit("background", 0);
+  const old = submit("document", 1, "old");
+  const peer = submit("peer", 1);
+  const latest = submit("document", 1, "latest");
+  const manual = submit("manual", 2);
+  const canceled = submit("canceled", 2);
+  scheduler.cancel("canceled");
+  gate.resolve();
+  await Promise.all([first, background, old, peer, latest, manual, canceled]);
+  assert.equal(await old, undefined);
+  assert.equal(await canceled, undefined);
+  assert.deepEqual(seen, ["manual", "peer", "latest", "background"]);
+  scheduler.dispose();
+});
+
+test("disposing a retaining queue cancels all pending work and joins its active operation", async () => {
+  const scheduler = new Scheduler("retain");
+  const gate = latch();
+  let joined = false;
+  let signal!: AbortSignal;
+  const first = scheduler.submit("held", 1, async (token) => {
+    signal = token;
+    await gate.promise;
+    joined = true;
+  });
+  const pending = Array.from({ length: 100 }, (_, index) =>
+    scheduler.submit(String(index), 1, async () =>
+      assert.fail("disposed work ran"),
+    ),
+  );
+  scheduler.dispose();
+  assert.equal(signal.aborted, true);
+  assert.equal(joined, false);
+  gate.resolve();
+  await first;
+  assert.equal(joined, true);
+  assert.ok((await Promise.all(pending)).every((value) => value === undefined));
+  assert.equal(
+    await scheduler.submit("late", 1, async () => assert.fail("late work ran")),
+    undefined,
+  );
+});
