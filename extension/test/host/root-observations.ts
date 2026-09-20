@@ -60,8 +60,11 @@ export function observeRootFormatting(document: vscode.TextDocument) {
   try {
     Object.defineProperty(fs, "lstat", {
       ...lstatDescriptor,
-      value: (...args: Parameters<typeof originalLstat>) => {
-        const result = Reflect.apply(originalLstat, fs, args) as ReturnType<
+      value: function (
+        this: unknown,
+        ...args: Parameters<typeof originalLstat>
+      ) {
+        const result = Reflect.apply(originalLstat, this, args) as ReturnType<
           typeof originalLstat
         >;
         if (
@@ -87,10 +90,15 @@ export function observeRootFormatting(document: vscode.TextDocument) {
     });
     Object.defineProperty(fs, "realpath", {
       ...realpathDescriptor,
-      value: (...args: Parameters<typeof originalRealpath>) => {
-        const result = Reflect.apply(originalRealpath, fs, args) as ReturnType<
-          typeof originalRealpath
-        >;
+      value: function (
+        this: unknown,
+        ...args: Parameters<typeof originalRealpath>
+      ) {
+        const result = Reflect.apply(
+          originalRealpath,
+          this,
+          args,
+        ) as ReturnType<typeof originalRealpath>;
         if (relevant(args[0])) {
           record("realpath-start", String(args[0]));
           void result.then(
@@ -103,12 +111,13 @@ export function observeRootFormatting(document: vscode.TextDocument) {
     });
     Object.defineProperty(childProcess, "spawn", {
       ...spawnDescriptor,
-      value: (...args: Parameters<typeof originalSpawn>) => {
-        const child = Reflect.apply(
-          originalSpawn,
-          childProcess,
-          args,
-        ) as ReturnType<typeof originalSpawn>;
+      value: function (
+        this: unknown,
+        ...args: Parameters<typeof originalSpawn>
+      ) {
+        const child = Reflect.apply(originalSpawn, this, args) as ReturnType<
+          typeof originalSpawn
+        >;
         if (Array.isArray(args[1]) && args[1][0] === "format") {
           record("format-spawn", {
             pid: child.pid,
