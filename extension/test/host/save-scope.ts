@@ -1,7 +1,14 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile, rename, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+  rename,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -76,6 +83,7 @@ export async function runSaveScope(): Promise<void> {
     const document = await vscode.workspace.openTextDocument(
       vscode.Uri.joinPath(roots[0].uri, "roles/example/defaults/main.yml"),
     );
+    const canonicalFilename = await realpath(document.uri.fsPath);
     const otherUri = vscode.Uri.joinPath(roots[0].uri, "other.yml");
     await vscode.workspace.fs.writeFile(
       otherUri,
@@ -157,7 +165,7 @@ export async function runSaveScope(): Promise<void> {
           1,
           `save/watcher echoes must produce one check: ${JSON.stringify(invocations())}`,
         );
-        assert.ok(invocations()[0].includes(document.uri.fsPath));
+        assert.ok(invocations()[0].includes(canonicalFilename));
         assert.ok(!invocations()[0].endsWith(" ."));
         await waitFor(
           () => !findings(document.uri).some((d) => d.code === "jinja-layout"),

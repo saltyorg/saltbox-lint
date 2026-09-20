@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
@@ -121,6 +121,7 @@ export async function runQueue(): Promise<void> {
             vscode.Uri.joinPath(root.uri, `queue-${40 + index}.yml`),
           );
           await vscode.window.showTextDocument(document, { preview: false });
+          const canonicalFilename = await realpath(document.uri.fsPath);
           assert.equal(document.languageId, "yaml");
           assert.equal(document.isClosed, false);
           let reads = 0;
@@ -210,7 +211,7 @@ export async function runQueue(): Promise<void> {
               assert.ok(
                 invocations()
                   .slice(before)
-                  .some((line) => line.includes(document.uri.fsPath)),
+                  .some((line) => line.includes(canonicalFilename)),
                 "current queued check must execute",
               );
               assert.ok(
@@ -229,7 +230,7 @@ export async function runQueue(): Promise<void> {
             assert.ok(
               !invocations()
                 .slice(before)
-                .some((line) => line.includes(document.uri.fsPath)),
+                .some((line) => line.includes(canonicalFilename)),
               "obsolete queued check executed",
             );
             assert.equal(
