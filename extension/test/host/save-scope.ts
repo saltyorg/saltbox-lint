@@ -606,6 +606,10 @@ export async function runSaveScope(): Promise<void> {
             sibling,
             Buffer.from('value: "{{ alias\n }}"\n'),
           );
+          await waitFor(
+            () => findings(sibling).some((d) => d.code === "jinja-layout"),
+            "recreated sibling publishes findings before alias ownership",
+          );
           const aliasDirectory = vscode.Uri.joinPath(
             roots[0].uri,
             "external-link",
@@ -637,7 +641,8 @@ export async function runSaveScope(): Promise<void> {
           assert.equal(
             invocations().length,
             1,
-            "canonical watcher and saved alias must share one check",
+            "canonical watcher and saved alias must share one check: " +
+              JSON.stringify(invocations()),
           );
           await vscode.workspace.fs.delete(marker);
           await waitFor(
