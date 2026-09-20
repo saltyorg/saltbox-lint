@@ -51,8 +51,9 @@ func queryBackground(ctx context.Context, tty *os.File, timeout time.Duration) (
 	}
 	defer unix.SetNonblock(int(fd), false) //nolint:errcheck
 	// Use unix I/O: os.File.Read/Write may wait in the Go poller despite O_NONBLOCK.
-	if n, err := unix.Write(int(fd), []byte(ansi.RequestBackgroundColor)); err != nil || n != len(ansi.RequestBackgroundColor) {
-		return false, fmt.Errorf("request terminal background: wrote %d bytes: %v", n, err)
+	n, writeErr := unix.Write(int(fd), []byte(ansi.RequestBackgroundColor))
+	if err := backgroundQueryWriteResult(n, writeErr); err != nil {
+		return false, err
 	}
 	deadline := time.Now().Add(timeout)
 	var response []byte

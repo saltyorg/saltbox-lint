@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"regexp"
 	"time"
 
@@ -10,6 +11,16 @@ import (
 )
 
 const backgroundQueryTimeout = 250 * time.Millisecond
+
+func backgroundQueryWriteResult(written int, writeErr error) error {
+	if writeErr == nil && written == len(ansi.RequestBackgroundColor) {
+		return nil
+	}
+	if writeErr == nil {
+		writeErr = io.ErrShortWrite
+	}
+	return fmt.Errorf("request terminal background: wrote %d bytes: %w", written, writeErr)
+}
 
 var backgroundColorPattern = regexp.MustCompile(`^(?:#[[:xdigit:]]{3}|#[[:xdigit:]]{6}|rgb:[[:xdigit:]]{1,4}/[[:xdigit:]]{1,4}/[[:xdigit:]]{1,4})$`)
 

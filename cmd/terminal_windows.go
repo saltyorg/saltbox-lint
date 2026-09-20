@@ -53,8 +53,9 @@ func queryConsoleBackground(ctx context.Context, input, output *os.File, timeout
 		return false, err
 	}
 	defer windows.SetConsoleMode(outHandle, outMode) //nolint:errcheck
-	if n, err := nativeio.Write(ctx, output, []byte(ansi.RequestBackgroundColor)); err != nil || n != len(ansi.RequestBackgroundColor) {
-		return false, fmt.Errorf("request terminal background: wrote %d bytes: %v", n, err)
+	n, writeErr := nativeio.Write(ctx, output, []byte(ansi.RequestBackgroundColor))
+	if err := backgroundQueryWriteResult(n, writeErr); err != nil {
+		return false, err
 	}
 	var response []byte
 	for {
