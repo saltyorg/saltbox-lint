@@ -14,7 +14,7 @@ import (
 )
 
 func TestEditorJobRejectsInvalidProcess(t *testing.T) {
-	if _, err := createEditorJob(windows.InvalidHandle); err == nil {
+	if _, err := createEditorJob(windows.Handle(0)); err == nil {
 		t.Fatal("invalid process was accepted")
 	}
 }
