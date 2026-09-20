@@ -82,6 +82,7 @@ func TestDiffPatchAppliesToExactFilenameAndContent(t *testing.T) {
 				}
 			}
 			git("init", "-q")
+			git("config", "core.autocrlf", "false")
 			path := filepath.Join(root, tc.path)
 			if err := os.WriteFile(path, []byte(tc.before), 0o600); err != nil {
 				t.Fatal(err)

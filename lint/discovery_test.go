@@ -29,7 +29,7 @@ func TestLoadReportsFirstCandidateError(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			want := fmt.Sprintf("source %s is outside root %s", first, root)
+			want := fmt.Sprintf("source %s is outside root %s", canonicalTestPath(t, first), canonicalTestPath(t, root))
 			for range 10 {
 				_, err := Load(t.Context(), Options{Root: root, Paths: []string{root}})
 				if err == nil || err.Error() != want {
@@ -42,6 +42,10 @@ func TestLoadReportsFirstCandidateError(t *testing.T) {
 
 func TestGitDirectoryCandidatesRespectPathBoundaries(t *testing.T) {
 	files := []string{"roles/a", "roles/a-extra/tasks/main.yml", "roles/a/defaults/main.yml", "roles/a/tasks/main.yml", "roles/ab/tasks/main.yml", "saltbox.yml"}
+	for i := range files {
+		files[i] = filepath.FromSlash(files[i])
+	}
+	slices.Sort(files)
 	for _, tc := range []struct {
 		dir  string
 		want []string
@@ -52,11 +56,23 @@ func TestGitDirectoryCandidatesRespectPathBoundaries(t *testing.T) {
 		{"roles/missing", nil},
 	} {
 		t.Run(tc.dir, func(t *testing.T) {
-			if got := slices.Collect(gitDirectoryCandidates(files, tc.dir)); !slices.Equal(got, tc.want) {
+			for i := range tc.want {
+				tc.want[i] = filepath.FromSlash(tc.want[i])
+			}
+			if got := slices.Collect(gitDirectoryCandidates(files, filepath.FromSlash(tc.dir))); !slices.Equal(got, tc.want) {
 				t.Fatalf("candidates = %v, want %v", got, tc.want)
 			}
 		})
 	}
+}
+
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
 }
 
 func putFile(t *testing.T, root, name, data string) string {
@@ -129,7 +145,7 @@ func TestLoadSelectedRoleContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Root != root || p.Name != "saltbox" {
+	if p.Root != canonicalTestPath(t, root) || p.Name != "saltbox" {
 		t.Errorf("identity: root=%q name=%q", p.Root, p.Name)
 	}
 	if got := selectedPaths(p); !slices.Equal(got, []string{"roles/demo/tasks/main.yml"}) {
@@ -163,7 +179,7 @@ func TestLoadStandaloneAndStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Root != root || len(p.Selected) != 1 || p.Sources["input.yaml"].Documents[0].Get("value").Value != "buffer" {
+	if p.Root != canonicalTestPath(t, root) || len(p.Selected) != 1 || p.Sources["input.yaml"].Documents[0].Get("value").Value != "buffer" {
 		t.Fatalf("override: %#v", p)
 	}
 	missing := filepath.Join(root, "new.yml")
@@ -339,13 +355,14 @@ func TestLoadSymlinkedProjectPaths(t *testing.T) {
 		{"explicit directory", Options{Root: link, Paths: []string{link}}},
 		{"duplicate lexical paths", Options{Paths: []string{file, filepath.Join(root, "roles/demo/tasks/main.yml")}}},
 	}
+	canonicalRoot := canonicalTestPath(t, root)
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			p, err := Load(t.Context(), tt.opts)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if p.Root != root || !p.Selected["roles/demo/tasks/main.yml"] {
+			if p.Root != canonicalRoot || !p.Selected["roles/demo/tasks/main.yml"] {
 				t.Fatalf("project identity=%#v", p)
 			}
 		})
@@ -359,7 +376,7 @@ func TestLoadSymlinkedProjectPaths(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Root != root || !p.Selected["roles/demo/tasks/unsaved/new.yml"] || string(p.Sources["roles/demo/tasks/unsaved/new.yml"].Data) != "- debug: msg=buffer\n" {
+		if p.Root != canonicalRoot || !p.Selected["roles/demo/tasks/unsaved/new.yml"] || string(p.Sources["roles/demo/tasks/unsaved/new.yml"].Data) != "- debug: msg=buffer\n" {
 			t.Fatalf("stdin identity=%#v", p)
 		}
 	}

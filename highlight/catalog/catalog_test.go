@@ -1,8 +1,10 @@
 package catalog
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +15,11 @@ func TestImportAnsibleOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := importFiles(files, []string{"/srv/git/saltbox/library"})
+	root := t.TempDir()
+	separator := string(filepath.Separator)
+	nativeFiles := strings.ReplaceAll(string(files), "/", separator)
+	nativeFiles = strings.ReplaceAll(nativeFiles, separator+"srv"+separator, filepath.Join(root, "srv")+separator)
+	c, err := importFiles([]byte(nativeFiles), []string{filepath.Join(root, "srv", "git", "saltbox", "library")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +94,8 @@ func TestResolverPrecedenceAndRoutes(t *testing.T) {
 }
 
 func TestFileDiscoveryDoesNotInventNamespace(t *testing.T) {
-	c, err := importFiles([]byte("odd.custom.name /tmp/library/odd.custom.name.py\n"), []string{"/tmp/library"})
+	library := filepath.Join(t.TempDir(), "library")
+	c, err := importFiles([]byte(fmt.Sprintf("odd.custom.name %s\n", filepath.Join(library, "odd.custom.name.py"))), []string{library})
 	if err != nil {
 		t.Fatal(err)
 	}

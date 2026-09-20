@@ -148,6 +148,10 @@ func TestSectionSpacingFixPreservesSourceAndIsIdempotent(t *testing.T) {
 			if err := os.WriteFile(target, []byte(input), 0640); err != nil {
 				t.Fatal(err)
 			}
+			before, err := os.Stat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := WriteChanges(p, changes); err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +160,7 @@ func TestSectionSpacingFixPreservesSourceAndIsIdempotent(t *testing.T) {
 				t.Fatalf("written bytes=%q error=%v", actual, err)
 			}
 			info, err := os.Stat(target)
-			if err != nil || info.Mode().Perm() != 0640 {
+			if err != nil || info.Mode().Perm() != before.Mode().Perm() {
 				t.Fatalf("mode changed: %v, %v", info, err)
 			}
 			fixed, remaining := sectionDiagnostics(t, changes[0].Path, want)
