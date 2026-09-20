@@ -248,8 +248,18 @@ export async function runSaveScope(): Promise<void> {
     await run(
       "explicit saves recheck unchanged bytes while watcher echoes do not",
       async () => {
+        await replace(document, original);
+        await editor.check(document, true);
+        assert.ok(
+          findings(document.uri).some((d) => d.code === "jinja-layout"),
+          "setup fixture must publish Jinja findings",
+        );
+        await replace(document, "value: 1\n");
         assert.equal(await document.save(), true);
-        await pause(350);
+        await waitFor(
+          () => !findings(document.uri).some((d) => d.code === "jinja-layout"),
+          "initial save must publish clean diagnostics",
+        );
         await writeFile(log, "");
         editor.saved(document);
         await waitFor(

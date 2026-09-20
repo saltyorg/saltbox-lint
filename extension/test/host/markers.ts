@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EditorIntegration } from "../../src/editor.ts";
+import { observeRootFormatting } from "./root-observations.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const diagnostics = (uri: vscode.Uri) =>
@@ -316,29 +317,45 @@ export async function runMarkers(): Promise<void> {
   );
 
   const config = vscode.workspace.getConfiguration("saltboxLint", roots[0].uri);
-  await config.update(
-    "root",
-    "roles/example",
-    vscode.ConfigurationTarget.WorkspaceFolder,
-  );
+  const observed = observeRootFormatting(document);
   try {
-    await waitFor(
-      () => diagnostics(document.uri).length === 0,
-      "override requires its own marker",
-    );
-    await marker(nested, true);
-    await waitFor(
-      () => diagnostics(document.uri).length > 0,
-      "nested override marker restores checks",
-    );
-    assert.ok((await formatting(document)).length > 0);
-  } finally {
-    await marker(nested, false);
     await config.update(
       "root",
-      undefined,
+      "roles/example",
       vscode.ConfigurationTarget.WorkspaceFolder,
     );
+    observed.note("after-config-update");
+    try {
+      await waitFor(
+        () => diagnostics(document.uri).length === 0,
+        "override requires its own marker",
+      );
+      observed.note("after-diagnostics-clear");
+      await marker(nested, true);
+      observed.note("after-marker-create");
+      await waitFor(
+        () => diagnostics(document.uri).length > 0,
+        "nested override marker restores checks",
+      );
+      observed.note("after-diagnostics-return");
+      observed.note("before-format");
+      const edits = await formatting(document);
+      observed.note("after-format", { edits: edits.length });
+      const failure =
+        edits.length === 0
+          ? "nested override formatter unavailable: " + observed.report()
+          : undefined;
+      assert.ok(edits.length > 0, failure);
+    } finally {
+      await marker(nested, false);
+      await config.update(
+        "root",
+        undefined,
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+    }
+  } finally {
+    observed.dispose();
   }
 
   const externalRoot = join(roots[0].uri.fsPath, "..", "external-root");
