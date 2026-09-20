@@ -120,6 +120,7 @@ export async function checkMarkerEvents(
   const previousCLI = process.env.SALTBOX_TEST_REAL_CLI;
   const previousLog = process.env.SALTBOX_TEST_PROCESS_LOG;
   const previousGate = process.env.SALTBOX_TEST_PROCESS_GATE;
+  let aliasedUri: vscode.Uri | undefined;
   const capture = captureMarkerWatchers();
   process.env.SALTBOX_TEST_REAL_CLI = join(
     extensionPath,
@@ -350,6 +351,7 @@ export async function checkMarkerEvents(
     const aliased = await vscode.workspace.openTextDocument(
       vscode.Uri.file(join(alias, "main.yml")),
     );
+    aliasedUri = aliased.uri;
     await vscode.window.showTextDocument(aliased, { preview: false });
     await editor.check(aliased, true);
     assert.ok(editor.providerDocuments().includes(aliased));
@@ -382,6 +384,19 @@ export async function checkMarkerEvents(
     );
   } finally {
     editor.dispose();
+    const aliasTabs = vscode.window.tabGroups.all.flatMap((group) =>
+      group.tabs.filter(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === aliasedUri?.toString(),
+      ),
+    );
+    if (aliasTabs.length)
+      assert.equal(
+        await vscode.window.tabGroups.close(aliasTabs),
+        true,
+        "auxiliary marker alias tabs close before fixture removal",
+      );
     await config.update(
       "root",
       previousRoot,
@@ -399,6 +414,12 @@ export async function checkMarkerEvents(
       else process.env[key!] = value;
     }
     await rm(temporary, { recursive: true, force: true });
-    await rm(aliases, { recursive: true, force: true });
+    // Native watcher/child handles may outlive synchronous disposal on Windows.
+    await rm(aliases, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 }
