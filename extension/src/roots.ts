@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
 import { lstat } from "node:fs/promises";
 import * as path from "node:path";
 import { canonicalRoot } from "./identity.ts";
@@ -7,9 +8,28 @@ export const rootMarker = ".saltbox-lint";
 interface Root {
   source: string;
   canonical?: string;
+  markerIdentity?: string;
   revision: number;
   ready: Promise<void>;
   watcher: vscode.Disposable;
+}
+
+// Access time can change when the marker is merely read. Preserve the remaining
+// identity and change metadata at native precision, including replacement inodes.
+function markerIdentity(stat: BigIntStats): string {
+  return [
+    stat.dev,
+    stat.ino,
+    stat.mode,
+    stat.nlink,
+    stat.uid,
+    stat.gid,
+    stat.rdev,
+    stat.size,
+    stat.mtimeNs,
+    stat.ctimeNs,
+    stat.birthtimeNs,
+  ].join(":");
 }
 
 // Marker probes run at setup, on filesystem/configuration events and manual commands.
@@ -100,11 +120,14 @@ export class MarkedRoots implements vscode.Disposable {
         watcher,
       };
       this.roots.set(key, root);
-      const refresh = () => this.probe(key, root);
+      const refresh = () => {
+        if (this.roots.get(key) !== root || this.unchangedMarker(root)) return;
+        void this.probe(key, root);
+      };
       root.watcher = vscode.Disposable.from(
         watcher,
         watcher.onDidCreate(refresh),
-        watcher.onDidDelete(refresh),
+        watcher.onDidDelete(() => this.probe(key, root)),
         watcher.onDidChange(refresh),
       );
       this.probe(key, root);
@@ -128,24 +151,55 @@ export class MarkedRoots implements vscode.Disposable {
         .map(([key, root]) => this.probe(key, root, false)),
     );
   }
+  private unchangedMarker(root: Root): boolean {
+    if (!root.canonical || !root.markerIdentity) return false;
+    // This synchronous check is limited to marker control events. It avoids
+    // revoking verified work for duplicates while changes still revoke before
+    // returning from the watcher callback, without awaiting filesystem I/O.
+    try {
+      const stat = lstatSync(path.join(root.source, rootMarker), {
+        bigint: true,
+      });
+      return (
+        stat.isFile() &&
+        markerIdentity(stat) === root.markerIdentity &&
+        realpathSync.native(root.source) === root.canonical
+      );
+    } catch {
+      return false;
+    }
+  }
   private probe(key: string, root: Root, invalidate = true): Promise<void> {
+    if (this.roots.get(key) !== root) return Promise.resolve();
     const revision = ++root.revision;
     if (invalidate) {
       root.canonical = undefined;
+      root.markerIdentity = undefined;
       this.synchronizeFileWatchers();
       this.changed.fire(key);
     }
     root.ready = (async () => {
       let canonical: string | undefined;
+      let identity: string | undefined;
       try {
-        if ((await lstat(path.join(root.source, rootMarker))).isFile())
+        const stat = await lstat(path.join(root.source, rootMarker), {
+          bigint: true,
+        });
+        if (stat.isFile()) {
           canonical = await canonicalRoot(root.source, "");
+          identity = markerIdentity(stat);
+        }
       } catch {
         // Missing/inaccessible/nonregular markers do not opt a root in.
       }
       if (root.revision !== revision || this.roots.get(key) !== root) return;
-      if (invalidate || root.canonical !== canonical) {
+      if (
+        invalidate ||
+        root.canonical !== canonical ||
+        root.markerIdentity !== identity
+      ) {
         root.canonical = canonical;
+        root.markerIdentity = identity;
         this.synchronizeFileWatchers();
         this.changed.fire(key);
       }

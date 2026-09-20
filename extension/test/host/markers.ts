@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EditorIntegration } from "../../src/editor.ts";
 import { observeRootFormatting } from "./root-observations.ts";
+import { checkMarkerEvents } from "./marker-events.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const diagnostics = (uri: vscode.Uri) =>
@@ -468,4 +469,5 @@ export async function runMarkers(): Promise<void> {
   console.log(
     "PASS nested/external root overrides and literal-path YAML/Ansible provider lifecycle",
   );
+  await checkMarkerEvents(extension.extensionPath, document);
 }
