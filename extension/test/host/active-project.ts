@@ -463,6 +463,8 @@ export async function runActiveProject(): Promise<void> {
             roots[0].uri,
             "roles/example/defaults/z-gate.yml",
           );
+          const renderedFilename = await filesystem.realpath(rendered.fsPath);
+          const sentinelFilename = await filesystem.realpath(sentinel.fsPath);
           let renderedReads = 0;
           let held = false;
           let release!: () => void;
@@ -475,8 +477,8 @@ export async function runActiveProject(): Promise<void> {
             ...args: Parameters<typeof originalRead>
           ) => {
             const result = await originalRead(...args);
-            if (String(args[0]) === rendered.fsPath) renderedReads++;
-            if (String(args[0]) === sentinel.fsPath && !held) {
+            if (String(args[0]) === renderedFilename) renderedReads++;
+            if (String(args[0]) === sentinelFilename && !held) {
               held = true;
               await gate;
             }
