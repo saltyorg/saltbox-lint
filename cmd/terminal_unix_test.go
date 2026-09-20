@@ -32,13 +32,15 @@ func TestTerminalInterruptHelper(t *testing.T) {
 	code := Run(ctx, []string{"rules", "jinja-layout", "--theme", "auto", "--color", "always"}, Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, "test")
 	stop()
 	after, afterErr := unix.IoctlGetTermios(int(os.Stdin.Fd()), terminalGetState)
+	proofResult := "restored"
 	switch {
 	case beforeErr != nil || afterErr != nil:
-		fmt.Fprintf(proof, "terminal ioctl: before=%v after=%v\n", beforeErr, afterErr)
+		proofResult = fmt.Sprintf("terminal ioctl: before=%v after=%v", beforeErr, afterErr)
 	case *after != *before:
-		fmt.Fprintf(proof, "terminal mode changed: before=%+v after=%+v\n", before, after)
-	default:
-		fmt.Fprintln(proof, "restored")
+		proofResult = fmt.Sprintf("terminal mode changed: before=%+v after=%+v", before, after)
+	}
+	if _, err := fmt.Fprintln(proof, proofResult); err != nil {
+		os.Exit(3)
 	}
 	var release [1]byte
 	_, _ = io.ReadFull(ack, release[:])
@@ -69,14 +71,14 @@ func TestTerminalQueryPreservesInterruptAndRestoresMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer proofRead.Close()
-	defer proofWrite.Close()
+	defer func() { _ = proofRead.Close() }()
+	defer func() { _ = proofWrite.Close() }()
 	ackRead, ackWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ackRead.Close()
-	defer ackWrite.Close()
+	defer func() { _ = ackRead.Close() }()
+	defer func() { _ = ackWrite.Close() }()
 	command.ExtraFiles = []*os.File{proofWrite, ackRead}
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -126,6 +128,9 @@ func TestTerminalQueryPreservesInterruptAndRestoresMode(t *testing.T) {
 				t.Fatal(err)
 			}
 			proof.Write(chunk[:n])
+		}
+		if pollFDs[1].Revents&unix.POLLHUP != 0 && !bytes.Contains(proof.Bytes(), []byte{'\n'}) {
+			t.Fatalf("terminal proof pipe closed before result: output=%q proof=%q", output.String(), proof.String())
 		}
 		if strings.Contains(output.String(), "context canceled") && bytes.Contains(proof.Bytes(), []byte{'\n'}) {
 			break
