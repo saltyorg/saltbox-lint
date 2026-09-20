@@ -370,12 +370,71 @@ export async function runMarkers(): Promise<void> {
       (await formatting(special)).length > 0,
       "literal glob characters retain formatter registration",
     );
-    await vscode.languages.setTextDocumentLanguage(special, "ansible");
-    await waitFor(
-      () => diagnostics(special.uri).length > 0,
-      "Ansible language reopens marked document",
-    );
-    assert.ok((await formatting(special)).length > 0);
+    const fsPromises =
+      require("node:fs/promises") as typeof import("node:fs/promises");
+    const originalRealpath = fsPromises.realpath;
+    const realpathDescriptor = Object.getOwnPropertyDescriptor(
+      fsPromises,
+      "realpath",
+    )!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entries = 0;
+    let enterFormatter!: () => void;
+    const formatterIdentity = new Promise<void>((resolve) => {
+      enterFormatter = resolve;
+    });
+    const gatedCalls: Promise<unknown>[] = [];
+    let pendingFormat: Promise<vscode.TextEdit[]> | undefined;
+    Object.defineProperty(fsPromises, "realpath", {
+      ...realpathDescriptor,
+      value: (...args: Parameters<typeof originalRealpath>) => {
+        if (String(args[0]) !== special.uri.fsPath)
+          return originalRealpath(...args);
+        entries++;
+        if (entries === 2) enterFormatter();
+        const call = gate.then(() => originalRealpath(...args));
+        gatedCalls.push(call);
+        return call;
+      },
+    });
+    try {
+      const changed = await vscode.languages.setTextDocumentLanguage(
+        special,
+        "ansible",
+      );
+      await waitFor(
+        () => entries > 0,
+        "automatic Ansible check enters source identity",
+      );
+      let settled = false;
+      pendingFormat = formatting(changed).then((edits) => {
+        settled = true;
+        return edits;
+      });
+      const first = await Promise.race([
+        formatterIdentity.then(() => "identity"),
+        pendingFormat.then(() => "settled"),
+      ]);
+      assert.equal(
+        first,
+        "identity",
+        "Ansible formatter must validate source identity before settling",
+      );
+      assert.equal(settled, false, "formatter waits for source validation");
+      release();
+      assert.ok(
+        (await pendingFormat).length > 0,
+        "Ansible formatter remains available after source validation",
+      );
+    } finally {
+      release();
+      Object.defineProperty(fsPromises, "realpath", realpathDescriptor);
+      await Promise.allSettled(gatedCalls);
+      if (pendingFormat) await Promise.allSettled([pendingFormat]);
+    }
     await marker(vscode.Uri.file(externalRoot), false);
     await waitFor(
       () => diagnostics(special.uri).length === 0,

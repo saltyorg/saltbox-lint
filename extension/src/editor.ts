@@ -721,6 +721,7 @@ export class EditorIntegration implements vscode.Disposable {
   }
   open(document: vscode.TextDocument): void {
     this.closedTabs.delete(document.uri.toString());
+    this.eligibilityChanged.fire();
     void this.check(document);
   }
   close(document: vscode.TextDocument): void {
