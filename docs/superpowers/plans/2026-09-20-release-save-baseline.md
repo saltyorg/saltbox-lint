@@ -1,0 +1,13 @@
+# Release save-scope baseline correction
+
+Release35500773461 at v0.1.0/c72f6d0 failed macOS ARM64 minimum-SDK save-scope with two invocations instead of one. The earlier main run passed. The tag is published, but no release is qualified or published. Never move the tag, rerun workflows, or change github-actions during this correction. Existing user authorization covers reviewed linter main fixes and pushes. A later tag mutation needs direct authorization for the concrete action.
+
+Read-only controlled Linux probes reproduce the exact assertion: hold a canonical identity read from the recreated closed sibling's setup event, allow manual alias checking and the fixed300ms delay, reset the log, then release. The old selected-file CLI call is counted alongside the new alias stdin check; the canonical watcher echo itself deduplicates. A paired control awaiting the recreated sibling's new Jinja finding before alias creation passes the unchanged exact-one assertion. Raw native failure did not log argv, so exact native provenance remains an inference, not directly observed. Evidence lives in bin/ci-qualification/35500773461/triage.
+
+## Task 1: Await closed-source setup before measuring alias saves
+
+In extension/test/host/save-scope.ts, immediately after recreating sibling with the alias Jinja fixture and before creating/opening aliasDirectory, await the newly published jinja-layout finding for sibling. Its diagnostic collection was cleared by the preceding verified deletion, making this a semantic completion barrier for the actual setup check. Retain every existing save/dedup assertion, event subscription, production implementation, observation window and explicit-save behavior. Add the raw invocation list to the final canonical-watcher/saved-alias exact-one assertion message so a future native failure records which commands were counted.
+
+Do not add sleeps, retry formatting/saves, skip platforms, loosen the count, or inspect private scheduler state in the committed test. Use the recorded controlled RED and verify the same delayed-boundary schedule passes with the actual test correction. Run extension type/build/unit/format and full installed minimum/current save-scope suites, using existing cached SDK binaries read-only and current product VSIX. Commit a focused fix(tests) change with report and exact evidence. No remote actions by implementer.
+
+Independent spec/quality review and final integration delta review, plus make check, precede the already-authorized linter-main push. Observe its complete CI result. The currently published v0.1.0 remains failed/unqualified unless an explicitly authorized tag action later produces a passing release workflow. Do not substitute a new branch pass for that release result.
