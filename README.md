@@ -13,8 +13,9 @@ the applicable third-party notices and licenses. Choose an
 exact published stable tag, download its matching architecture archive and
 `checksums.txt`, verify the archive's exact checksum entry, then put the binary
 on your PATH. Archive names are `saltbox-lint_VERSION_linux_ARCH.tar.gz`, with
-VERSION excluding the leading `v`. The [Action](action.yml) automates that
-installation on Linux X64/ARM64 runners without sudo.
+VERSION excluding the leading `v`. The
+[shared Action](https://github.com/saltyorg/github-actions/tree/main/saltbox-lint)
+automates that installation on Linux X64/ARM64 runners without sudo.
 
 With Go 1.27.1 or newer, installation from a complete local checkout is also
 supported. The checkout must include the repository's `third_party/nuri`
@@ -289,8 +290,9 @@ existing blank lines, comment contents and line endings remain unchanged.
 
 ## GitHub Action and VS Code
 
-The [composite Action](action.yml) requires an exact stable `version` such as
-`v0.1.0`, supports `working-directory` (default `.` relative to
+The [shared composite Action](https://github.com/saltyorg/github-actions/tree/main/saltbox-lint)
+requires an exact stable `version` such as `v0.1.0`, supports
+`working-directory` (default `.` relative to
 `GITHUB_WORKSPACE`) and newline-separated literal `paths` (default `.`). Blank
 lines are ignored and CRLF lists are supported; spaces and shell metacharacters
 are literal. Newlines cannot occur inside one path. Paths cannot supply options
@@ -299,8 +301,8 @@ against exactly one matching SHA-256 entry and checked for the requested binary
 version. Unsupported platforms and installation failures exit 2. It needs bash,
 curl, tar, awk and sha256sum, as provided by standard Linux GitHub runners.
 See the [four consumer templates](docs/rule-migration.md#four-consumer-workflow-migrations)
-for Action commit and binary version pins, Saltbox facts tests, and nested
-Sandbox checkout handling.
+for independently pinned shared Action commit and linter binary version,
+Saltbox facts tests, and nested Sandbox checkout handling.
 
 To adopt [examples/vscode/tasks.json](examples/vscode/tasks.json), copy or merge
 its tasks into `.vscode/tasks.json` in the chosen consumer workspace. Open the
@@ -318,12 +320,12 @@ installed automatically.
 
 ## Contribute and package
 
-Prerequisites: Go from `go.mod`, GNU make, Git, bash and Linux Action
-utilities above. `make tools` installs pinned developer tools under ignored
-`bin/tools`; Go's build/module caches can also be populated. `make check` checks
+Prerequisites: Go from `go.mod`, GNU make, Git and bash. `make tools` installs
+pinned developer tools under ignored `bin/tools`; Go's build/module caches can
+also be populated. `make check` checks
 formatting without rewriting files, verifies module tidiness with `go mod tidy
 -diff`, runs vet, standard golangci-lint checks, race tests (including the patched
-Nuri module, Action and editor integrations), Bash syntax checks, actionlint for
+Nuri module and Makefile/editor integrations), actionlint for
 workflows/examples, and GoReleaser configuration validation. CI uses the same gates.
 
 The production highlighter uses embedded Ansible/Jinja grammars, dark/light

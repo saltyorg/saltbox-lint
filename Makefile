@@ -46,7 +46,6 @@ check: tools format-check extension-check
 	$(GOLANGCI) run
 	go test -race ./...
 	go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
-	bash -n action/install.sh action/run.sh
 	$(ACTIONLINT) -shellcheck= -pyflakes= .github/workflows/*.yml examples/github/*.yml
 	$(GORELEASER) check
 

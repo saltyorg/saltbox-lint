@@ -9,7 +9,7 @@ First release uses manual VSIX upload in Microsoft's publisher management page.
 
 Use Go from `go.mod`, Node from `extension/.node-version`, and npm from
 `extension/package.json` (`packageManager`). `make check` is non-mutating to source:
-Go format/tidiness/vet/lint/race gates, Linux Action and GNU Make harnesses,
+Go format/tidiness/vet/lint/race gates, Linux GNU Make and editor-task harnesses,
 TypeScript check/unit/release tests/format check, and workflow/GoReleaser validation.
 It may populate ignored dependency, tool and test-binary caches. `make build` runs
 that gate and builds the ordinary local CLI. `make catalog` remains Go-only.
@@ -89,7 +89,7 @@ Six CI runners execute normal Go tests, the patched Nuri suite, extension tests,
 then smoke the binary extracted from the VSIX and run an installed-product host
 suite at VS Code 1.100.0 and 1.137.0 (normal, regressions, trust and disabled modes).
 Race testing runs on linux/darwin amd64/arm64 and windows/amd64; Go does not support
-windows/arm64 race. Linux-specific Action/Make tests retain Linux coverage while
+windows/arm64 race. Linux-specific Makefile tests retain Linux coverage while
 the portable example-task test uses a native `.exe` suffix on Windows.
 The Linux jobs also execute the Alpine VSIX binary in a pinned musl container of
 the same native architecture, including diagnostics, formatting and embedded WASM

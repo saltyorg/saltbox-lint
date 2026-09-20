@@ -163,11 +163,12 @@ consumer trigger policy.
 | Sandbox `.github/workflows/sandbox.yml` | [sandbox.yml](../examples/github/sandbox.yml) | Checkout path `sandbox`, Action working directory `sandbox`, annotations `sandbox/roles/...`. |
 | Sandbox `.github/workflows/sandbox-os.yml` | [sandbox-os.yml](../examples/github/sandbox-os.yml) | Same nested checkout and annotation identity. |
 
-Replace `RELEASE_COMMIT_SHA` with the reviewed release Action's full commit SHA
-and illustrative `v0.1.0` with its exact stable binary version. No release is
-claimed to exist by these templates. Action code and binary version are two
-separate pins. The auxiliary Saltbox checkout and Python setup disappear only
-from Sandbox's custom-linter job; the separate ansible-lint job still needs its
+Replace `ACTION_COMMIT_SHA` with the reviewed shared Action's full commit SHA
+and illustrative `v0.1.0` with the independently selected exact stable linter
+binary version. No release is claimed to exist by these templates. The Action
+commit and linter binary version are independent pins. The auxiliary Saltbox
+checkout and Python setup disappear only from Sandbox's custom-linter job;
+the separate ansible-lint job still needs its
 own dependencies/checkouts. Saltbox's facts test still needs Python. These
 examples have not been installed into either consumer repository.
 
