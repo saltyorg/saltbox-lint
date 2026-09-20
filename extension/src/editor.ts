@@ -52,6 +52,7 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel("Saltbox Lint");
   private readonly documents = new Map<string, DocumentResult>();
   private readonly scans = new Map<string, Map<string, vscode.Diagnostic[]>>();
+  private readonly completeScans = new Set<string>();
   private readonly checking = new Map<string, Promise<void>>();
   private readonly rootRevisions = new Map<string, number>();
   private readonly documentRevisions = new WeakMap<
@@ -523,6 +524,7 @@ export class EditorIntegration implements vscode.Disposable {
         folderKey,
         selected ? new Map([...(previous ?? []), ...entries]) : entries,
       );
+      if (!selected) this.completeScans.add(folderKey);
       for (const uri of new Set([
         ...(selected ? [] : (previous?.keys() ?? [])),
         ...entries.keys(),
@@ -787,6 +789,7 @@ export class EditorIntegration implements vscode.Disposable {
     this.flushingFiles = true;
     const pending = [...this.pendingFiles.values()];
     this.pendingFiles.clear();
+    const affected = new Map<string, number>();
     const selected = new Map<
       string,
       Map<
@@ -798,8 +801,11 @@ export class EditorIntegration implements vscode.Disposable {
       for (const { uri, force, version } of pending) {
         const folder = this.roots.folder(uri);
         if (!folder) continue;
+        const folderKey = folder.uri.toString();
+        const revision = this.rootRevision(folderKey);
         const root = await this.root(folder);
-        if (!root) continue;
+        if (!root || revision !== this.rootRevision(folderKey)) continue;
+        affected.set(folderKey, revision);
         const key = uri.toString();
         let filename: string | undefined;
         try {
@@ -867,6 +873,20 @@ export class EditorIntegration implements vscode.Disposable {
             );
           }
         }
+      }
+      // A selected event can cancel the initial full scan before it publishes.
+      // Partial results must not replace that root's outstanding full coverage.
+      for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        const key = folder.uri.toString();
+        const revision = affected.get(key);
+        if (
+          revision !== undefined &&
+          revision === this.rootRevision(key) &&
+          this.roots.get(key) &&
+          !this.completeScans.has(key) &&
+          !this.pendingRefresh.has(key)
+        )
+          await this.checkSaved(folder, false);
       }
     } finally {
       this.flushingFiles = false;
@@ -959,6 +979,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.lint.cancel(`files:${folder}`);
       const scan = this.scans.get(folder);
       this.scans.delete(folder);
+      this.completeScans.delete(folder);
       for (const uri of scan?.keys() ?? []) this.publish(vscode.Uri.parse(uri));
       for (const [uri, ownerFolder] of this.documentFolders) {
         if (ownerFolder !== folder) continue;
@@ -1008,6 +1029,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.fileTimer) clearTimeout(this.fileTimer);
     this.pendingFiles.clear();
+    this.completeScans.clear();
     this.lint.dispose();
     this.formatting.dispose();
     this.collection.dispose();

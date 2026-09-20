@@ -47,6 +47,11 @@ export async function runActiveProject(): Promise<void> {
     existsSync(log)
       ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
       : [];
+  const startupGate = join(temporary, "startup");
+  if (component) {
+    await writeFile(startupGate, "");
+    process.env.SALTBOX_TEST_PROCESS_GATE = startupGate;
+  }
   const editor = component
     ? new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!)
     : undefined;
@@ -151,6 +156,23 @@ export async function runActiveProject(): Promise<void> {
     "active-project-control",
   );
   try {
+    if (editor) {
+      await waitFor(
+        () => existsSync(startupGate + ".ready"),
+        "initial full scan is held before publishing",
+      );
+      assert.notEqual(
+        vscode.window.activeTextEditor?.document.uri.scheme,
+        "file",
+      );
+      assert.ok(invocations()[0].endsWith(" ."));
+      assert.equal(findings(uris[0]).length, 0);
+      delete process.env.SALTBOX_TEST_PROCESS_GATE;
+      editor.refresh([
+        vscode.Uri.joinPath(roots[0].uri, "roles/example/defaults/saved.yml"),
+      ]);
+      await rm(startupGate);
+    }
     await waitFor(
       () => uris.every((uri) => findings(uri).length > 0),
       "startup without file context shows both cached projects",
@@ -166,6 +188,69 @@ export async function runActiveProject(): Promise<void> {
     console.log(
       "PASS actual default-on startup overview before a file is selected",
     );
+    if (editor) {
+      await rm(startupGate + ".ready");
+      await writeFile(startupGate, "");
+      process.env.SALTBOX_TEST_PROCESS_GATE = startupGate;
+      editor.refresh([roots[0].uri]);
+      await waitFor(
+        () => existsSync(startupGate + ".ready"),
+        "refreshed full scan is held before publishing",
+      );
+      assert.equal(findings(uris[0]).length, 0);
+      delete process.env.SALTBOX_TEST_PROCESS_GATE;
+      // This file's fingerprint is unchanged from the first selected check.
+      // Even an echo that needs no selected check must retain full coverage.
+      editor.refresh([
+        vscode.Uri.joinPath(roots[0].uri, "roles/example/defaults/saved.yml"),
+      ]);
+      await rm(startupGate);
+      await waitFor(
+        () => uris.every((uri) => findings(uri).length > 0),
+        "unchanged file event cannot strand refreshed full coverage",
+      );
+      console.log(
+        "PASS selected events preserve initial and refreshed full scans",
+      );
+      const filesystem: typeof import("node:fs/promises") = require("node:fs/promises");
+      const originalRead = filesystem.readFile;
+      const filename = await filesystem.realpath(uris[0].fsPath);
+      let failedReads = 0;
+      filesystem.readFile = function (
+        this: unknown,
+        ...args: Parameters<typeof originalRead>
+      ) {
+        if (String(args[0]) === filename) {
+          failedReads++;
+          return Promise.reject(new Error("test full-scan read failure"));
+        }
+        return Reflect.apply(originalRead, this, args);
+      } as typeof originalRead;
+      try {
+        editor.refresh([roots[0].uri]);
+        await waitFor(
+          () => failedReads > 0,
+          "full scan reaches failed source read",
+        );
+        const count = invocations().length;
+        await pause(250);
+        assert.equal(failedReads, 1, "failed full scan must not retry itself");
+        assert.equal(invocations().length, count, "failed scan must stay idle");
+        assert.equal(findings(uris[0]).length, 0);
+      } finally {
+        filesystem.readFile = originalRead;
+      }
+      editor.refresh([
+        vscode.Uri.joinPath(roots[0].uri, "roles/example/defaults/saved.yml"),
+      ]);
+      await waitFor(
+        () => uris.every((uri) => findings(uri).length > 0),
+        "later event restores full coverage after a failed scan",
+      );
+      console.log(
+        "PASS failed full scans retain coverage intent without retries",
+      );
+    }
     const first = await vscode.workspace.openTextDocument(uris[0]);
     const second = await vscode.workspace.openTextDocument(uris[1]);
     const readme = await vscode.workspace.openTextDocument(
@@ -633,6 +718,7 @@ export async function runActiveProject(): Promise<void> {
     subscriptions.forEach((subscription) => subscription.dispose());
     editor?.dispose();
     other.dispose();
+    delete process.env.SALTBOX_TEST_PROCESS_GATE;
     delete process.env.SALTBOX_TEST_PROCESS_LOG;
     await rm(temporary, { recursive: true, force: true });
   }
