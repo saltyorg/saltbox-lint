@@ -35,7 +35,7 @@ format-check:
 # caches may be populated; build/release artifacts live in ignored directories.
 extension-check:
 	npm --prefix extension ci --ignore-scripts
-	npm --prefix extension run check
+	npm --prefix extension run build
 	npm --prefix extension test
 	npm --prefix extension run test:release
 	npm --prefix extension run format:check
