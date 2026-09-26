@@ -99,6 +99,7 @@ type Diagnostic struct {
 	Fix                                       *Fix
 }
 type Rule struct {
+	structural                                        *structuralFixProvider
 	ID, Summary, Explanation, GoodExample, BadExample string
 	Kinds                                             []Kind
 	Scope                                             string

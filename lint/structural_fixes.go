@@ -21,8 +21,41 @@ type structuralFix struct {
 	sequenceStyle string
 }
 
+// Rules select shared providers. Each provider runs once per source, and only
+// proposals belonging to registered rules can enter the common verifier.
+type structuralFixProvider struct {
+	propose         func(*Source) []structuralFix
+	requireProposal bool
+}
+
+var (
+	expressionFixProvider     = structuralFixProvider{propose: expressionStructuralFixes}
+	representationFixProvider = structuralFixProvider{propose: representationStructuralFixes, requireProposal: true}
+	// Conditional wrapping is performed after structural edits and independently
+	// verified as whitespace. It does not propose a YAML node replacement.
+	conditionalFixProvider = structuralFixProvider{}
+)
+
 func structuralFixes(s *Source) []structuralFix {
-	return append(expressionStructuralFixes(s), representationStructuralFixes(s)...)
+	var fixes []structuralFix
+	providers := map[*structuralFixProvider][]structuralFix{}
+	for _, rule := range Rules() {
+		provider := rule.structural
+		if provider == nil || provider.propose == nil {
+			continue
+		}
+		proposals, ok := providers[provider]
+		if !ok {
+			proposals = provider.propose(s)
+			providers[provider] = proposals
+		}
+		for _, proposal := range proposals {
+			if proposal.rule == rule.ID {
+				fixes = append(fixes, proposal)
+			}
+		}
+	}
+	return fixes
 }
 
 func structuralNodesEquivalent(a, b *Node, changes map[*Node]structuralFix) bool {
@@ -227,23 +260,32 @@ func replacementEdits(before, after []byte) []Edit {
 
 func attachStructuralFixes(s *Source, ds []Diagnostic) {
 	var rules []string
-	var representations []structuralFix
-	checkedRepresentations := false
+	providers := map[string]*structuralFixProvider{}
+	for _, rule := range Rules() {
+		if rule.structural != nil {
+			providers[rule.ID] = rule.structural
+		}
+	}
+	proposals := map[*structuralFixProvider][]structuralFix{}
 	for _, d := range ds {
-		switch d.RuleID {
-		case "docker-healthcheck-shape", "computed-default-documentation", "ansible-source-header":
-			if !checkedRepresentations {
-				representations = representationStructuralFixes(s)
-				checkedRepresentations = true
-			}
-			for _, proposal := range representations {
-				if proposal.rule == d.RuleID && proposal.span == d.Span {
-					rules = append(rules, d.RuleID)
-					break
-				}
-			}
-		case "ansible-when-parentheses", "ansible-when-list", "jinja-redundant-conditional-parentheses", "jinja-conditional-length":
+		provider := providers[d.RuleID]
+		if provider == nil {
+			continue
+		}
+		if !provider.requireProposal {
 			rules = append(rules, d.RuleID)
+			continue
+		}
+		candidates, ok := proposals[provider]
+		if !ok {
+			candidates = provider.propose(s)
+			proposals[provider] = candidates
+		}
+		for _, proposal := range candidates {
+			if proposal.rule == d.RuleID && proposal.span == d.Span {
+				rules = append(rules, d.RuleID)
+				break
+			}
 		}
 	}
 	if len(rules) == 0 {
