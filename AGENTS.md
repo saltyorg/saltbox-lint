@@ -66,6 +66,12 @@
 - Use standard Conventional Commits with concise lowercase imperative subjects.
   Use `fix(<scope>):` when correcting broken behavior.
 - Preserve unrelated user changes and stage exact paths when committing.
-- Implementation covers this repository and local validation. Pushes, tags,
-  releases, remote workflow execution, and consumer-repository mutations need
-  explicit authorization for the action and target.
+- In `saltyorg/saltbox-lint`, the user grants standing authorization to create
+  task-related commits and push them to `origin/main`, including corrective
+  commits needed for CI. Proceed through push-triggered CI validation without
+  asking again for commit or push approval.
+- Releases still require the user's input and explicit authorization for the
+  version and exact commit. Tags, release publication, manually dispatched or
+  rerun workflows, repository settings, and consumer-repository mutations retain
+  their separate authorization requirements. Commit/push authority does not
+  authorize those actions.
