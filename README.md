@@ -328,6 +328,29 @@ formatting without rewriting files, verifies module tidiness with `go mod tidy
 Nuri module and Makefile/editor integrations), actionlint for
 workflows/examples, and GoReleaser configuration validation. CI uses the same gates.
 
+CI runs native source checks independently of Linux packaging on Linux, macOS,
+and Windows, each on amd64 and arm64. Every target runs the CGO-free Go suite,
+patched Nuri tests, vet, pinned golangci-lint, extension type/build/unit checks,
+and extension release/staging tests. Race suites run on all targets except
+Windows arm64, where Go has no race runtime. A shared matrix also runs packaged
+CLI (from both standalone archives and VSIXs) and installed VSIX acceptance at
+the minimum/current editor versions;
+Linux runners additionally test both Alpine packages under native musl.
+Matrix failures do not cancel other targets. Integration tests check that the
+matrix covers every GoReleaser target. Native CLI probes verify archive checksums
+and archive/VSIX binary equality, highlighting, Unicode/CRLF formatting, stdin
+overlays, operational errors, non-mutating diffs, fixes, and idempotence.
+
+`CI required` succeeds only when packaging, every native source check, and every
+packaged acceptance job succeed. Agents must inspect this evidence for the exact
+release commit before reporting production readiness, as required by `AGENTS.md`.
+Local Linux success alone does not
+establish Windows or macOS correctness. Source formatting, module tidiness,
+workflow/release configuration validation, and offline source rebuilding remain
+centralized checks. The GNU/Linux Makefile harness, POSIX process/permission
+tests, and Windows-specific process tests exercise their applicable platforms;
+opt-in corpus and performance qualification are outside the ordinary CI suite.
+
 The production highlighter uses embedded Ansible/Jinja grammars, dark/light
 themes, and a frozen Ansible module catalog. Normal checks and builds require no
 Ansible or Python runtime. Maintainers can explicitly refresh the catalog with

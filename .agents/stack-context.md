@@ -27,7 +27,8 @@ Generated: 2026-09-12
 - Explicit fixes preserve YAML/Jinja meaning and already-valid bytes. Consumer repositories remain read-only; examples are adoption templates.
 
 ## CI gates
-- Extension gates (included in make check): npm run build, npm test and npm run format:check; installed VSIX host tests run on six native CI targets at minimum/current SDKs, with same-architecture Alpine musl probes.
+- Native CI source checks run independently on all six release targets; a shared matrix runs packaged acceptance after packaging. `CI required` aggregates all jobs; matrix/release parity is tested. Native lint and extension release tests run everywhere; only Windows arm64 lacks race support.
+- Extension gates (included in make check): npm run build, npm test and npm run format:check; installed VSIX host tests run on six native CI targets at minimum/current SDKs, with same-architecture Alpine musl probes. Shared CLI probes execute standalone archives and VSIX binaries and verify formatting/fix preservation and idempotence.
 - make check: non-mutating gofmt/module-tidiness checks, vet, pinned golangci-lint and root plus patched Nuri race suites; workflow/example actionlint and GoReleaser validation.
 - make build runs that gate before the CGO-free binary; make snapshot runs it before six native CLI archives, eight VSIXs, checksums and hash-linked corresponding source with vendored modules, Nuri WASM build inputs and Oniguruma source.
 - Packaging uses exact npm 11.19.0, vsce 3.9.2 and yauzl 3.4.0 pins; build tools are development-only. Source/archive/ZIP verification remains separate from editor runtime.

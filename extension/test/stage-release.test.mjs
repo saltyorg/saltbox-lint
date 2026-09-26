@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { smokeBinary } from "../scripts/test-binary.mjs";
 
 const extension = fileURLToPath(new URL("../", import.meta.url));
 const manifest = JSON.parse(
@@ -33,4 +34,5 @@ test("staged CLI identifies the extension release and removes builder paths", ()
   assert.equal(metadata.status, 0, metadata.stderr);
   assert.match(metadata.stdout, /-trimpath=true/);
   assert.match(metadata.stdout, /CGO_ENABLED=0/);
+  smokeBinary(binary, manifest.version, `${process.platform}-${process.arch}`);
 });

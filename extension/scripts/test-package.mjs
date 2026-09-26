@@ -4,6 +4,7 @@ import { resolve, join } from "node:path";
 import { root, manifest, targets, sha256 } from "./release-inputs.mjs";
 import { readVSIX, verifyEntries } from "./verify-package.mjs";
 import { smokeBinary } from "./test-binary.mjs";
+import { smokeCLIArchive } from "./test-archive.mjs";
 
 const target = process.argv[2] ?? `${process.platform}-${process.arch}`;
 assert.ok(targets[target], `unsupported package target ${target}`);
@@ -24,6 +25,8 @@ mkdirSync(destination, { recursive: true });
 const executable = join(destination, name);
 writeFileSync(executable, binary);
 chmodSync(executable, 0o755);
-if (!process.argv.includes("--extract-only"))
+if (!process.argv.includes("--extract-only")) {
   smokeBinary(executable, manifest.version, target);
+  await smokeCLIArchive(directory, target, binary);
+}
 console.log(`PASS audited ${target} VSIX; extracted ${executable}`);

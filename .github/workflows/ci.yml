@@ -56,10 +56,10 @@ jobs:
             dist/vsix-artifacts.json
           if-no-files-found: error
   native:
-    needs: check
+    name: Native checks (${{ matrix.target }})
     strategy:
       fail-fast: false
-      matrix:
+      matrix: &native-targets
         include:
           - runner: ubuntu-24.04
             target: linux-x64
@@ -94,11 +94,13 @@ jobs:
           cache: npm
           cache-dependency-path: extension/package-lock.json
       - run: npm install --global npm@11.19.0 --ignore-scripts
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          name: release-artifacts
-          path: dist
+      - name: Verify native runner architecture
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
+        run: node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.PACKAGE_TARGET)"
       - name: Native Go tests
+        env:
+          CGO_ENABLED: "0"
         run: go test ./...
       - name: Native patched Nuri tests
         run: go -C third_party/nuri test . ./internal/grammar ./internal/tokenizer
@@ -108,14 +110,49 @@ jobs:
       - name: Native patched Nuri race tests on supported targets
         if: matrix.race
         run: go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
-      - name: Extension unit and packaged CLI tests
+      - name: Native vet and lint
+        shell: bash
+        run: |
+          go vet ./...
+          go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run
+      - name: Extension checks and release tests
+        shell: bash
+        run: |
+          npm --prefix extension ci --ignore-scripts
+          npm --prefix extension run build
+          npm --prefix extension test
+          npm --prefix extension run test:release
+          npm --prefix extension run format:check
+  acceptance:
+    name: Packaged acceptance (${{ matrix.target }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix: *native-targets
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: extension/.node-version
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-artifacts
+          path: dist
+      - name: Packaged CLI tests and editor fixtures
         env:
           PACKAGE_TARGET: ${{ matrix.target }}
         shell: bash
         run: |
           npm --prefix extension ci --ignore-scripts
           npm --prefix extension run build
-          npm --prefix extension test
           node extension/scripts/test-package.mjs "$PACKAGE_TARGET"
           npm --prefix extension run stage:test-fixture
       - name: Install editor host dependencies
@@ -141,3 +178,16 @@ jobs:
             node:24.20.0-alpine3.23@sha256:0388af2af070cd4736a1567cfed02469ba117848845b4165d87a333edb53d2ca \
             node /work/extension/scripts/test-binary.mjs \
             "/work/dist/package-test/$ALPINE_TARGET/saltbox-lint" "$version" "$ALPINE_TARGET"
+  required:
+    name: CI required
+    if: always()
+    needs: [check, native, acceptance]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every build and acceptance job to succeed
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+          ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
+        run: |
+          [[ "$CHECK_RESULT" == success && "$NATIVE_RESULT" == success && "$ACCEPTANCE_RESULT" == success ]]
