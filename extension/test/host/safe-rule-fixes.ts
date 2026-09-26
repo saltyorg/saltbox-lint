@@ -88,10 +88,22 @@ export async function runSafeRuleFixes(
     "- name: Preserve Cloudflare condition\n  ansible.builtin.debug: {msg: ok}\n  when: " +
     grouped +
     "\n- name: Group condition\n  ansible.builtin.debug: {msg: ok}\n  when: value is defined\n";
-  await vscode.workspace.fs.writeFile(taskURI, Buffer.from(tasks));
+  await vscode.workspace.fs.writeFile(taskURI, Buffer.from(header + "[]\n"));
   const task = await vscode.workspace.openTextDocument(taskURI);
   try {
     await vscode.window.showTextDocument(task);
+    // Keep the fixture dirty so a delayed create watcher cannot replace the
+    // report between fetching and executing its action.
+    await replace(task, tasks);
+    assert.equal(task.isDirty, true);
+    const superseded = await quickFix(task);
+    await vscode.commands.executeCommand("saltboxLint.checkDocument");
+    await execute(superseded);
+    assert.equal(
+      task.getText(),
+      tasks,
+      "a new report invalidates an old action even for unchanged source",
+    );
     const action = await quickFix(task);
     await execute(action);
     const expected = tasks.replace(
