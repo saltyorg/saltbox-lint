@@ -101,6 +101,12 @@ func (b *candidateBuilder) flow(n *lint.Node, depth int) (flowRendering, error) 
 	}
 	if n.Kind == "mapping" {
 		for _, e := range n.Entries {
+			// A colonless implicit null may be located inside its key by the
+			// source parser. Such spans cannot prove a gap edit; fail closed
+			// before any reversed source range reaches blankLines.
+			if e.Value.Span.Start < e.Key.Span.End {
+				return flowRendering{}, fmt.Errorf("overlapping flow mapping key and value source spans")
+			}
 			if e.Key.Kind == "mapping" || e.Key.Kind == "sequence" {
 				return flowRendering{}, fmt.Errorf("complex mapping keys are unsupported")
 			}

@@ -73,6 +73,22 @@ func TestCanonicalDeclinesUncertainSources(t *testing.T) {
 	}
 }
 
+func TestCanonicalDeclinesOverlappingImplicitFlowValueSpans(t *testing.T) {
+	// The source parser can locate a colonless implicit null inside its key.
+	// Those coordinates cannot prove a safe gap edit. Preserve the source and
+	// return a deliberate skipped result instead of slicing a reversed gap.
+	for _, input := range []string{"0: {00}", "v: {key}", "v: {café}\r\n", "v: {key, other: 1}\n"} {
+		data := []byte(input)
+		result, err := Plan(t.Context(), "vars.yml", data)
+		if err != nil || result.Status != "skipped" || result.Reason == "" || len(result.Edits) != 0 {
+			t.Fatalf("input %q: %+v, %v", input, result, err)
+		}
+		if string(data) != input {
+			t.Fatal("declined formatting changed caller-owned bytes")
+		}
+	}
+}
+
 func TestCanonicalProtectedSyntax(t *testing.T) {
 	tests := []struct{ name, input, want string }{
 		{"empty quoted and containers", "root: {empty: '', map: { }, list: [ ]}\n", "root:\n  empty: \"\"\n  map: {}\n  list: []\n"},
