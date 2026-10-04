@@ -38,6 +38,13 @@ async function replace(document: vscode.TextDocument, text: string) {
 }
 export async function runSaveScope(): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
+  const otherUri = vscode.Uri.joinPath(roots[0].uri, "other.yml");
+  // Create setup sources before the integration registers filesystem watchers.
+  // A delayed create notification must not count as a check caused by typing.
+  await vscode.workspace.fs.writeFile(
+    otherUri,
+    Buffer.from('value: "{{ other\n }}"\n'),
+  );
   const temporary = await mkdtemp(join(tmpdir(), "saltbox-save-scope-"));
   const log = join(temporary, "process.log");
   process.env.SALTBOX_TEST_PROCESS_LOG = log;
@@ -70,11 +77,16 @@ export async function runSaveScope(): Promise<void> {
     }
   };
   try {
+    await waitFor(
+      () =>
+        roots.every((root) =>
+          findings(
+            vscode.Uri.joinPath(root.uri, "roles/example/defaults/main.yml"),
+          ).some((finding) => finding.code === "jinja-layout"),
+        ),
+      "startup should publish saved findings for each marked root",
+    );
     await run("one startup saved scan per marked root", async () => {
-      await waitFor(
-        () => invocations().filter((line) => line.endsWith(" .")).length >= 2,
-        "startup should launch one saved scan for each marked root",
-      );
       assert.equal(
         invocations().filter((line) => line.endsWith(" .")).length,
         2,
@@ -84,17 +96,11 @@ export async function runSaveScope(): Promise<void> {
       vscode.Uri.joinPath(roots[0].uri, "roles/example/defaults/main.yml"),
     );
     const canonicalFilename = await realpath(document.uri.fsPath);
-    const otherUri = vscode.Uri.joinPath(roots[0].uri, "other.yml");
-    await vscode.workspace.fs.writeFile(
-      otherUri,
-      Buffer.from('value: "{{ other\n }}"\n'),
-    );
     const other = await vscode.workspace.openTextDocument(otherUri);
     await vscode.window.showTextDocument(document, { preview: false });
     await vscode.window.showTextDocument(other, { preview: false });
     await editor.check(document, true);
     await editor.check(other, true);
-    await pause(300);
     const original = document.getText();
     await run(
       "typing retains displayed findings but revokes stale actions",
