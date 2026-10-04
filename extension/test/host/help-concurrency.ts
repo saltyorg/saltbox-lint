@@ -24,6 +24,11 @@ async function waitFor(
 }
 
 export async function runHelpConcurrency(document: vscode.TextDocument) {
+  const originalEditor = vscode.window.activeTextEditor;
+  assert.ok(originalEditor);
+  assert.equal(originalEditor.document, document);
+  const originalColumn = originalEditor.viewColumn;
+  assert.ok(originalColumn);
   const product = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
   const executable = join(
     product.extensionPath,
@@ -179,7 +184,13 @@ export async function runHelpConcurrency(document: vscode.TextDocument) {
       );
     } finally {
       await rm(temporary, { recursive: true, force: true });
-      await vscode.window.showTextDocument(document, { preview: false });
+      // Reuse the caller's tab. A new tab starts a check that can supersede
+      // the next quick-fix action while the command crosses the host boundary.
+      await vscode.window.showTextDocument(document, {
+        viewColumn: originalColumn,
+        preview: false,
+      });
+      assert.equal(vscode.window.activeTextEditor?.viewColumn, originalColumn);
     }
   }
 }
