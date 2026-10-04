@@ -15,6 +15,35 @@ Normal builds and runtime checks need no Python or Ansible installation.
 `make catalog` explicitly refreshes the frozen catalog through the managed
 Ansible wrappers; it does not execute consumer modules or roles.
 
+## Preservation fuzzing
+
+`go test ./lint ./format ./yamlindex -run '^Fuzz'` runs committed seeds without
+mutation. The same seeds run in `make check`. They cover parsing, expression
+spans, source coordinates, whitespace plans, authorized structural plans and
+canonical formatting. Shared source examples live in
+`lint/testdata/preservation`; minimized failures belong in the affected package's
+`testdata/fuzz/<target>/` directory.
+
+`make fuzz-check` is an opt-in qualification campaign. It runs those six targets
+sequentially, with 10 seconds per target, two workers, `GOMAXPROCS=2`, and a
+one-minute test timeout per invocation. Source targets limit inputs to 2 KiB and
+64 combined lines/opening delimiters as a conservative nesting bound. The
+structural target limits payloads to 16 bytes and generates bounded conditions
+with independently specified expected bytes, including unsupported conditions.
+The command executes no Ansible or Jinja code and reads no consumer repositories.
+
+Run one full campaign before delivering parser or edit-preservation changes.
+Before starting, record the commit, Go version, target names, seed paths and
+SHA-256 hashes, durations and worker count in the external project task folder.
+Retain each invocation's command, exit status, output and every failure. If a
+property fails, retain the minimized input, reproduce it against the original
+implementation, make a focused correction, and run all six targets against the
+corrected commit with the same budgets. Record corrective campaigns separately;
+an earlier failure remains part of the qualification record. Commit only seed
+examples and minimized regressions, never transient fuzz caches or consumer
+source dumps. Successful bounded campaigns supplement the required quality gate
+and CI; they do not prove the absence of defects.
+
 ## Documentation maintenance
 
 Run `make rules-update` after changing rule metadata. It writes only the

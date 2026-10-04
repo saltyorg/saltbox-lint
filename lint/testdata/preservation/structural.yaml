@@ -1,0 +1,2 @@
+- debug: {msg: ok}
+  when: value is defined and other is defined

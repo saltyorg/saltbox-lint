@@ -1,0 +1,7 @@
+root:
+    literal: |- # keep
+      hi  there
+    folded: >+
+      a
+
+      b

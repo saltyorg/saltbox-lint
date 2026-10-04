@@ -10,7 +10,7 @@ ACTIONLINT := $(TOOLS)/actionlint-$(ACTIONLINT_VERSION)/actionlint
 GORELEASER := $(TOOLS)/goreleaser-$(GORELEASER_VERSION)/goreleaser
 VERSION ?= dev
 
-.PHONY: tools catalog check format-check build snapshot extension-check release-artifacts docs-check docs-update rules-update
+.PHONY: tools catalog check format-check build snapshot extension-check release-artifacts docs-check docs-update rules-update fuzz-check
 
 tools: $(GOLANGCI) $(ACTIONLINT) $(GORELEASER)
 
@@ -60,6 +60,14 @@ check: tools format-check extension-check docs-check
 	go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
 	$(ACTIONLINT) -shellcheck= -pyflakes= .github/workflows/*.yml examples/github/*.yml
 	$(GORELEASER) check
+
+# Opt-in qualification: fixed per-target budgets, separate minimizable properties.
+# Ordinary go test (and check) already executes every committed seed.
+fuzz-check:
+	@set -e; for spec in lint:FuzzParseSource lint:FuzzExpressionSpans yamlindex:FuzzSourceCoordinates format:FuzzWhitespaceFixes lint:FuzzStructuralFixes format:FuzzCanonicalFormatting; do \
+		package="$${spec%%:*}"; target="$${spec##*:}"; \
+		GOMAXPROCS=2 go test "./$$package" -run '^$$' -fuzz "^$$target$$" -fuzztime=10s -parallel=2 -timeout=1m; \
+	done
 
 build: check
 	CGO_ENABLED=0 go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/saltbox-lint .
