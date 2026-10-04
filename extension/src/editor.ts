@@ -127,6 +127,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (this.activeFile?.scheme !== "file") this.activeFile = undefined;
     this.displayListeners = vscode.Disposable.from(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
+        this.updateStatus();
         if (editor?.document.uri.scheme !== "file") return;
         this.activeFile = editor.document.uri;
         this.repaint();
