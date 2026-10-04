@@ -55,7 +55,7 @@ not scroll to the active file immediately; switching files within that project
 uses VS Code's usual auto-reveal behavior. The extension does not pin files,
 change Problems sorting, move focus, or rewrite your VS Code settings.
 
-Quick fixes say “this file” because a shared proposal may fix several findings
+Quick fixes say "this file" because a shared proposal may fix several findings
 in the document. Fixes are checked against the current document before applying.
 They use VS Code edits and preserve undo/redo. Eligible fixes include conservative
 Jinja/condition rewrites, flow healthcheck lists, missing computed-default
@@ -85,13 +85,20 @@ runtime downloads, telemetry, Python/Ansible execution, or persistent server.
 
 ## Platforms and installation
 
-Install the VSIX matching the machine hosting your workspace extension:
-Linux x64/ARM64, Alpine x64/ARM64, macOS Intel/Apple Silicon, or Windows x64/ARM64.
-Each package carries one native executable. Alpine reuses the CGO-free Linux
-binary; Alpine remote-host acceptance is a release gate. A local cross-built
-package is not a claim that its target has completed native qualification.
-No web/virtual-workspace extension is provided. See the release's qualification
-record for tested environments; initial Marketplace publication remains pending.
+Download a VSIX and `checksums.txt` from an
+[exact published GitHub release](https://github.com/saltyorg/saltbox-lint/releases).
+Verify its SHA-256 digest against the exact package filename before installation.
+Use `sha256sum` on Linux, `shasum -a 256` on macOS, or `Get-FileHash -Algorithm SHA256`
+on Windows. Choose the machine hosting the workspace extension, which may differ
+from your desktop in Remote SSH, WSL or Dev Containers. The
+[generated platform table](https://github.com/saltyorg/saltbox-lint/blob/main/docs/platforms.md)
+lists all eight VSIX names and their bundled CLI targets. Each carries one native
+executable. Alpine reuses the CGO-free Linux binary and receives packaged musl
+probes; it does not run the full installed editor host suite.
+
+A published GitHub VSIX does not imply Marketplace availability. No web or
+virtual-workspace extension is provided. For standalone CLI installation, see
+the [main guide](https://github.com/saltyorg/saltbox-lint/blob/main/README.md#install).
 
 Use **Extensions → Install from VSIX…** for a local package. VS Code controls
 install/update/disable/uninstall. No administrator installation, runtime download,

@@ -1,7 +1,6 @@
 # Replace only the saltbox-lint job in .github/workflows/saltbox-os.yml.
-# This is an illustrative migration template, not a published release claim.
-# Replace ACTION_COMMIT_SHA with the reviewed shared Action's full commit SHA and
-# v0.1.0 with the independently selected exact stable linter binary version.
+# Adoption template using published Action v1.3.2 and linter v0.1.0.
+# Preserve unrelated jobs and workflow triggers; Renovate owns version bumps.
 name: saltbox-os linter migration example
 on:
   workflow_dispatch:
@@ -19,7 +18,7 @@ jobs:
       - name: Test Saltbox facts persistence
         run: python3 .github/scripts/test_saltbox_facts.py
       - name: Run Saltbox Lint
-        uses: saltyorg/github-actions/saltbox-lint@ACTION_COMMIT_SHA
+        uses: saltyorg/github-actions/saltbox-lint@v1.3.2
         with:
           version: v0.1.0
           paths: '.'

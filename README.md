@@ -7,15 +7,28 @@ Ansible, Python, templates, or lookups. Licensed under [GPLv3](LICENSE).
 
 ## Install
 
-Linux amd64 and arm64 are supported, including WSL and Linux Remote SSH hosts.
-Release archives contain `saltbox-lint`, this README, the project license, and
-the applicable third-party notices and licenses. Choose an
-exact published stable tag, download its matching architecture archive and
-`checksums.txt`, verify the archive's exact checksum entry, then put the binary
-on your PATH. Archive names are `saltbox-lint_VERSION_linux_ARCH.tar.gz`, with
-VERSION excluding the leading `v`. The
-[shared Action](https://github.com/saltyorg/github-actions/tree/main/saltbox-lint)
-automates that installation on Linux X64/ARM64 runners without sudo.
+Standalone releases support Linux, macOS and Windows on amd64 and arm64.
+See the [generated platform table](https://github.com/saltyorg/saltbox-lint/blob/main/docs/platforms.md)
+for all six CLI archives and eight VSIX packages. WSL and Linux Remote SSH use
+the Linux archive for the workspace host architecture.
+
+Choose an [exact published stable release](https://github.com/saltyorg/saltbox-lint/releases),
+download its matching archive and `checksums.txt`, and verify the archive's exact
+SHA-256 entry. Linux/macOS archives are `.tar.gz`; Windows archives are `.zip`.
+Names are `saltbox-lint_VERSION_OS_ARCH.EXT`, with `VERSION` excluding the
+leading `v`, `OS` using `linux`, `darwin` or `windows`, and `ARCH` using `amd64`
+or `arm64`. Extract `saltbox-lint` or `saltbox-lint.exe` and put it on your PATH.
+On Linux use `sha256sum`; on macOS use `shasum -a 256`; on Windows use
+`Get-FileHash -Algorithm SHA256`. Compare the full digest and exact filename.
+Archives include this README, licenses, notices and source provenance.
+
+The [shared Action v1.3.2](https://github.com/saltyorg/github-actions/tree/v1.3.2/saltbox-lint)
+automates checksum-verified installation on Linux X64/ARM64 runners without sudo.
+For editor diagnostics and bundled installation, follow the
+[VS Code extension guide](https://github.com/saltyorg/saltbox-lint/blob/main/extension/README.md).
+Create an empty regular `.saltbox-lint` file at each selected extension source
+root to enable it. The standalone CLI and process tasks do not require this
+extension opt-in marker.
 
 With Go 1.27.1 or newer, installation from a complete local checkout is also
 supported. The checkout must include the repository's `third_party/nuri`
@@ -221,7 +234,7 @@ positions otherwise retain their previous meaning.
 use line ranges; single-line annotations also include columns. Summary appends
 are bounded to 100 findings/64 KiB and explicitly count omitted findings.
 Annotations and JSON still represent the full diagnostic set. File identity and
-cross-repository summary environment details are in [migration guidance](docs/rule-migration.md).
+cross-repository summary environment details are in [migration guidance](https://github.com/saltyorg/saltbox-lint/blob/main/docs/rule-migration.md).
 
 `saltbox-lint rules` keeps its compact one-rule-per-line listing.
 `saltbox-lint rules RULE_ID` uses the same destination-aware width and color
@@ -290,7 +303,7 @@ existing blank lines, comment contents and line endings remain unchanged.
 
 ## GitHub Action and VS Code
 
-The [shared composite Action](https://github.com/saltyorg/github-actions/tree/main/saltbox-lint)
+The [shared composite Action](https://github.com/saltyorg/github-actions/tree/v1.3.2/saltbox-lint)
 requires an exact stable `version` such as `v0.1.0`, supports
 `working-directory` (default `.` relative to
 `GITHUB_WORKSPACE`) and newline-separated literal `paths` (default `.`). Blank
@@ -300,11 +313,11 @@ such as `--fix`; no arbitrary-argument input exists. Downloads are verified
 against exactly one matching SHA-256 entry and checked for the requested binary
 version. Unsupported platforms and installation failures exit 2. It needs bash,
 curl, tar, awk and sha256sum, as provided by standard Linux GitHub runners.
-See the [four consumer templates](docs/rule-migration.md#four-consumer-workflow-migrations)
-for independently pinned shared Action commit and linter binary version,
+See the [four consumer templates](https://github.com/saltyorg/saltbox-lint/blob/main/docs/rule-migration.md#four-consumer-workflow-migrations)
+for independently selected published Action and linter version tags,
 Saltbox facts tests, and nested Sandbox checkout handling.
 
-To adopt [examples/vscode/tasks.json](examples/vscode/tasks.json), copy or merge
+To adopt [examples/vscode/tasks.json](https://github.com/saltyorg/saltbox-lint/blob/main/examples/vscode/tasks.json), copy or merge
 its tasks into `.vscode/tasks.json` in the chosen consumer workspace. Open the
 repository root as the workspace folder and put `saltbox-lint` on that host's
 PATH. Tasks cover the current saved file, workspace, and an explicitly named
@@ -320,13 +333,17 @@ installed automatically.
 
 ## Contribute and package
 
-Prerequisites: Go from `go.mod`, GNU make, Git and bash. `make tools` installs
+Prerequisites: Go from `go.mod`, Node from `extension/.node-version`, npm 11.19.0,
+GNU make, Git and bash. `make tools` installs
 pinned developer tools under ignored `bin/tools`; Go's build/module caches can
 also be populated. `make check` checks
 formatting without rewriting files, verifies module tidiness with `go mod tidy
 -diff`, runs vet, standard golangci-lint checks, race tests (including the patched
 Nuri module and Makefile/editor integrations), actionlint for
-workflows/examples, and GoReleaser configuration validation. CI uses the same gates.
+workflows/examples, GoReleaser configuration validation, extension build/unit/
+release checks, and offline documentation links and platform-table freshness.
+Use `make docs-update` to explicitly regenerate the platform table.
+CI uses the same gates.
 
 CI runs native source checks independently of Linux packaging on Linux, macOS,
 and Windows, each on amd64 and arm64. Every target runs the CGO-free Go suite,
@@ -358,12 +375,20 @@ Ansible or Python runtime. Maintainers can explicitly refresh the catalog with
 `ansible-galaxy` wrappers without running modules, roles, or playbooks.
 
 `make build` completes `make check` before building `bin/saltbox-lint` with
-CGO disabled. `make snapshot` completes the same gate and creates local Linux
-amd64/arm64 archives plus `checksums.txt` in ignored `dist/`. It publishes nothing.
+CGO disabled. `make snapshot` completes the same gate and creates six native CLI
+archives, eight VSIXs, corresponding source and checksums in ignored `dist/`.
+It publishes nothing.
 `make build VERSION=1.2.3` injects an explicit local version. The release workflow
-publishes through GoReleaser only when an exact stable version tag is explicitly
-pushed in a future authorized release. Defining this workflow is not a release.
+packages through GoReleaser and publishes validated artifacts only when an exact
+stable version tag is explicitly pushed for an authorized release. The
+[v0.1.0 release](https://github.com/saltyorg/saltbox-lint/releases/tag/v0.1.0) is
+published; local snapshots publish nothing.
 
-See [rule authoring](docs/rule-authoring.md), [the 40-to-29 migration mapping](docs/rule-migration.md),
-[primary-source research](docs/research.md), [terminal rendering results](docs/terminal-rendering-results.md),
-and [contributor instructions](AGENTS.md).
+See [rule authoring](https://github.com/saltyorg/saltbox-lint/blob/main/docs/rule-authoring.md),
+[adoption and migration guidance](https://github.com/saltyorg/saltbox-lint/blob/main/docs/rule-migration.md),
+[contributing](https://github.com/saltyorg/saltbox-lint/blob/main/docs/contributing.md),
+[release validation](https://github.com/saltyorg/saltbox-lint/blob/main/docs/extension-release.md),
+and [contributor instructions](https://github.com/saltyorg/saltbox-lint/blob/main/AGENTS.md).
+Historical research, terminal measurements and extension qualification reports
+are not published in this repository. Current tests and the exact-commit CI
+record provide validation evidence for their documented scope.

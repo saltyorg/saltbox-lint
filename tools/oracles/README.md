@@ -1,9 +1,10 @@
 # Independent highlighting oracles
 
 These development tools execute pinned upstream JavaScript/TypeScript, independently
-of the production Go highlighter. Normal Go tests, `make check`, builds and runtime
-use frozen fixtures and assets; they do not invoke Node, download packages, or need
-an editor extension or an Ansible installation.
+of the production Go highlighter. Normal Go tests and runtime use frozen fixtures and assets; they do not invoke
+these oracle runners or need an editor extension or Ansible installation.
+`make check` uses Node for extension and documentation checks, but does not
+regenerate oracle evidence.
 
 ## Reproduce frozen evidence offline
 
@@ -144,7 +145,8 @@ byte-identical to the root fixtures used by current Go compatibility tests.
   package-manager lock or installation is required.
 - `sources/oracle-cases.json` and `sources/semantic-style-cases.json` are unchanged
   original local generator inputs, authored before the Go implementation.
-  The original `.superpowers/sdd/demo-v4-semantics` evidence remains untouched.
+  The original local semantic discovery reports are not published here; the
+  checked-in source pins and fixtures support the documented reproduction scope.
 - `sources/module-docs.json` captures **23 requested module names**, including
   negative and short-name resolutions, by running the original initialized
   `DocsLibrary.findModule` while executing those 26 cases and the three YAML

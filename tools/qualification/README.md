@@ -43,7 +43,10 @@ host, including the SDK; they are not attributed solely to this extension.
 
 Do not rerun a formal series to select nicer outcomes. Diagnose failures and
 record code/environment changes before a separately declared new experiment.
-See `docs/vscode-extension-results.md` for qualified revisions and limitations.
+Historical extension qualification results are not published in this repository.
+Preserve each new declaration and report in the external project documentation
+folder. See [release validation](../../docs/extension-release.md) for ordinary CI
+coverage and its exceptions.
 
 For bounded attribution, `SALTBOX_TEST_PROFILE=1` records direct CLI, protocol,
 production adapter, installed provider and application request phases separately.

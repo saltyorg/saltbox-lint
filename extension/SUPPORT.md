@@ -9,5 +9,4 @@ private hostnames from logs and source before sharing them.
 For security-sensitive reports, use the repository's
 [private vulnerability reporting page](https://github.com/saltyorg/saltbox-lint/security/advisories/new)
 if available. If it is unavailable, ask a Saltbox maintainer for a private reporting
-channel before disclosing exploit details publicly. The publication checklist
-requires the owner to verify this channel before release.
+channel before disclosing exploit details publicly. Verify the private reporting channel before publishing a release.
