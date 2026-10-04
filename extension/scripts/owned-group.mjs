@@ -13,9 +13,12 @@ export function liveGroupMembers(snapshot, group, platform = process.platform) {
     const match = (
       platform === "linux"
         ? /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([DRSTtWXZI])\s*$/
-        : /^\s*(\d+)\s+(\d+)\s+((?:[IRSTU](?:<|N)?X?E?V?L?s?\+?|Z(?:<|N)?X?V?L?s?\+?))\s*$/
+        : /^\s*(\d+)\s+(\d+)\s+((?:[H?IRSTU](?:<|N)?X?E?V?L?s?\+?|Z(?:<|N)?X?V?L?s?\+?))\s*$/
     ).exec(line);
-    if (!match) throw new Error("Unrecognized process group snapshot");
+    if (!match)
+      throw new Error(
+        `Unrecognized process group snapshot (${platform}, owned group ${group}): ${JSON.stringify(line.slice(0, 256))}`,
+      );
     const numbers = match.slice(1, platform === "linux" ? 5 : 3).map(Number);
     if (
       numbers.some((value) => !Number.isSafeInteger(value) || value < 0) ||
@@ -87,5 +90,6 @@ export async function groupHasLiveMembers(group, signal) {
   // Linux's leader can be Z while another thread retains open endpoints. Check
   // every advertised thread. Darwin's SZOMB follows final-thread exit and task
   // detachment, so its process state proves the task has no remaining worker.
+  // Darwin H and unavailable-task ? states cannot prove exit and remain live.
   return liveGroupMembers(snapshot, group);
 }

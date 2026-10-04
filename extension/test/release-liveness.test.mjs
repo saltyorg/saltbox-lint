@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -191,12 +192,38 @@ test("group snapshots require complete Linux threads and supported Darwin states
     liveGroupMembers("123 123 Z\n123 124 Z+\n456 456 S\n", 123, "darwin"),
     false,
   );
-  for (const state of ["R", "S", "T", "U", "I", "Ss+", "U<", "SNXEVLs+"]) {
+  for (const state of [
+    "R",
+    "S",
+    "T",
+    "U",
+    "I",
+    "H",
+    "?",
+    "HN",
+    "?XEs+",
+    "Ss+",
+    "U<",
+    "SNXEVLs+",
+  ]) {
     assert.equal(
       liveGroupMembers(`123 123 Z\n123 124 ${state}\n`, 123, "darwin"),
       true,
     );
   }
+  assert.equal(
+    liveGroupMembers("456 456 ?\n", 123, "darwin"),
+    false,
+    "a verified unavailable task outside the owned group cannot hide its members",
+  );
+  assert.throws(
+    () => liveGroupMembers(`123 123 R${"x".repeat(4096)}\n`, 123, "darwin"),
+    (error) =>
+      error.message.includes("darwin, owned group 123") &&
+      error.message.includes("123 123 Rx") &&
+      error.message.length < 400,
+    "malformed rows retain bounded observation identity",
+  );
   for (const snapshot of [
     "123 123 Z?\n",
     "123 123 Zombie\n",
@@ -266,18 +293,32 @@ test("POSIX group observation rejects cancellation and distinguishes a real reta
     const until = Date.now() + 5000;
     let state;
     do {
-      state = execFileSync(
+      const snapshot = execFileSync(
         "/bin/ps",
-        ["-p", String(instance.pid), "-o", "state="],
-        { encoding: "utf8", timeout: 1000 },
-      ).trim();
+        ["-p", String(instance.pid), "-o", "pid=,ppid=,pgid=,uid=,state="],
+        {
+          encoding: "utf8",
+          timeout: 1000,
+          killSignal: "SIGKILL",
+          maxBuffer: 4096,
+          env: { ...process.env, LC_ALL: "C" },
+        },
+      );
+      const row = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*\n$/.exec(
+        snapshot,
+      );
+      assert.ok(row, "complete single child process record");
+      assert.deepEqual(
+        row.slice(1, 5).map(Number),
+        [instance.pid, supervisor.pid, instance.pid, process.geteuid()],
+        "exact child remains owned by its supervisor in its original group",
+      );
+      state = row[5];
       if (!state.startsWith("Z")) await delay(10);
     } while (!state.startsWith("Z") && Date.now() < until);
     assert.match(state, /^Z/, "supervisor has not reaped the actual child");
-    assert.doesNotThrow(
-      () => process.kill(-instance.pid, 0),
-      "zombie-only group still exists",
-    );
+    // Darwin's group signal check excludes SZOMB members and returns EPERM
+    // even for our own retained child. The exact ps row proves membership.
     assert.equal(
       await running(instance),
       false,
@@ -517,9 +558,22 @@ async function outputControl(output, consumer, mode) {
     if (consumer === "blocked") {
       const status = await record(filename + ".pending");
       assert.equal(status.token, parent.token);
-      assert.equal(
-        status.pending,
-        true,
+      if (target.readableLength === 0) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1000);
+        try {
+          await once(target, "readable", { signal: controller.signal });
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      assert.ok(
+        target.readableLength > 0,
+        "actual unread output reached the pipe",
+      );
+      assert.deepEqual(
+        await record(filename + ".pending"),
+        { token: parent.token, pending: true },
         "actual large output write is pending",
       );
       if (mode === "output-exit") {

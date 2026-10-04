@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -427,9 +428,28 @@ export async function runDependencies(): Promise<void> {
     await pause(400);
     assert.ok(admissionFiles.every((uri) => findings(uri).length === 0));
     const admissionGate = join(temporary, "admission-gate");
+    const admissionNonce = randomBytes(32).toString("hex");
+    const admissionPrefix = "roles/admission/defaults/";
     await writeFile(admissionGate, "");
     process.env.SALTBOX_TEST_PROCESS_GATE = admissionGate;
+    process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX = admissionPrefix;
+    process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = admissionNonce;
     count = invocations().length;
+    // A preceding request must not satisfy this chunk's readiness gate.
+    const admissionControlDocument =
+      await vscode.workspace.openTextDocument(defaults);
+    void editor.check(admissionControlDocument);
+    await waitFor(
+      () =>
+        invocations()
+          .slice(count)
+          .some(
+            (line) =>
+              line.includes("--stdin-filename") &&
+              line.includes("roles/example/defaults/main.yml"),
+          ),
+      "unrelated document request must start under the admission gate",
+    );
     await Promise.all(
       admissionFiles.map((uri) => writeFile(uri.fsPath, unrelatedGood)),
     );
@@ -439,6 +459,33 @@ export async function runDependencies(): Promise<void> {
       "first selected chunk must hold output after complete coverage",
     );
     const firstAdmissionBatch = invocations().slice(count);
+    const held: { pid: number; args: string[]; nonce: string } = JSON.parse(
+      await readFile(admissionGate + ".ready", "utf8"),
+    );
+    assert.equal(held.nonce, admissionNonce, "readiness belongs to this gate");
+    assert.deepEqual(
+      held.args.filter((argument) => argument.startsWith(admissionPrefix)),
+      admissionFiles
+        .slice(0, 64)
+        .map((uri) => admissionPrefix + uri.path.split("/").at(-1)),
+      "the held request contains the exact first 64 admission paths",
+    );
+    assert.ok(
+      firstAdmissionBatch.includes(`${held.pid} ${held.args.join(" ")}`),
+      "readiness identifies the exact new invocation",
+    );
+    const heldInstance = fixtureProcesses(instancesLog).find(
+      (instance) => instance.pid === held.pid,
+    );
+    assert.ok(heldInstance, "held request has a recorded instance endpoint");
+    assert.equal(
+      await fixtureRunning(heldInstance),
+      true,
+      "the exact 64-path request is still live before admission changes",
+    );
+    console.log(
+      `MEASURE admission held_pid=${held.pid} paths=64 nonce=${held.nonce} endpoint_live=true`,
+    );
     assert.ok(
       firstAdmissionBatch.some(
         (line) => line.split("roles/admission/defaults/").length - 1 === 64,
@@ -446,6 +493,8 @@ export async function runDependencies(): Promise<void> {
       "queued admission regression must exceed the 64-source chunk limit",
     );
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
     await writeFile(
       admissionIgnore.fsPath,
       admissionIgnoreText + "roles/admission/\n",
@@ -890,6 +939,8 @@ export async function runDependencies(): Promise<void> {
     delete process.env.SALTBOX_TEST_PROCESS_LOG;
     delete process.env.SALTBOX_TEST_PROCESS_INSTANCES;
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
     await rm(temporary, { recursive: true, force: true });
   }
 }

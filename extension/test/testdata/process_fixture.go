@@ -80,8 +80,28 @@ func main() {
 			os.Exit(2)
 		}
 		err := command.Run()
-		if gate := os.Getenv("SALTBOX_TEST_PROCESS_GATE"); gate != "" {
-			if err := os.WriteFile(gate+".ready", nil, 0o600); err != nil {
+		gate := os.Getenv("SALTBOX_TEST_PROCESS_GATE")
+		if prefix := os.Getenv("SALTBOX_TEST_PROCESS_GATE_PREFIX"); prefix != "" {
+			matched := false
+			for _, argument := range os.Args[1:] {
+				if strings.HasPrefix(argument, prefix) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				gate = ""
+			}
+		}
+		if gate != "" {
+			ready := struct {
+				PID   int      `json:"pid"`
+				Args  []string `json:"args"`
+				Nonce string   `json:"nonce"`
+			}{os.Getpid(), os.Args[1:], os.Getenv("SALTBOX_TEST_PROCESS_GATE_NONCE")}
+			data, marshalErr := json.Marshal(ready)
+			temporary := fmt.Sprintf("%s.ready.%d.tmp", gate, os.Getpid())
+			if marshalErr != nil || os.WriteFile(temporary, data, 0o600) != nil || os.Rename(temporary, gate+".ready") != nil {
 				os.Exit(2)
 			}
 			for {

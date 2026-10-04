@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 
 const [mode, record] = process.argv.slice(2);
 const token = randomBytes(32).toString("hex");
@@ -13,7 +14,18 @@ const server = createServer((socket) => {
     socket.once("data", (data) => {
       const output = data.toString().trim();
       if (output === "exit") process.exit(0);
-      else {
+      else if (process.platform === "win32") {
+        // Windows inherited pipes block synchronous writes. Keep this control
+        // endpoint responsive while an owned worker performs the real write.
+        const writer = new Worker(
+          new URL("owned-output-writer.mjs", import.meta.url),
+          { workerData: { record, token, fd: output === "stdout" ? 1 : 2 } },
+        );
+        writer.once("error", () => process.exit(7));
+        writer.once("exit", (code) => {
+          if (code !== 0) process.exit(7);
+        });
+      } else {
         const status = (pending) => {
           writeFileSync(
             record + ".pending.tmp",
