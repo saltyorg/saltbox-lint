@@ -13,6 +13,7 @@ Updated: 2026-10-04 for Windows release-staging tooling
 - extension/: TypeScript 5.9.3, esbuild 0.28.2, stable VS Code APIs/types 1.100.0 and Node 24.20.0 build pin; no runtime Node dependencies.
 - Editor protocol/coordinates, canonical identities, bounded subprocess scheduling, diagnostics rendering and VS Code orchestration are separate modules. Windows editor-only invocations self-assign to a kill-on-close Job; POSIX uses extension-owned process groups.
 - Windows release-staging probes use a development-only PowerShell 7 launcher with in-process C# compilation and an atomically assigned kill-on-close Job. Shipped CLI/editor packages have no PowerShell or C# runtime dependency.
+- Native Linux/Darwin release tests resolve `cc` through PATH to compile a pthread lifetime fixture; Ubuntu runners provide GCC and macOS runners provide Apple Clang. Windows does not build or run this POSIX fixture. The fixture adds no shipped CLI/editor compiler or C runtime dependency.
 - Secondary languages: opt-in Python qualification tools use pinned Ansible/Jinja loader-only comparisons and Linux PTY/resource measurements; YAML/JSON for workflows, packaging and VS Code tasks; pinned JavaScript/TypeScript under tools/oracles for explicit offline evidence regeneration with Node 24.20.0 (outside normal Go gates).
 
 ## Conventions

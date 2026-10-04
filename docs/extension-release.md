@@ -9,6 +9,9 @@ provenance. GitHub release publication and Marketplace publication are separate.
 ## Local packaging
 
 Use the Go version in `go.mod`, Node in `extension/.node-version` and npm 11.19.0.
+Native Linux and Darwin release tests also require a pthread-capable `cc` for
+the live-thread cleanup fixture. Windows staging tests require PowerShell 7.
+These tools are development prerequisites; installed extensions need neither.
 From the repository root:
 
 ```sh

@@ -1,18 +1,56 @@
 import { execFile } from "node:child_process";
 
-export function liveGroupMembers(snapshot, group) {
+export function liveGroupMembers(snapshot, group, platform = process.platform) {
   if (!Number.isSafeInteger(group) || group <= 1)
     throw new Error("Invalid owned process group");
+  if (!["linux", "darwin"].includes(platform))
+    throw new Error("Owned process group observation requires Linux or Darwin");
   let live = false;
   let rows = 0;
+  const members = new Map();
   for (const line of snapshot.split("\n")) {
     if (!line.trim()) continue;
-    const match = /^\s*(\d+)\s+([A-Za-z][^\s]*)\s*$/.exec(line);
+    const match = (
+      platform === "linux"
+        ? /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([DRSTtWXZI])\s*$/
+        : /^\s*(\d+)\s+(\d+)\s+((?:[IRSTU](?:<|N)?X?E?V?L?s?\+?|Z(?:<|N)?X?V?L?s?\+?))\s*$/
+    ).exec(line);
     if (!match) throw new Error("Unrecognized process group snapshot");
+    const numbers = match.slice(1, platform === "linux" ? 5 : 3).map(Number);
+    if (
+      numbers.some((value) => !Number.isSafeInteger(value) || value < 0) ||
+      numbers.slice(1).some((value) => value === 0)
+    )
+      throw new Error("Unrecognized process group snapshot identity");
     rows++;
-    if (Number(match[1]) === group && !match[2].startsWith("Z")) live = true;
+    if (numbers[0] !== group) continue;
+    const pid = numbers[1];
+    if (platform === "linux") {
+      const [, , tid, count] = numbers;
+      let member = members.get(pid);
+      if (!member) {
+        member = { count, threads: new Set() };
+        members.set(pid, member);
+      }
+      if (member.count !== count || member.threads.has(tid))
+        throw new Error("Inconsistent process group thread snapshot");
+      member.threads.add(tid);
+      if (match[5] !== "Z") live = true;
+    } else {
+      if (members.has(pid)) throw new Error("Duplicate process group member");
+      members.set(pid, true);
+      if (!match[3].startsWith("Z")) live = true;
+    }
   }
   if (!rows) throw new Error("Empty process group snapshot");
+  if (!snapshot.endsWith("\n"))
+    throw new Error("Unterminated process group snapshot");
+  if (platform === "linux") {
+    for (const [pid, member] of members) {
+      if (member.threads.size !== member.count || !member.threads.has(pid))
+        throw new Error("Incomplete process group thread snapshot");
+    }
+  }
   return live;
 }
 
@@ -23,7 +61,9 @@ export async function groupHasLiveMembers(group, signal) {
     let result;
     const probe = execFile(
       "/bin/ps",
-      ["-A", "-o", "pgid=,state="],
+      process.platform === "linux"
+        ? ["-A", "-L", "-o", "pgid=,pid=,lwp=,nlwp=,s="]
+        : ["-A", "-o", "pgid=,pid=,state="],
       {
         timeout: 1000,
         killSignal: "SIGKILL",
@@ -44,7 +84,8 @@ export async function groupHasLiveMembers(group, signal) {
       else resolve(result.stdout);
     });
   });
-  // A zombie has no executable work or open endpoint. Its parent's wait policy
-  // must not extend this command's cleanup lifetime.
+  // Linux's leader can be Z while another thread retains open endpoints. Check
+  // every advertised thread. Darwin's SZOMB follows final-thread exit and task
+  // detachment, so its process state proves the task has no remaining worker.
   return liveGroupMembers(snapshot, group);
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -34,7 +35,7 @@ async function record(filename) {
   throw new Error(`Owned builder did not publish ${filename}`);
 }
 
-function running(instance) {
+function running(instance, request) {
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host: "127.0.0.1", port: instance.port });
     let response = "";
@@ -46,6 +47,7 @@ function running(instance) {
     socket.setTimeout(1000, () =>
       finish(new Error("Owned builder probe timed out")),
     );
+    if (request) socket.once("connect", () => socket.end(request));
     socket.on("data", (chunk) => (response += chunk.toString("ascii")));
     socket.once("end", () =>
       finish(undefined, response === instance.token + "\n"),
@@ -57,15 +59,169 @@ function running(instance) {
   });
 }
 
-test("group snapshots distinguish Linux and Darwin zombies and reject malformed data", () => {
-  assert.equal(liveGroupMembers("123 Z\n123 Z+\n456 S\n", 123), false);
-  for (const state of ["R", "S", "T", "U", "I", "X", "Ss+", "U<"]) {
-    assert.equal(liveGroupMembers(`123 Z\n123 ${state}\n`, 123), true);
+test("POSIX observer retains a live worker after its main thread exits", async () => {
+  if (process.platform === "win32") return;
+  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-thread-"));
+  const filename = join(directory, "thread.json");
+  const binary = join(directory, "fixture");
+  let child;
+  let closed;
+  try {
+    await ownedCommand(
+      "cc",
+      [
+        "-pthread",
+        "-o",
+        binary,
+        fileURLToPath(new URL("testdata/owned-thread.c", import.meta.url)),
+      ],
+      { phase: "thread fixture build", timeoutMs: 30000 },
+    );
+    child = spawn(binary, [filename, randomBytes(32).toString("hex")], {
+      detached: true,
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: 45000,
+      killSignal: "SIGKILL",
+    });
+    child.stderr.resume();
+    closed = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    const instance = await record(filename);
+    assert.equal(await running(instance, "probe\n"), true);
+    assert.equal(await groupHasLiveMembers(instance.pid), true);
+    const trigger = createConnection({
+      host: "127.0.0.1",
+      port: instance.port,
+    });
+    await new Promise((resolve, reject) => {
+      let response = "";
+      trigger.setTimeout(1000, () =>
+        trigger.destroy(new Error("Main-thread exit probe timed out")),
+      );
+      trigger.once("error", reject);
+      trigger.on("data", (bytes) => (response += bytes.toString("ascii")));
+      trigger.once("end", () => {
+        trigger.destroy();
+        try {
+          assert.equal(
+            response,
+            instance.token + "\n",
+            "worker joined the exited main thread",
+          );
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+      trigger.end("exit-main\n");
+    });
+    if (process.platform === "linux") {
+      const until = Date.now() + 5000;
+      let state;
+      do {
+        state = execFileSync(
+          "/bin/ps",
+          ["-p", String(instance.pid), "-o", "s="],
+          { encoding: "utf8", timeout: 1000 },
+        ).trim();
+        if (state !== "Z") await delay(10);
+      } while (state !== "Z" && Date.now() < until);
+      assert.equal(state, "Z", "actual Linux leader is an unreaped zombie");
+    }
+    assert.equal(
+      await running(instance, "probe\n"),
+      true,
+      "exact live worker endpoint answers",
+    );
+    assert.equal(
+      await groupHasLiveMembers(instance.pid),
+      true,
+      "leader state cannot hide the live worker",
+    );
+    trigger.destroy();
+  } finally {
+    if (child?.pid) process.kill(-child.pid, "SIGKILL");
+    if (closed)
+      assert.deepEqual(await closed, { code: null, signal: "SIGKILL" });
+    if (child?.pid) {
+      const instance = await record(filename);
+      assert.equal(
+        await running(instance, "probe\n"),
+        false,
+        "exact killed worker endpoint is absent",
+      );
+    }
+    rmSync(directory, { recursive: true, force: true });
   }
-  assert.equal(liveGroupMembers("456 S\n", 123), false);
-  assert.throws(() => liveGroupMembers("123\n", 123), /Unrecognized/);
-  assert.throws(() => liveGroupMembers("\n", 123), /Empty/);
-  assert.throws(() => liveGroupMembers("123 Z\n", 0), /Invalid/);
+});
+
+test("group snapshots require complete Linux threads and supported Darwin states", () => {
+  assert.equal(
+    liveGroupMembers("123 123 123 1 Z\n456 456 456 1 S\n", 123, "linux"),
+    false,
+  );
+  for (const state of ["D", "R", "S", "T", "t", "W", "X", "I"]) {
+    assert.equal(
+      liveGroupMembers(
+        `123 123 123 2 Z\n123 123 124 2 ${state}\n`,
+        123,
+        "linux",
+      ),
+      true,
+    );
+  }
+  assert.equal(liveGroupMembers("456 456 456 1 S\n", 123, "linux"), false);
+  for (const snapshot of [
+    "123 123 123 2 Z\n",
+    "123 123 124 1 Z\n",
+    "123 123 123 2 Z\n123 123 124 1 Z\n",
+    "123 123 123 2 Z\n123 123 123 2 Z\n",
+    "123 123 123 0 Z\n",
+    "123 0 0 1 Z\n",
+    "123 9007199254740992 123 1 Z\n",
+    "123 123 123 1 Z?\n",
+    "123 123 123 1 Zombie\n",
+    "123 123 123 1 Z+\n",
+    "123 123 123 1 Z",
+  ])
+    assert.throws(() => liveGroupMembers(snapshot, 123, "linux"), /snapshot/);
+  assert.equal(
+    liveGroupMembers("123 123 Z\n123 124 Z+\n456 456 S\n", 123, "darwin"),
+    false,
+  );
+  for (const state of ["R", "S", "T", "U", "I", "Ss+", "U<", "SNXEVLs+"]) {
+    assert.equal(
+      liveGroupMembers(`123 123 Z\n123 124 ${state}\n`, 123, "darwin"),
+      true,
+    );
+  }
+  for (const snapshot of [
+    "123 123 Z?\n",
+    "123 123 Zombie\n",
+    "123 123 Z++\n",
+    "123 123 Zs<\n",
+    "123 123 ZE\n",
+    "123 123 Z\n123 123 Z\n",
+  ]) {
+    assert.throws(
+      () => liveGroupMembers(snapshot, 123, "darwin"),
+      /snapshot|Duplicate/,
+    );
+  }
+  for (const platform of ["linux", "darwin"]) {
+    assert.throws(
+      () => liveGroupMembers("123\n", 123, platform),
+      /Unrecognized/,
+    );
+    assert.throws(() => liveGroupMembers("\n", 123, platform), /Empty/);
+    assert.throws(() => liveGroupMembers("123 Z\n", 0, platform), /Invalid/);
+  }
+  assert.throws(
+    () => liveGroupMembers("123 Z\n", 123, "freebsd"),
+    /requires Linux or Darwin/,
+  );
 });
 
 test("POSIX group observation rejects cancellation and distinguishes a real retained zombie", async () => {
