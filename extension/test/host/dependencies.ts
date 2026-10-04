@@ -17,7 +17,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
 import { hash, parseCheck } from "../../src/protocol.ts";
-import { fixtureProcesses, fixtureRunning } from "./fixture-processes.ts";
+import {
+  fixtureGateInstance,
+  fixtureProcesses,
+  fixtureRunning,
+  type FixtureProcess,
+} from "./fixture-processes.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const findings = (uri: vscode.Uri) =>
@@ -459,9 +464,12 @@ export async function runDependencies(): Promise<void> {
       "first selected chunk must hold output after complete coverage",
     );
     const firstAdmissionBatch = invocations().slice(count);
-    const held: { pid: number; args: string[]; nonce: string } = JSON.parse(
-      await readFile(admissionGate + ".ready", "utf8"),
-    );
+    const held: {
+      pid: number;
+      args: string[];
+      nonce: string;
+      instance: FixtureProcess;
+    } = JSON.parse(await readFile(admissionGate + ".ready", "utf8"));
     assert.equal(held.nonce, admissionNonce, "readiness belongs to this gate");
     assert.deepEqual(
       held.args.filter((argument) => argument.startsWith(admissionPrefix)),
@@ -474,10 +482,7 @@ export async function runDependencies(): Promise<void> {
       firstAdmissionBatch.includes(`${held.pid} ${held.args.join(" ")}`),
       "readiness identifies the exact new invocation",
     );
-    const heldInstance = fixtureProcesses(instancesLog).find(
-      (instance) => instance.pid === held.pid,
-    );
-    assert.ok(heldInstance, "held request has a recorded instance endpoint");
+    const heldInstance = fixtureGateInstance(held, instancesLog);
     assert.equal(
       await fixtureRunning(heldInstance),
       true,

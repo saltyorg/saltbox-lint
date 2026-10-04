@@ -8,6 +8,30 @@ export interface FixtureProcess {
   token: string;
 }
 
+// Readiness carries the publisher's credential. Historical records may reuse
+// its PID, so only an exact credential match proves the published instance.
+export function fixtureGateInstance(
+  ready: { pid: number; instance: FixtureProcess },
+  filename: string,
+): FixtureProcess {
+  assert.ok(ready.instance, "readiness includes its instance endpoint");
+  assert.equal(
+    ready.instance.pid,
+    ready.pid,
+    "readiness instance owns its PID",
+  );
+  assert.ok(
+    fixtureProcesses(filename).some(
+      (instance) =>
+        instance.pid === ready.instance.pid &&
+        instance.port === ready.instance.port &&
+        instance.token === ready.instance.token,
+    ),
+    "readiness includes the exact recorded instance endpoint",
+  );
+  return ready.instance;
+}
+
 export function fixtureProcesses(filename: string): FixtureProcess[] {
   let source: string;
   try {

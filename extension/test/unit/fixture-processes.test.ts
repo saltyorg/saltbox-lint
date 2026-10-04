@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fixtureRunning } from "../host/fixture-processes.ts";
+import {
+  fixtureGateInstance,
+  fixtureProcesses,
+  fixtureRunning,
+} from "../host/fixture-processes.ts";
 
 async function endpoint(answer: string | undefined, closeTimeoutMs = 5000) {
   const sockets = new Set<Socket>();
@@ -50,6 +57,63 @@ test("fixture lifetime rejects quiescence while the exact instance is alive", as
   }
   process.kill(live.instance.pid, 0);
   assert.equal(await fixtureRunning(live.instance), false);
+});
+
+test("gate readiness keeps its exact live instance when historical PIDs repeat", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-gate-instance-"));
+  const historical = await endpoint("a".repeat(64) + "\n");
+  await historical.close();
+  const live = await endpoint("b".repeat(64) + "\n");
+  live.instance.token = "b".repeat(64);
+  try {
+    const filename = join(directory, "instances.jsonl");
+    await writeFile(
+      filename,
+      [historical.instance, live.instance]
+        .map((instance) => JSON.stringify(instance))
+        .join("\n") + "\n",
+    );
+    const ready = { pid: live.instance.pid, instance: live.instance };
+    const oldSelection = fixtureProcesses(filename).find(
+      (instance) => instance.pid === ready.pid,
+    );
+    assert.deepEqual(oldSelection, historical.instance);
+    assert.ok(oldSelection);
+    assert.equal(await fixtureRunning(oldSelection), false);
+    const selected = fixtureGateInstance(ready, filename);
+    assert.deepEqual(selected, live.instance);
+    assert.equal(await fixtureRunning(selected), true);
+    await writeFile(
+      filename,
+      [live.instance, historical.instance]
+        .map((instance) => JSON.stringify(instance))
+        .join("\n") + "\n",
+    );
+    assert.deepEqual(fixtureGateInstance(ready, filename), live.instance);
+    assert.equal(
+      await fixtureRunning(fixtureGateInstance(ready, filename)),
+      true,
+    );
+    assert.throws(
+      () => fixtureGateInstance(JSON.parse('{"pid":123}'), filename),
+      /readiness includes its instance endpoint/,
+    );
+    assert.throws(
+      () => fixtureGateInstance({ ...ready, pid: ready.pid + 1 }, filename),
+      /instance owns its PID/,
+    );
+    assert.throws(
+      () =>
+        fixtureGateInstance(
+          { ...ready, instance: { ...live.instance, token: "c".repeat(64) } },
+          filename,
+        ),
+      /exact recorded instance endpoint/,
+    );
+  } finally {
+    await live.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("missing endpoint close notification fails within its cleanup deadline", async () => {

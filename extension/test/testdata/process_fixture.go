@@ -15,7 +15,14 @@ import (
 	"time"
 )
 
+type processInstance struct {
+	PID   int    `json:"pid"`
+	Port  int    `json:"port"`
+	Token string `json:"token"`
+}
+
 func main() {
+	var instance *processInstance
 	if filename := os.Getenv("SALTBOX_TEST_PROCESS_INSTANCES"); filename != "" {
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
@@ -26,11 +33,7 @@ func main() {
 			os.Exit(2)
 		}
 		token := hex.EncodeToString(nonce[:])
-		instance := struct {
-			PID   int    `json:"pid"`
-			Port  int    `json:"port"`
-			Token string `json:"token"`
-		}{os.Getpid(), listener.Addr().(*net.TCPAddr).Port, token}
+		instance = &processInstance{os.Getpid(), listener.Addr().(*net.TCPAddr).Port, token}
 		file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			os.Exit(2)
@@ -95,10 +98,11 @@ func main() {
 		}
 		if gate != "" {
 			ready := struct {
-				PID   int      `json:"pid"`
-				Args  []string `json:"args"`
-				Nonce string   `json:"nonce"`
-			}{os.Getpid(), os.Args[1:], os.Getenv("SALTBOX_TEST_PROCESS_GATE_NONCE")}
+				PID      int              `json:"pid"`
+				Args     []string         `json:"args"`
+				Nonce    string           `json:"nonce"`
+				Instance *processInstance `json:"instance"`
+			}{os.Getpid(), os.Args[1:], os.Getenv("SALTBOX_TEST_PROCESS_GATE_NONCE"), instance}
 			data, marshalErr := json.Marshal(ready)
 			temporary := fmt.Sprintf("%s.ready.%d.tmp", gate, os.Getpid())
 			if marshalErr != nil || os.WriteFile(temporary, data, 0o600) != nil || os.Rename(temporary, gate+".ready") != nil {
