@@ -528,13 +528,14 @@ export class EditorIntegration implements vscode.Disposable {
             this.queueFile(document.uri, true, version);
         };
     };
-    let failureToken = this.statusToken(document);
+    let failureToken: string | undefined;
     try {
       const result = await this.lint.submit(
         key,
         manual ? 2 : 1,
         async (signal) => {
           if (signal.aborted || !current()) return;
+          failureToken = this.statusToken(document);
           const snapshot = await this.snapshot(document, version);
           if (!snapshot || signal.aborted || !current()) return;
           failureToken = this.statusToken(document);
@@ -667,7 +668,11 @@ export class EditorIntegration implements vscode.Disposable {
       });
       this.publish(document.uri);
     } catch (error) {
-      if (current() && failureToken === this.statusToken(document)) {
+      if (
+        failureToken !== undefined &&
+        current() &&
+        failureToken === this.statusToken(document)
+      ) {
         this.failures.set(key, {
           token: failureToken,
           message: error instanceof Error ? error.message : String(error),
