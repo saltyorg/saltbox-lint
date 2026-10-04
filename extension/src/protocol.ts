@@ -45,12 +45,37 @@ export interface SharedFix {
   message: string;
   edits: SourceEdit[];
 }
+export interface DependencyFile {
+  path: string;
+  sha256?: string;
+  state: "read" | "missing" | "unavailable" | "regular" | "nonregular";
+}
+export interface SourceDependencies {
+  path: string;
+  source_sha256: string;
+  files: DependencyFile[];
+  identity: DependencyFile[];
+  discovery: DependencyFile[];
+  directories: {
+    path: string;
+    state: "directory" | "missing" | "non-directory";
+    members: string[];
+  }[];
+}
+export interface AnalysisRecord {
+  schema_version: 1;
+  root: string;
+  generation: string;
+  complete: true;
+  sources: SourceDependencies[];
+}
 export interface CheckReport {
+  analysis?: AnalysisRecord;
   diagnostics: Finding[];
   fixes: Map<string, SharedFix>;
 }
-export function hash(source: string): string {
-  return createHash("sha256").update(source, "utf8").digest("hex");
+export function hash(source: string | Uint8Array): string {
+  return createHash("sha256").update(source).digest("hex");
 }
 function valid(condition: unknown): asserts condition {
   if (!condition) throw new Error("Invalid Saltbox Lint response");
@@ -209,7 +234,113 @@ export function parseFormat(
     ? { ...result, reason: value.reason as string }
     : result;
 }
-export function parseCheck(wire: string): CheckReport {
+function digest(value: unknown): asserts value is string {
+  string(value);
+  valid(/^[0-9a-f]{64}$/.test(value));
+}
+function analysisRecord(value: unknown): asserts value is AnalysisRecord {
+  object(value);
+  valid(value.schema_version === 1 && value.complete === true);
+  string(value.root);
+  valid(
+    !value.root.includes("\0") &&
+      /^(?:\/|[A-Za-z]:[\\\/]|\\\\[^\\]+\\[^\\]+(?:\\|$))/.test(value.root),
+  );
+  digest(value.generation);
+  valid(
+    Array.isArray(value.sources) &&
+      value.sources.length > 0 &&
+      value.sources.length <= 100000,
+  );
+  const paths = new Set<string>();
+  let count = 0;
+  for (const source of value.sources) {
+    object(source);
+    sourcePath(source.path);
+    digest(source.source_sha256);
+    valid(!paths.has(source.path));
+    paths.add(source.path);
+    valid(Array.isArray(source.files) && Array.isArray(source.directories));
+    valid(Array.isArray(source.identity) && Array.isArray(source.discovery));
+    valid(source.identity.length === 0 || source.identity.length === 4);
+    const markers = new Set<string>();
+    for (const marker of source.identity) {
+      object(marker);
+      sourcePath(marker.path);
+      valid(
+        ["saltbox.yml", "saltbox.yaml", "sandbox.yml", "sandbox.yaml"].includes(
+          marker.path,
+        ) && !markers.has(marker.path),
+      );
+      markers.add(marker.path);
+      valid(
+        ["regular", "nonregular", "missing", "unavailable"].includes(
+          marker.state as string,
+        ) && marker.sha256 === undefined,
+      );
+    }
+    const controls = new Set<string>();
+    valid(source.discovery.length <= 10000);
+    for (const control of source.discovery) {
+      valid(++count <= 1000000);
+      object(control);
+      sourcePath(control.path);
+      valid(!controls.has(control.path));
+      controls.add(control.path);
+      valid(
+        ["read", "missing", "unavailable"].includes(control.state as string),
+      );
+      if (control.state === "read") digest(control.sha256);
+      else valid(control.sha256 === undefined);
+    }
+    const files = new Map<string, DependencyFile>();
+    for (const file of source.files) {
+      valid(++count <= 1000000);
+      object(file);
+      sourcePath(file.path);
+      valid(
+        ["read", "missing", "unavailable"].includes(file.state as string) &&
+          !files.has(file.path),
+      );
+      if (file.state === "read") digest(file.sha256);
+      else valid(file.sha256 === undefined);
+      files.set(file.path, file as unknown as DependencyFile);
+    }
+    valid(
+      files.get(source.path)?.sha256 === source.source_sha256 &&
+        files.get(source.path)?.state === "read",
+    );
+    const directories = new Set<string>();
+    for (const directory of source.directories) {
+      valid(++count <= 1000000);
+      object(directory);
+      sourcePath(directory.path);
+      valid(
+        ["directory", "missing", "non-directory"].includes(
+          directory.state as string,
+        ),
+      );
+      valid(!directories.has(directory.path));
+      directories.add(directory.path);
+      valid(Array.isArray(directory.members));
+      const members = new Set<string>();
+      for (const member of directory.members) {
+        valid(++count <= 1000000);
+        sourcePath(member);
+        valid(
+          member.startsWith(`${directory.path}/`) &&
+            !members.has(member) &&
+            files.get(member)?.state === "read",
+        );
+        members.add(member);
+      }
+      for (const [file, entry] of files)
+        if (entry.state === "read" && file.startsWith(`${directory.path}/`))
+          valid(members.has(file));
+    }
+  }
+}
+export function parseCheck(wire: string, requireAnalysis = false): CheckReport {
   const value: unknown = JSON.parse(wire);
   object(value);
   valid(value.schema_version === 2);
@@ -244,5 +375,23 @@ export function parseCheck(wire: string): CheckReport {
       valid(fixes.get(finding.fix_id)?.path === finding.path);
     }
   }
-  return { diagnostics: value.diagnostics as Finding[], fixes };
+  if (requireAnalysis || value.analysis !== undefined)
+    analysisRecord(value.analysis);
+  if (value.analysis !== undefined) {
+    const sources = new Set(
+      (value.analysis as AnalysisRecord).sources.map((source) => source.path),
+    );
+    valid(
+      value.diagnostics.every((finding: Finding) =>
+        sources.has(finding.path),
+      ) && [...fixes.values()].every((fix) => sources.has(fix.path)),
+    );
+  }
+  return {
+    diagnostics: value.diagnostics as Finding[],
+    fixes,
+    ...(value.analysis === undefined
+      ? {}
+      : { analysis: value.analysis as AnalysisRecord }),
+  };
 }

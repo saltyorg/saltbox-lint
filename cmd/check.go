@@ -17,6 +17,7 @@ import (
 type checkOptions struct {
 	root, format, stdinFilename string
 	fix, diff                   bool
+	includeAnalysis             bool
 }
 
 func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
@@ -36,6 +37,7 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 	flags.StringVar(&opts.format, "format", "auto", "Output format: auto, human, concise, json, github (auto uses human on a terminal)")
 	flags.BoolVar(&opts.fix, "fix", false, "Apply verified formatting fixes and recheck")
 	flags.BoolVar(&opts.diff, "diff", false, "Print unified formatting changes without writing")
+	flags.BoolVar(&opts.includeAnalysis, "include-analysis", false, "Include versioned dependency records in JSON output")
 	command.MarkFlagsMutuallyExclusive("fix", "diff")
 	return command
 }
@@ -49,7 +51,10 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 	if opts.diff && (opts.format == "json" || opts.format == "github") {
 		return lint.Options{}, fmt.Errorf("--diff cannot use structured output")
 	}
-	load := lint.Options{Root: opts.root}
+	if opts.includeAnalysis && opts.format != "json" {
+		return lint.Options{}, fmt.Errorf("--include-analysis requires --format json")
+	}
+	load := lint.Options{Root: opts.root, IncludeAnalysis: opts.includeAnalysis}
 	stdin := 0
 	for _, arg := range args {
 		if arg == "-" {

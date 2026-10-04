@@ -28,3 +28,17 @@ test("canonical disk identity stays inside root across workspace symlinks", asyn
     await rm(base, { recursive: true, force: true });
   }
 });
+
+test("conventional templates remain read-only regardless of extension", async () => {
+  const { templatePath } = await import("../../src/identity.ts");
+  for (const filename of [
+    "roles/a/templates/router.yaml",
+    "resources/roles/a/templates/config.txt",
+    "resources/templates/config.yml",
+    "/absolute/roles/a/templates/config.conf",
+    "router.j2",
+  ])
+    assert.equal(templatePath(filename), true);
+  assert.equal(templatePath("roles/a/tasks/template.yml"), false);
+  assert.equal(templatePath("roles/a/defaults/main.yml"), false);
+});

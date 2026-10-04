@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 import { readFile } from "node:fs/promises";
+import { lstatSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { identify, resolveSource } from "./identity.ts";
+import { identify, resolveSource, templatePath } from "./identity.ts";
 import type { Identity } from "./identity.ts";
 import { hash, parseCheck, parseFormat, SnapshotIndex } from "./protocol.ts";
 import type {
@@ -16,6 +17,13 @@ import { range, renderDiagnostics } from "./diagnostics.ts";
 import { Scheduler } from "./scheduler.ts";
 import { MarkedRoots } from "./roots.ts";
 import { Results } from "./results.ts";
+import { Dependencies } from "./dependencies.ts";
+import {
+  contentFingerprint,
+  fileFingerprint,
+  observeAnalysis,
+  observationFingerprint,
+} from "./observations.ts";
 
 interface Snapshot extends Identity {
   uri: vscode.Uri;
@@ -25,6 +33,7 @@ interface Snapshot extends Identity {
   folder: string;
   rootRevision: number;
   documentRevision: number;
+  dependencyRevision: number;
   index: SnapshotIndex;
 }
 interface DocumentResult {
@@ -52,6 +61,7 @@ export class EditorIntegration implements vscode.Disposable {
     vscode.languages.createDiagnosticCollection("saltbox-lint");
   private readonly output = vscode.window.createOutputChannel("Saltbox Lint");
   private readonly results = new Results<DocumentResult>();
+  private readonly dependencies = new Dependencies();
   private readonly checking = new Map<string, Promise<void>>();
   private readonly rootRevisions = new Map<string, number>();
   private readonly documentRevisions = new WeakMap<
@@ -88,7 +98,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.eligibilityChanged.fire();
     });
     this.fileListener = this.roots.onDidChangeFile((uri) =>
-      this.queueFile(uri),
+      this.contextEvent(uri),
     );
     if (this.activeFile?.scheme !== "file") this.activeFile = undefined;
     this.displayListeners = vscode.Disposable.from(
@@ -125,6 +135,10 @@ export class EditorIntegration implements vscode.Disposable {
       document.uri.scheme === "file" &&
       ["yaml", "ansible"].includes(document.languageId) &&
       /\.ya?ml$/i.test(document.uri.path) &&
+      !templatePath(
+        this.sourceOwners.get(document.uri.toString())?.path ??
+          document.uri.path,
+      ) &&
       !!this.roots.get(
         vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString() ?? "",
       )
@@ -233,6 +247,7 @@ export class EditorIntegration implements vscode.Disposable {
     );
     if (!root) return;
     const identity = await identify(root, document.uri.fsPath);
+    if (templatePath(identity.path)) return;
     const snapshot = {
       ...identity,
       uri: document.uri,
@@ -242,6 +257,7 @@ export class EditorIntegration implements vscode.Disposable {
       folder,
       rootRevision,
       documentRevision,
+      dependencyRevision: this.dependencies.revision(folder, identity.path),
       index: new SnapshotIndex(text),
     };
     if (!this.current(document, snapshot)) return;
@@ -253,6 +269,8 @@ export class EditorIntegration implements vscode.Disposable {
       this.eligible(document) &&
       snapshot.rootRevision === this.rootRevision(snapshot.folder) &&
       snapshot.documentRevision === this.documentRevision(document) &&
+      snapshot.dependencyRevision ===
+        this.dependencies.revision(snapshot.folder, snapshot.path) &&
       document.version === snapshot.version &&
       hash(document.getText()) === snapshot.hash
     );
@@ -321,7 +339,11 @@ export class EditorIntegration implements vscode.Disposable {
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
-    const requestKey = `${document.uri}:${version}:${revision}:${this.rootRevision(folder)}`;
+    const identity = this.sourceOwners.get(document.uri.toString());
+    const contextRevision = identity
+      ? this.dependencies.revision(folder, identity.path)
+      : this.dependencies.begin();
+    const requestKey = `${document.uri}:${version}:${revision}:${this.rootRevision(folder)}:${contextRevision}`;
     const existing = this.checking.get(requestKey);
     if (existing) return existing;
     const work = this.checkSnapshot(document, manual, version);
@@ -344,6 +366,7 @@ export class EditorIntegration implements vscode.Disposable {
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
     const rootRevision = this.rootRevision(folder);
+    const dependencyToken = this.dependencies.begin();
     // Ownership must exist while the request is queued, before any source copy.
     this.documentFolders.set(key, folder);
     const current = () =>
@@ -371,6 +394,7 @@ export class EditorIntegration implements vscode.Disposable {
                 snapshot.filename,
                 "--format",
                 "json",
+                "--include-analysis",
                 "-",
               ],
               input: snapshot.text,
@@ -384,7 +408,14 @@ export class EditorIntegration implements vscode.Disposable {
       if (!result || !current()) return;
       const { wire, snapshot } = result;
       if (!this.current(document, snapshot)) return;
-      const report = parseCheck(wire);
+      const report = parseCheck(wire, true);
+      if (
+        report.analysis!.root !== snapshot.root ||
+        report.analysis!.sources.length !== 1 ||
+        report.analysis!.sources[0].path !== snapshot.path ||
+        report.analysis!.sources[0].source_sha256 !== snapshot.hash
+      )
+        throw new Error("Check returned inconsistent analysis identity");
       if (
         report.diagnostics.some((finding) => finding.path !== snapshot.path) ||
         [...report.fixes.values()].some((fix) => fix.path !== snapshot.path)
@@ -401,6 +432,26 @@ export class EditorIntegration implements vscode.Disposable {
       if (relatedRevision !== this.relatedRevision)
         for (const diagnostic of diagnostics)
           diagnostic.relatedInformation = undefined;
+      const observed = await observeAnalysis(
+        report.analysis!,
+        document.isDirty ? new Set([snapshot.path]) : new Set(),
+      );
+      for (const file of observed.changed)
+        this.contextEvent(
+          vscode.Uri.file(path.join(snapshot.root, ...file.split("/"))),
+        );
+      if (!this.current(document, snapshot) || observed.changed.size) return;
+      if (
+        !this.dependencies.accept(
+          folder,
+          report.analysis!,
+          dependencyToken,
+          false,
+          [],
+          observed.fingerprints,
+        )
+      )
+        return;
       this.results.storeDocument(key, {
         id: randomUUID(),
         snapshot,
@@ -431,9 +482,12 @@ export class EditorIntegration implements vscode.Disposable {
     const folderKey = folder.uri.toString();
     const revision = this.rootRevision(folderKey);
     const scanRevision = this.scanRevisions.get(folderKey);
+    const dependencyToken = this.dependencies.begin();
+    const admissionRevision = this.dependencies.admissionRevision(folderKey);
     const current = () =>
       !this.disposed &&
       revision === this.rootRevision(folderKey) &&
+      admissionRevision === this.dependencies.admissionRevision(folderKey) &&
       (selected !== undefined ||
         scanRevision === this.scanRevisions.get(folderKey));
     try {
@@ -454,6 +508,7 @@ export class EditorIntegration implements vscode.Disposable {
                 root,
                 "--format",
                 "json",
+                "--include-analysis",
                 "--",
                 ...(selected ? selected.keys() : ["."]),
               ],
@@ -464,7 +519,16 @@ export class EditorIntegration implements vscode.Disposable {
         },
       );
       if (wire === undefined || !current()) return;
-      const report = parseCheck(wire);
+      const report = parseCheck(wire, true);
+      if (
+        report.analysis!.root !== root ||
+        (selected &&
+          (report.analysis!.sources.length !== selected.size ||
+            report.analysis!.sources.some(
+              (source) => !selected.has(source.path),
+            )))
+      )
+        throw new Error("Check returned inconsistent analysis identity");
       if (
         selected &&
         (report.diagnostics.some((finding) => !selected.has(finding.path)) ||
@@ -472,7 +536,8 @@ export class EditorIntegration implements vscode.Disposable {
       )
         throw new Error("Check returned an unselected source");
       const grouped = new Map<string, Finding[]>();
-      for (const relative of selected?.keys() ?? []) grouped.set(relative, []);
+      for (const source of report.analysis!.sources)
+        grouped.set(source.path, []);
       for (const finding of report.diagnostics) {
         const group = grouped.get(finding.path) ?? [];
         group.push(finding);
@@ -488,9 +553,12 @@ export class EditorIntegration implements vscode.Disposable {
           filename = await resolveSource(root, relative);
           text = await readFile(filename, "utf8");
         } catch (error) {
-          if (selected && (error as NodeJS.ErrnoException).code === "ENOENT") {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             this.confirmMissing(
-              vscode.Uri.file(selected.get(relative)!.filename),
+              vscode.Uri.file(
+                selected?.get(relative)?.filename ??
+                  path.join(root, ...relative.split("/")),
+              ),
             );
             continue;
           }
@@ -499,7 +567,18 @@ export class EditorIntegration implements vscode.Disposable {
         const uri = vscode.Uri.file(filename);
         const owner = this.roots.folder(uri);
         if (owner && owner.uri.toString() !== folderKey) continue;
-        if (selected && text !== selected.get(relative)!.text) continue;
+        if (selected && text !== selected.get(relative)!.text) {
+          this.queueFile(uri, true);
+          continue;
+        }
+        if (
+          hash(text) !==
+          report.analysis!.sources.find((source) => source.path === relative)!
+            .source_sha256
+        ) {
+          this.queueFile(uri, true);
+          continue;
+        }
         const index = new SnapshotIndex(text);
         for (const fix of report.fixes.values())
           if (fix.path === relative) index.edits(fix.edits);
@@ -516,6 +595,33 @@ export class EditorIntegration implements vscode.Disposable {
         for (const diagnostics of entries.values())
           for (const diagnostic of diagnostics)
             diagnostic.relatedInformation = undefined;
+      const acceptedAnalysis = {
+        ...report.analysis!,
+        sources: report.analysis!.sources.filter((source) =>
+          accepted.has(source.path),
+        ),
+      };
+      const observed = await observeAnalysis(acceptedAnalysis);
+      for (const file of observed.changed)
+        this.contextEvent(vscode.Uri.file(path.join(root, ...file.split("/"))));
+      if (!current() || observed.changed.size) return;
+      if (
+        !this.dependencies.accept(
+          folderKey,
+          acceptedAnalysis,
+          dependencyToken,
+          !selected,
+          [...this.sourceOwners]
+            .filter(
+              ([origin, owner]) =>
+                owner.root === root &&
+                this.documentFolders.get(origin) === folderKey,
+            )
+            .map(([, owner]) => owner.path),
+          observed.fingerprints,
+        )
+      )
+        return;
       for (const uri of this.results.storeScan(folderKey, entries, !!selected))
         this.publish(vscode.Uri.parse(uri));
       return accepted;
@@ -727,8 +833,162 @@ export class EditorIntegration implements vscode.Disposable {
     }
   }
   saved(document: vscode.TextDocument): void {
-    if (/\.ya?ml$/i.test(document.uri.path))
+    this.contextEvent(document.uri);
+    if (
+      /\.ya?ml$/i.test(document.uri.path) &&
+      !templatePath(
+        this.sourceOwners.get(document.uri.toString())?.path ??
+          document.uri.path,
+      )
+    )
       this.queueFile(document.uri, true, document.version);
+  }
+  private contextEvent(uri: vscode.Uri): void {
+    if (this.disposed || uri.scheme !== "file") return;
+    const folder = this.roots.folder(uri);
+    if (!folder) return;
+    const key = folder.uri.toString();
+    const root = this.roots.get(key);
+    if (!root) return;
+    const known = this.sourceOwners.get(uri.toString());
+    let relative =
+      known?.root === root
+        ? known.path
+        : path.relative(root, uri.fsPath).split(path.sep).join("/");
+    if (
+      relative === ".." ||
+      relative.startsWith("../") ||
+      path.isAbsolute(relative)
+    ) {
+      const configured = path.resolve(
+        folder.uri.fsPath,
+        vscode.workspace
+          .getConfiguration("saltboxLint", folder.uri)
+          .get<string>("root", "") || ".",
+      );
+      relative = path
+        .relative(configured, uri.fsPath)
+        .split(path.sep)
+        .join("/");
+    }
+    if (
+      !relative ||
+      relative === ".." ||
+      relative.startsWith("../") ||
+      path.isAbsolute(relative)
+    )
+      return;
+    let fingerprint: string;
+    try {
+      const stat = lstatSync(uri.fsPath, { bigint: true });
+      const target = stat.isSymbolicLink()
+        ? statSync(uri.fsPath, { bigint: true })
+        : undefined;
+      fingerprint = observationFingerprint(stat, target);
+      const kind = this.dependencies.observationKind(key, relative);
+      const marker = /^(saltbox|sandbox)\.ya?ml$/.test(relative);
+      if (
+        (target ?? stat).isFile() &&
+        kind !== "metadata" &&
+        (!marker || kind === "read")
+      ) {
+        const actual = path.relative(root, realpathSync.native(uri.fsPath));
+        if (
+          actual === ".." ||
+          actual.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(actual)
+        )
+          fingerprint += ":escaped";
+        else
+          fingerprint = contentFingerprint(
+            stat,
+            readFileSync(uri.fsPath),
+            target,
+          );
+        const after = lstatSync(uri.fsPath, { bigint: true });
+        const afterTarget = after.isSymbolicLink()
+          ? statSync(uri.fsPath, { bigint: true })
+          : undefined;
+        if (
+          observationFingerprint(stat, target) !==
+          observationFingerprint(after, afterTarget)
+        )
+          fingerprint += `:unstable:${++this.nextRevision}`;
+      }
+    } catch {
+      fingerprint = "unavailable";
+    }
+    const affected = this.dependencies.event(key, root, relative, fingerprint);
+    if (!affected) return;
+    const discoveryControl =
+      relative === ".gitignore" ||
+      relative === ".git/info/exclude" ||
+      relative.endsWith("/.gitignore");
+    for (const source of affected) {
+      const filename = path.join(root, ...source.split("/"));
+      const aliases = [...this.sourceOwners]
+        .filter(([, owner]) => owner.root === root && owner.path === source)
+        .map(([origin]) => vscode.Uri.parse(origin));
+      for (const target of aliases.length
+        ? aliases
+        : [vscode.Uri.file(filename)]) {
+        this.lint.cancel(target.toString());
+        this.formatting.cancel(target.toString());
+        const document = vscode.workspace.textDocuments.find(
+          (doc) => doc.uri.toString() === target.toString(),
+        );
+        if (document?.isDirty) {
+          this.output.appendLine(
+            `Stale ${source}: analysis context changed; save or check the document to refresh.`,
+          );
+          continue;
+        }
+        if (document || !discoveryControl) this.queueFile(target, true);
+      }
+    }
+    if (discoveryControl) {
+      this.lint.cancel(`files:${folder.uri}`);
+      for (const [pendingKey, pending] of this.pendingFiles) {
+        if (this.roots.folder(pending.uri)?.uri.toString() !== key) continue;
+        if (
+          !vscode.workspace.textDocuments.some(
+            (doc) => doc.uri.toString() === pendingKey && !doc.isClosed,
+          )
+        )
+          this.pendingFiles.delete(pendingKey);
+      }
+      this.scanRevisions.set(key, ++this.nextRevision);
+      this.lint.cancel(`workspace:${folder.uri}`);
+      this.queueCoverage(folder);
+      return;
+    }
+    if (/\.ya?ml$/i.test(uri.path) && !templatePath(relative))
+      this.queueFile(uri);
+    // No completed coverage exists during startup. Any context event retains
+    // the existing queue's full scan fallback, including non-YAML templates.
+    if (!this.results.hasCompleteScan(key)) {
+      this.scanRevisions.set(key, ++this.nextRevision);
+      this.lint.cancel(`workspace:${folder.uri}`);
+      this.queueCoverage(folder);
+    }
+  }
+  private queueCoverage(folder: vscode.WorkspaceFolder): void {
+    this.results.invalidateCoverage(folder.uri.toString());
+    if (!this.pendingRefresh.has(folder.uri.toString())) {
+      this.pendingRefresh.add(folder.uri.toString());
+      if (this.refreshTimer) clearTimeout(this.refreshTimer);
+      this.refreshTimer = setTimeout(() => {
+        this.refreshTimer = undefined;
+        const pending = new Set(this.pendingRefresh);
+        this.pendingRefresh.clear();
+        for (const current of vscode.workspace.workspaceFolders ?? [])
+          if (
+            pending.has(current.uri.toString()) &&
+            this.roots.get(current.uri.toString())
+          )
+            void this.checkSaved(current, false);
+      }, 100);
+    }
   }
   private queueFile(uri: vscode.Uri, force = false, version?: number): void {
     if (this.disposed || uri.scheme !== "file" || !/\.ya?ml$/i.test(uri.path))
@@ -765,6 +1025,7 @@ export class EditorIntegration implements vscode.Disposable {
     const pending = [...this.pendingFiles.values()];
     this.pendingFiles.clear();
     const affected = new Map<string, number>();
+    const admissions = new Map<string, number>();
     const selected = new Map<
       string,
       Map<
@@ -777,6 +1038,11 @@ export class EditorIntegration implements vscode.Disposable {
         const folder = this.roots.folder(uri);
         if (!folder) continue;
         const folderKey = folder.uri.toString();
+        if (!admissions.has(folderKey))
+          admissions.set(
+            folderKey,
+            this.dependencies.admissionRevision(folderKey),
+          );
         const revision = this.rootRevision(folderKey);
         const root = await this.root(folder);
         if (!root || revision !== this.rootRevision(folderKey)) continue;
@@ -785,6 +1051,7 @@ export class EditorIntegration implements vscode.Disposable {
         let filename: string | undefined;
         try {
           const identity = await identify(root, uri.fsPath);
+          if (templatePath(identity.path)) continue;
           filename = identity.filename;
           const text = await readFile(identity.filename, "utf8");
           this.missingFiles.delete(key);
@@ -832,6 +1099,8 @@ export class EditorIntegration implements vscode.Disposable {
         }
       }
       for (const [key, files] of selected) {
+        if (admissions.get(key) !== this.dependencies.admissionRevision(key))
+          continue;
         const folder = vscode.workspace.workspaceFolders?.find(
           (folder) => folder.uri.toString() === key,
         );
@@ -873,7 +1142,7 @@ export class EditorIntegration implements vscode.Disposable {
     }
   }
   removeFile(uri: vscode.Uri): void {
-    this.queueFile(uri);
+    this.contextEvent(uri);
   }
   private confirmMissing(uri: vscode.Uri, filename?: string): void {
     const key = uri.toString();
@@ -898,6 +1167,9 @@ export class EditorIntegration implements vscode.Disposable {
       ...(canonical ? [vscode.Uri.file(canonical).toString()] : []),
     ]);
     this.results.forget(keys);
+    const owner = this.sourceOwners.get(key);
+    if (owner)
+      this.dependencies.remove(this.documentFolders.get(key) ?? "", owner.path);
     for (const target of keys) {
       this.lint.cancel(target);
       this.formatting.cancel(target);
@@ -905,6 +1177,20 @@ export class EditorIntegration implements vscode.Disposable {
     }
     const folder = this.roots.folder(uri);
     if (folder) {
+      const root = this.roots.get(folder.uri.toString());
+      if (root) {
+        const relative = path
+          .relative(root, canonical ?? uri.fsPath)
+          .split(path.sep)
+          .join("/");
+        if (
+          relative &&
+          relative !== ".." &&
+          !relative.startsWith("../") &&
+          !path.isAbsolute(relative)
+        )
+          this.dependencies.remove(folder.uri.toString(), relative);
+      }
       this.scanRevisions.set(folder.uri.toString(), ++this.nextRevision);
       this.lint.cancel(`workspace:${folder.uri}`);
       this.lint.cancel(`files:${folder.uri}`);
@@ -915,9 +1201,15 @@ export class EditorIntegration implements vscode.Disposable {
   refresh(uris?: readonly vscode.Uri[]): void {
     if (this.disposed) return;
     if (uris) {
-      for (const uri of uris)
-        if (/\.ya?ml$/i.test(uri.path)) this.queueFile(uri);
-      uris = uris.filter((uri) => !/\.ya?ml$/i.test(uri.path));
+      for (const uri of uris) this.contextEvent(uri);
+      uris = uris.filter(
+        (uri) =>
+          this.rootRevisions.has(uri.toString()) ||
+          [...this.canonicalRoots.values()].includes(uri.fsPath) ||
+          vscode.workspace.workspaceFolders?.some(
+            (folder) => folder.uri.toString() === uri.toString(),
+          ),
+      );
       if (!uris.length) return;
     }
     const affected = new Set<string>();
@@ -947,6 +1239,7 @@ export class EditorIntegration implements vscode.Disposable {
   }
   private refreshFolders(affected: Set<string>): void {
     for (const folder of affected) {
+      this.dependencies.remove(folder);
       this.rootRevisions.set(folder, ++this.nextRevision);
       this.pendingRefresh.add(folder);
       this.lint.cancel(`workspace:${folder}`);
@@ -1004,6 +1297,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (this.fileTimer) clearTimeout(this.fileTimer);
     this.pendingFiles.clear();
     this.results.clear();
+    this.dependencies.clear();
     this.lint.dispose();
     this.formatting.dispose();
     this.collection.dispose();

@@ -32,6 +32,10 @@ function diagnostics(uri: vscode.Uri) {
     .filter((d) => d.source === "saltbox-lint");
 }
 export async function run(): Promise<void> {
+  if (process.env.SALTBOX_TEST_DEPENDENCIES === "1") {
+    const { runDependencies } = await import("./dependencies.ts");
+    return runDependencies();
+  }
   if (process.env.SALTBOX_TEST_QUEUE === "1") {
     const { runQueue } = await import("./queue.ts");
     return runQueue();

@@ -215,6 +215,23 @@ Both arrays are empty for clean input. Each diagnostic contains `path`, `rule_id
 `fix_id`. Range lines/columns are one-based code points with a half-open end;
 span offsets are half-open UTF-8 bytes in the original source.
 
+Use `check --format json --include-analysis` to attach an optional `analysis`
+object with its own `schema_version: 1`. Default schema-2 JSON remains unchanged.
+Analysis records cover every selected source, including clean and invalid YAML,
+with the canonical root, a source-set generation digest, exact primary SHA-256
+and dependency observations. Each source lists required files and conservative
+conventional directories with admitted members. File states distinguish read
+bytes, physically missing paths, unavailable or Git-excluded inputs, and regular
+or nonregular project identity markers. Separate `identity` observations preserve
+marker existence/type independently of loaded YAML bytes. `discovery` records
+in-root Git admission controls. Missing targets and directory membership
+support refresh after creation, deletion and rename. Generation hashes the
+ordered selected records; it identifies observed content, not request ordering.
+Changes to in-root Git admission controls reconcile saved root coverage.
+Git tracking metadata, global excludes and configuration outside the source root
+require an explicit
+workspace check. These records contain data only and never authorize source edits.
+
 Each shared fix contains `id`, `path`, `message` and `edits`. Each edit retains
 its original `range`, `span` and replacement `text`. Identical fixes for the same
 path share one record, even when several findings refer to them. IDs are

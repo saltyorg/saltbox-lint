@@ -1,0 +1,445 @@
+import * as vscode from "vscode";
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import {
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { EditorIntegration } from "../../src/editor.ts";
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const findings = (uri: vscode.Uri) =>
+  vscode.languages
+    .getDiagnostics(uri)
+    .filter((item) => item.source === "saltbox-lint");
+const renderer = (uri: vscode.Uri) =>
+  findings(uri).some((item) => item.code === "traefik-renderer-contract");
+async function waitFor(predicate: () => boolean, message: string) {
+  const deadline = Date.now() + 15000;
+  while (!predicate() && Date.now() < deadline) await pause(25);
+  assert.ok(predicate(), message);
+}
+async function replace(document: vscode.TextDocument, text: string) {
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(
+    document.uri,
+    new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(document.getText().length),
+    ),
+    text,
+  );
+  assert.equal(await vscode.workspace.applyEdit(edit), true);
+}
+export async function runDependencies(): Promise<void> {
+  const roots = vscode.workspace.workspaceFolders!;
+  const task = vscode.Uri.joinPath(
+    roots[0].uri,
+    "roles/example/tasks/main.yml",
+  );
+  const defaults = vscode.Uri.joinPath(
+    roots[0].uri,
+    "roles/example/defaults/main.yml",
+  );
+  const template = vscode.Uri.joinPath(
+    roots[0].uri,
+    "roles/example/templates/router.conf",
+  );
+  const otherTask = vscode.Uri.joinPath(
+    roots[1].uri,
+    "roles/example/tasks/main.yml",
+  );
+  const unrelatedUri = vscode.Uri.joinPath(
+    roots[0].uri,
+    "roles/unrelated/defaults/main.yml",
+  );
+  const temporary = await mkdtemp(join(tmpdir(), "saltbox-dependencies-"));
+  const log = join(temporary, "process.log");
+  process.env.SALTBOX_TEST_PROCESS_LOG = log;
+  const invocations = () =>
+    existsSync(log)
+      ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
+      : [];
+  const good = await readFile(template.fsPath, "utf8"),
+    defaultsGood = await readFile(defaults.fsPath, "utf8");
+  const bad = "http:\n  routers: {}\n";
+  let editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
+  const subscriptions = [
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length) editor.change(event.document);
+    }),
+    vscode.workspace.onDidSaveTextDocument((document) =>
+      editor.saved(document),
+    ),
+    vscode.workspace.onDidCloseTextDocument((document) =>
+      editor.close(document),
+    ),
+  ];
+  const success = (name: string) => console.log(`PASS ${name}`);
+  try {
+    await editor.checkWorkspace();
+    await pause(400);
+    assert.equal(renderer(task), false);
+    assert.equal(renderer(otherTask), false);
+    assert.equal(findings(task).length, 0);
+    const unrelated = await vscode.workspace.openTextDocument(unrelatedUri);
+    await vscode.window.showTextDocument(unrelated, { preview: false });
+    await editor.check(unrelated, true);
+    const unrelatedActions = editor.actions(
+      unrelated,
+      new vscode.Range(0, 0, unrelated.lineCount, 0),
+    );
+    assert.ok(unrelatedActions.length > 0);
+    const otherBefore = findings(otherTask),
+      unrelatedBefore = findings(unrelatedUri);
+    let count = invocations().length;
+    await writeFile(template.fsPath, bad);
+    await waitFor(
+      () => renderer(task),
+      "closed clean tasks must refresh on a non-j2 template edit",
+    );
+    assert.deepEqual(findings(otherTask), otherBefore);
+    assert.deepEqual(findings(unrelatedUri), unrelatedBefore);
+    assert.deepEqual(
+      editor.actions(unrelated, new vscode.Range(0, 0, unrelated.lineCount, 0)),
+      unrelatedActions,
+    );
+    assert.ok(
+      invocations()
+        .slice(count)
+        .every(
+          (line) =>
+            !line.endsWith(" .") &&
+            !line.includes("roles/unrelated") &&
+            !line.includes(roots[1].uri.fsPath),
+        ),
+      "context edit should preserve unrelated sources and full coverage",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(
+      () => !renderer(task),
+      "template recovery must clear task findings",
+    );
+    success(
+      "good/bad/good templates refresh closed clean primaries and preserve unrelated roles and roots",
+    );
+
+    const yamlTemplate = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/example/templates/router.yaml",
+    );
+    const taskText = await readFile(task.fsPath, "utf8");
+    await rename(template.fsPath, yamlTemplate.fsPath);
+    await writeFile(
+      task.fsPath,
+      taskText.replace("router.conf", "router.yaml"),
+    );
+    await pause(250);
+    await writeFile(yamlTemplate.fsPath, bad);
+    await waitFor(
+      () => renderer(task),
+      "YAML-named templates must refresh primaries without entering selected batches",
+    );
+    await writeFile(yamlTemplate.fsPath, good);
+    await waitFor(() => !renderer(task), "YAML-named template recovery");
+    const templateDocument =
+      await vscode.workspace.openTextDocument(yamlTemplate);
+    const calls = invocations().length;
+    await editor.check(templateDocument, true);
+    assert.deepEqual(await editor.format(templateDocument, "canonical"), []);
+    assert.equal(invocations().length, calls);
+    assert.equal(editor.providerDocuments().includes(templateDocument), false);
+    await rename(yamlTemplate.fsPath, template.fsPath);
+    await writeFile(task.fsPath, taskText);
+    await pause(250);
+    success(
+      "YAML-named templates refresh context and expose no check/fix/formatter provider",
+    );
+
+    await writeFile(template.fsPath, bad);
+    await waitFor(() => renderer(task), "template bad state");
+    await writeFile(
+      defaults.fsPath,
+      defaultsGood.replace("example_role_traefik_enabled: false\n", ""),
+    );
+    await waitFor(
+      () => !renderer(task),
+      "defaults removal must change another primary's result",
+    );
+    await writeFile(defaults.fsPath, defaultsGood);
+    await waitFor(
+      () => renderer(task),
+      "defaults restoration must recheck another primary",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(() => !renderer(task), "defaults recovery");
+    success("defaults edits refresh dependent task diagnostics");
+
+    const docker = vscode.Uri.joinPath(
+        roots[0].uri,
+        "resources/tasks/docker/read.yml",
+      ),
+      policy = vscode.Uri.joinPath(
+        roots[0].uri,
+        "resources/tasks/docker/policy.yml",
+      );
+    const policyGood = await readFile(policy.fsPath, "utf8");
+    const dockerBad = () =>
+      findings(docker).some((item) => item.code === "docker-vars-policy");
+    assert.equal(dockerBad(), false);
+    await writeFile(
+      policy.fsPath,
+      policyGood.replace("omit': true", "omit': false"),
+    );
+    await waitFor(
+      dockerBad,
+      "shared Docker context must refresh clean siblings",
+    );
+    await writeFile(policy.fsPath, policyGood);
+    await waitFor(() => !dockerBad(), "shared Docker recovery");
+    success("shared Docker context uses the same dependency invalidation");
+
+    await rm(template.fsPath);
+    await waitFor(
+      () => renderer(task),
+      "template deletion must refresh primaries",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(
+      () => !renderer(task),
+      "missing template creation must refresh primaries",
+    );
+    const moved = join(roots[0].uri.fsPath, "moved-template.txt");
+    await rename(template.fsPath, moved);
+    await waitFor(() => renderer(task), "rename away must refresh");
+    await rename(moved, template.fsPath);
+    await waitFor(() => !renderer(task), "rename back must refresh");
+    const replacement = join(roots[0].uri.fsPath, "replacement.txt");
+    await writeFile(replacement, bad);
+    await rename(replacement, template.fsPath);
+    await waitFor(() => renderer(task), "atomic replacement must refresh");
+    await writeFile(replacement, good);
+    await rename(replacement, template.fsPath);
+    await waitFor(() => !renderer(task), "atomic recovery");
+    success(
+      "missing creation, deletion, rename and atomic replacement refresh dependencies",
+    );
+
+    const document = await vscode.workspace.openTextDocument(defaults);
+    await vscode.window.showTextDocument(document, { preview: false });
+    await replace(document, defaultsGood + 'example_value: "{{ value\n }}"\n');
+    await editor.check(document, true);
+    const displayed = findings(defaults);
+    const action = editor
+      .actions(document, new vscode.Range(0, 0, document.lineCount, 0))
+      .find((item) => item.command?.command === "saltboxLint.applySharedFix")!;
+    assert.ok(action);
+    await writeFile(template.fsPath, bad);
+    await waitFor(
+      () => renderer(task),
+      "closed dependent refresh during dirty buffer",
+    );
+    assert.deepEqual(findings(defaults), displayed);
+    assert.deepEqual(
+      editor.actions(document, new vscode.Range(0, 0, document.lineCount, 0)),
+      [],
+    );
+    const text = document.getText();
+    await editor.applyShared(
+      ...(action.command!.arguments as [vscode.Uri, string, string, string]),
+    );
+    assert.equal(document.getText(), text);
+    await editor.check(document, true);
+    assert.ok(
+      editor.actions(document, new vscode.Range(0, 0, document.lineCount, 0))
+        .length > 0,
+    );
+    await replace(document, defaultsGood);
+    await document.save();
+    await writeFile(template.fsPath, good);
+    await waitFor(() => !renderer(task), "dirty buffer recovery");
+    success(
+      "dirty dependent findings remain visible and stale actions cannot apply",
+    );
+
+    // An ignored explicit selection must retain its dependencies too.
+    const ignored = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/example/tasks/ignored.yml",
+    );
+    await writeFile(
+      join(roots[0].uri.fsPath, ".gitignore"),
+      "ignored.yml\nroles/example/tasks/ignored.yml\n",
+    );
+    await writeFile(ignored.fsPath, await readFile(task.fsPath, "utf8"));
+    const ignoredDocument = await vscode.workspace.openTextDocument(ignored);
+    await vscode.window.showTextDocument(ignoredDocument, { preview: false });
+    await editor.check(ignoredDocument, true);
+    await writeFile(template.fsPath, bad);
+    await waitFor(
+      () => renderer(ignored),
+      "ignored explicitly checked primary must refresh on context events",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(() => !renderer(ignored), "ignored primary recovery");
+    success("ignored explicit selections participate in dependency refresh");
+
+    // An ignore control changes the admitted source set without any YAML edit.
+    const newlyAdmitted = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/example/tasks/admitted.yml",
+    );
+    const ignorePath = join(roots[0].uri.fsPath, ".gitignore");
+    const ignoreText = await readFile(ignorePath, "utf8");
+    await writeFile(
+      ignorePath,
+      ignoreText + "roles/example/tasks/admitted.yml\n",
+    );
+    await pause(350);
+    await waitFor(
+      () => findings(newlyAdmitted).length === 0,
+      "excluded primary must leave saved coverage before admission changes",
+    );
+    await writeFile(ignorePath, ignoreText);
+    await waitFor(
+      () =>
+        findings(newlyAdmitted).some((item) => item.code === "jinja-layout"),
+      "ignore-control changes must discover previously excluded primaries",
+    );
+    await writeFile(template.fsPath, bad);
+    await waitFor(
+      () => renderer(ignored),
+      "membership reconciliation must retain explicitly checked ignored dependencies",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(
+      () => !renderer(ignored),
+      "ignored primary recovery after membership reconciliation",
+    );
+    success(
+      "Git ignore changes reconcile coverage and retain ignored explicit dependencies",
+    );
+
+    if (process.platform !== "win32") {
+      const alias = vscode.Uri.joinPath(roots[0].uri, "task-alias.yml");
+      await symlink(task.fsPath, alias.fsPath);
+      const aliasDocument = await vscode.workspace.openTextDocument(alias);
+      await vscode.window.showTextDocument(aliasDocument, { preview: false });
+      await editor.check(aliasDocument, true);
+      await writeFile(template.fsPath, bad);
+      await waitFor(
+        () => renderer(alias),
+        "canonical template event must refresh an alias-owned primary",
+      );
+      await writeFile(template.fsPath, good);
+      await waitFor(() => !renderer(alias), "alias recovery");
+      await rm(alias.fsPath);
+      success("canonical context events retain alias ownership");
+    }
+
+    await pause(500);
+    count = invocations().length;
+    const start = Date.now();
+    for (let index = 0; index < 30; index++)
+      await writeFile(template.fsPath, index % 2 === 0 ? bad : good);
+    await pause(600);
+    await waitFor(
+      () => !renderer(task),
+      "event burst must retain the final template state",
+    );
+    const burst = invocations().slice(count);
+    assert.ok(
+      burst.length <= 8,
+      `30 template writes should coalesce, got ${burst.length} processes`,
+    );
+    assert.ok(
+      burst.every((line) => !line.endsWith(" .")),
+      "event burst must retain full coverage",
+    );
+    console.log(
+      `MEASURE dependency burst writes=30 processes=${burst.length} elapsed_ms=${Date.now() - start}`,
+    );
+    success("watcher bursts coalesce without full-root rescans");
+
+    // Hold an already-computed full scan, then change unknown context before its
+    // first result is accepted. Cancellation must preserve eventual full coverage.
+    editor.dispose();
+    const gate = join(temporary, "scan-gate");
+    await writeFile(gate, "");
+    process.env.SALTBOX_TEST_PROCESS_GATE = gate;
+    editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
+    await waitFor(
+      () => existsSync(gate + ".ready"),
+      "initial scan gate must receive old output",
+    );
+    await writeFile(template.fsPath, bad);
+    await pause(150);
+    await rm(gate);
+    delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    await waitFor(
+      () => renderer(task),
+      "late context changes must reject the initial result and restore full coverage",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(() => !renderer(task), "late result recovery");
+    success(
+      "late context events reject in-flight scans and retain startup full coverage",
+    );
+
+    await rm(join(roots[0].uri.fsPath, ".saltbox-lint"));
+    await waitFor(
+      () => findings(task).length === 0 && findings(unrelatedUri).length === 0,
+      "marker removal clears graph and diagnostics",
+    );
+    count = invocations().length;
+    await writeFile(template.fsPath, bad);
+    await pause(350);
+    assert.equal(invocations().length, count);
+    await writeFile(template.fsPath, good);
+    await writeFile(join(roots[0].uri.fsPath, ".saltbox-lint"), "");
+    await editor.checkWorkspace();
+    success(
+      "marker removal releases graph state and re-enablement scans fresh context",
+    );
+    assert.equal(
+      await readFile(template.fsPath, "utf8"),
+      good,
+      "template bytes remain unchanged by checks",
+    );
+    editor.dispose();
+    await pause(150);
+    const pids = new Set(
+      invocations().map((line) => Number(line.split(" ")[0])),
+    );
+    await waitFor(
+      () =>
+        [...pids].every((pid) => {
+          try {
+            process.kill(pid, 0);
+            return false;
+          } catch {
+            return true;
+          }
+        }),
+      "completed dependency checks must leave no fixture processes running",
+    );
+    console.log(
+      `MEASURE dependency cleanup observed_processes=${pids.size} surviving=0`,
+    );
+  } catch (error) {
+    console.error("Dependency host process log:", invocations());
+    throw error;
+  } finally {
+    editor.dispose();
+    for (const subscription of subscriptions) subscription.dispose();
+    delete process.env.SALTBOX_TEST_PROCESS_LOG;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    await rm(temporary, { recursive: true, force: true });
+  }
+}

@@ -42,3 +42,11 @@ export async function resolveSource(
   if (identity.path !== relative) throw new Error("Source identity changed");
   return identity.filename;
 }
+
+export function templatePath(filename: string): boolean {
+  return (
+    /(?:^|\/)(?:resources\/)?roles\/[^/]+\/templates\//.test(filename) ||
+    /(?:^|\/)resources\/templates\//.test(filename) ||
+    filename.endsWith(".j2")
+  );
+}

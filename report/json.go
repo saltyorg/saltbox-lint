@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"strconv"
+
+	"github.com/saltyorg/saltbox-lint/lint"
 )
 
 // Private wire records preserve the exported Go diagnostic and fix types.
@@ -20,12 +22,13 @@ type jsonFix struct {
 	*Fix
 }
 
-func jsonReport(w io.Writer, ds []Diagnostic) error {
+func jsonReport(w io.Writer, ds []Diagnostic, analysis *lint.AnalysisRecord) error {
 	result := struct {
-		SchemaVersion int              `json:"schema_version"`
-		Diagnostics   []jsonDiagnostic `json:"diagnostics"`
-		Fixes         []jsonFix        `json:"fixes"`
-	}{SchemaVersion: 2, Diagnostics: make([]jsonDiagnostic, 0, len(ds)), Fixes: make([]jsonFix, 0)}
+		SchemaVersion int                  `json:"schema_version"`
+		Diagnostics   []jsonDiagnostic     `json:"diagnostics"`
+		Fixes         []jsonFix            `json:"fixes"`
+		Analysis      *lint.AnalysisRecord `json:"analysis,omitempty"`
+	}{SchemaVersion: 2, Analysis: analysis, Diagnostics: make([]jsonDiagnostic, 0, len(ds)), Fixes: make([]jsonFix, 0)}
 	// diagnostics has already interned exact path/message/ordered-edit content.
 	ids := map[*Fix]string{}
 	for _, d := range ds {

@@ -109,3 +109,15 @@ test("related invalidation retains primary diagnostics and report identity", () 
   assert.equal(saved[0].relatedInformation, undefined);
   assert.deepEqual(results.invalidateRelated(), new Set());
 });
+
+test("membership reconciliation retains findings while revoking complete coverage", () => {
+  const results = new Results<{
+    diagnostics: { relatedInformation?: unknown[] }[];
+  }>();
+  results.storeScan("one", new Map([["file", []]]), false);
+  results.storeScan("two", new Map([["other", []]]), false);
+  results.invalidateCoverage("one");
+  assert.equal(results.hasCompleteScan("one"), false);
+  assert.deepEqual(results.saved("one", "file"), []);
+  assert.equal(results.hasCompleteScan("two"), true);
+});

@@ -85,6 +85,62 @@ if (process.env.SALTBOX_TEST_QUEUE === "1") {
         'value: "{{ value\n }}"\n',
       );
 }
+if (process.env.SALTBOX_TEST_DEPENDENCIES === "1") {
+  const defaults = readFileSync(
+    resolve("../lint/testdata/traefik/api.good.yml"),
+    "utf8",
+  );
+  const header = defaults.split("---\n")[0] + "---\n";
+  const template = readFileSync(
+    resolve("../lint/testdata/traefik/renderer.good.j2"),
+    "utf8",
+  );
+  for (const name of ["one", "two"]) {
+    mkdirSync(resolve(root, name, "roles/example/tasks"), { recursive: true });
+    mkdirSync(resolve(root, name, "roles/example/templates"), {
+      recursive: true,
+    });
+    writeFileSync(
+      resolve(root, name, "roles/example/defaults/main.yml"),
+      defaults,
+    );
+    writeFileSync(
+      resolve(root, name, "roles/example/tasks/main.yml"),
+      header +
+        '- name: Render configuration\n  ansible.builtin.template:\n    src: router.conf\n    dest: /traefik/router.yml\n    mode: "0644"\n',
+    );
+    writeFileSync(
+      resolve(root, name, "roles/example/templates/router.conf"),
+      template,
+    );
+    mkdirSync(resolve(root, name, "resources/tasks/docker"), {
+      recursive: true,
+    });
+    writeFileSync(
+      resolve(root, name, "resources/tasks/docker/read.yml"),
+      '- debug: {msg: "{{ _docker_vars._docker_memory | default(0) }}"}\n',
+    );
+    writeFileSync(
+      resolve(root, name, "resources/tasks/docker/policy.yml"),
+      "- set_fact:\n    _docker_vars: \"{{ lookup('docker_vars', specs={'_docker_memory': {'omit': true}}) }}\"\n",
+    );
+    writeFileSync(
+      resolve(root, name, ".gitignore"),
+      "ignored.yml\nroles/example/tasks/admitted.yml\n",
+    );
+    writeFileSync(
+      resolve(root, name, "roles/example/tasks/admitted.yml"),
+      header + '- debug: {msg: "{{ value\n }}"}\n',
+    );
+    mkdirSync(resolve(root, name, "roles/unrelated/defaults"), {
+      recursive: true,
+    });
+    writeFileSync(
+      resolve(root, name, "roles/unrelated/defaults/main.yml"),
+      header + 'unrelated_value: "{{ other\n }}"\n',
+    );
+  }
+}
 const workspace = resolve(root, "test.code-workspace");
 writeFileSync(
   workspace,

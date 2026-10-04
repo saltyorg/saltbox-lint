@@ -2,6 +2,7 @@ package lint
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"iter"
@@ -29,17 +30,30 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	name, err := projectName(root)
+	name, identity, err := inspectProjectIdentity(root)
 	if err != nil {
 		return nil, err
 	}
-	p := &Project{Root: root, Name: name, Sources: map[string]*Source{}, Selected: map[string]bool{}}
+	p := &Project{Root: root, Name: name, Sources: map[string]*Source{}, Selected: map[string]bool{}, identity: identity, directories: map[string]string{}, discovery: []DependencyFile{}}
 	l := sourceLoader{ctx: ctx, project: p}
 	gitRoot, err := enclosingGitRoot(root)
 	if err != nil {
 		return nil, err
 	}
 	if gitRoot != "" {
+		if opts.IncludeAnalysis {
+			for _, name := range []string{".gitignore", ".git/info/exclude"} {
+				observation := DependencyFile{Path: name, State: "missing"}
+				absolute := filepath.Join(root, filepath.FromSlash(name))
+				if data, err := os.ReadFile(absolute); err == nil {
+					observation.State = "read"
+					observation.SHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
+				} else if !os.IsNotExist(err) {
+					observation.State = "unavailable"
+				}
+				p.discovery = append(p.discovery, observation)
+			}
+		}
 		// Git handles nested ignores, tracked-but-ignored files, and worktree metadata.
 		cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 		output, err := cmd.Output()
@@ -96,23 +110,29 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 	if len(p.Selected) == 0 {
 		return nil, fmt.Errorf("no supported sources selected")
 	}
+	rules := Rules()
 	contextDirs := map[string]bool{}
 	for selected := range p.Selected {
-		s := p.Sources[selected]
-		if s.RolePath != "" {
-			for _, kind := range []string{"defaults", "tasks", "handlers", "vars", "templates"} {
-				contextDirs[filepath.Join(root, filepath.FromSlash(s.RolePath), kind)] = true
-			}
-		}
-		if strings.HasPrefix(selected, "resources/tasks/docker/") {
-			contextDirs[filepath.Join(root, "resources", "tasks", "docker")] = true
+		for _, dir := range contextDirectories(p.Sources[selected], rules) {
+			contextDirs[filepath.Join(root, filepath.FromSlash(dir))] = true
 		}
 	}
 	for _, dir := range sortedKeys(contextDirs) {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
+		relative, err := relativeSource(root, dir)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			p.directories[relative] = "missing"
 			continue
-		} else if err != nil {
+		}
+		if err != nil {
 			return nil, fmt.Errorf("inspect context %s: %w", dir, err)
+		}
+		p.directories[relative] = "directory"
+		if !info.IsDir() {
+			p.directories[relative] = "non-directory"
 		}
 		if err := l.directory(dir, false); err != nil {
 			return nil, err
@@ -120,6 +140,9 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if opts.IncludeAnalysis {
+		p.Dependencies = dependencyRecord(p, rules)
 	}
 	return p, nil
 }
@@ -478,21 +501,40 @@ func sourceRoot(opts Options) (string, error) {
 	return filepath.EvalSymlinks(dir)
 }
 func projectName(root string) (string, error) {
-	for _, name := range []string{"saltbox", "sandbox"} {
+	name, _, err := inspectProjectIdentity(root)
+	return name, err
+}
+
+// Capture marker type and priority in the same observation used for identity.
+// Extra candidates are conservative dependencies; later errors cannot override
+// an earlier valid marker or the original discovery error precedence.
+func inspectProjectIdentity(root string) (string, []DependencyFile, error) {
+	var name string
+	var firstErr error
+	observations := []DependencyFile{}
+	for _, project := range []string{"saltbox", "sandbox"} {
 		for _, ext := range []string{".yml", ".yaml"} {
-			info, err := os.Stat(filepath.Join(root, name+ext))
-			if os.IsNotExist(err) {
-				continue
+			marker := project + ext
+			state := "missing"
+			info, err := os.Stat(filepath.Join(root, marker))
+			if err == nil {
+				state = "nonregular"
+				if info.Mode().IsRegular() {
+					state = "regular"
+					if name == "" && firstErr == nil {
+						name = project
+					}
+				}
+			} else if !os.IsNotExist(err) {
+				state = "unavailable"
+				if name == "" && firstErr == nil {
+					firstErr = fmt.Errorf("inspect project identity: %w", err)
+				}
 			}
-			if err != nil {
-				return "", fmt.Errorf("inspect project identity: %w", err)
-			}
-			if info.Mode().IsRegular() {
-				return name, nil
-			}
+			observations = append(observations, DependencyFile{Path: marker, State: state})
 		}
 	}
-	return "", nil
+	return name, observations, firstErr
 }
 func hasGitMarker(dir string) (bool, error) {
 	_, err := os.Stat(filepath.Join(dir, ".git"))

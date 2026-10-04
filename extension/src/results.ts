@@ -19,6 +19,9 @@ export class Results<
   saved(folder: string, uri: string): Document["diagnostics"] | undefined {
     return this.scans.get(folder)?.get(uri);
   }
+  invalidateCoverage(folder: string): void {
+    this.complete.delete(folder);
+  }
   hasCompleteScan(folder: string): boolean {
     return this.complete.has(folder);
   }

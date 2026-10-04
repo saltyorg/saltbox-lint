@@ -26,7 +26,7 @@ func Render(w io.Writer, p *lint.Project, ds []lint.Diagnostic, opts Options) er
 	case "concise":
 		return concise(w, p, records)
 	case "json":
-		return jsonReport(w, records)
+		return jsonReport(w, records, p.Dependencies)
 	case "github":
 		return githubReport(w, p, records, opts)
 	default:

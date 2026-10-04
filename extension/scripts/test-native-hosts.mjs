@@ -11,6 +11,7 @@ for (const version of ["1.100.0", "1.137.0"]) {
     "regressions",
     "markers",
     "save-scope",
+    "dependencies",
     "queue",
     "active-project",
     "active-project-cache",
@@ -26,9 +27,11 @@ for (const version of ["1.100.0", "1.137.0"]) {
         SALTBOX_TEST_VSIX: vsix,
         SALTBOX_TEST_REGRESSIONS: mode === "regressions" ? "1" : "0",
         SALTBOX_TEST_MARKERS: mode === "markers" ? "1" : "0",
+        SALTBOX_TEST_DEPENDENCIES: mode === "dependencies" ? "1" : "0",
         SALTBOX_TEST_QUEUE: mode === "queue" ? "1" : "0",
         SALTBOX_TEST_SAVE_SCOPE: [
           "save-scope",
+          "dependencies",
           "queue",
           "active-project-cache",
         ].includes(mode)
@@ -41,6 +44,7 @@ for (const version of ["1.100.0", "1.137.0"]) {
         SALTBOX_TEST_DISABLED: [
           "disabled",
           "save-scope",
+          "dependencies",
           "queue",
           "active-project-cache",
         ].includes(mode)

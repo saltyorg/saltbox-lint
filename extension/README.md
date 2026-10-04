@@ -33,11 +33,21 @@ start checks. Commands are available from the Command Palette:
 - **Saltbox Lint: Fix All in Document** requests verified conservative lint fixes.
 
 Each marked root also receives one saved-workspace scan on startup or first
-enablement. Saving a file rechecks only that file, preserving other documents'
-findings and actions. Watcher echoes are coalesced. File changes from a checkout,
-pull or other disk operation recheck the changed files; closed files use bounded
+enablement. Saving or changing a YAML file rechecks that file and any selected
+primaries whose analysis depends on it. Changes to owning-role defaults, tasks,
+handlers, vars and templates, and shared Docker resources, refresh affected
+findings. Template directories are observed regardless of file extension;
+templates are read only. Creation, deletion, rename and atomic replacement also
+refresh dependencies, including previously clean results and missing templates.
+Unrelated roles and source roots retain their findings and actions. Watcher echoes
+are coalesced. In-root Git ignore controls trigger a fresh membership scan;
+Git tracking metadata, global excludes or Git configuration outside the source root
+require Check
+Workspace. Closed files use bounded
 selected-path batches without opening editor tabs. There is no separate Git-pull
-trigger or Git polling. Startup and background failures go to the Output channel.
+trigger or Git polling. Dirty dependent buffers retain their displayed findings
+and lose stale actions until saved or explicitly checked. The Output channel
+identifies stale context and reports startup/background failures.
 
 By default, **Saltbox Lint: Active Project Only** (`saltboxLint.activeProjectOnly`)
 shows this extension's Problems entries and squiggles for the active file's

@@ -103,21 +103,27 @@ type Rule struct {
 	ID, Summary, Explanation, GoodExample, BadExample string
 	Kinds                                             []Kind
 	Scope                                             string
+	Context                                           []ContextRequirement
 	Fixable                                           bool
 	Check                                             func(*Project, *Source) []Diagnostic
 }
 type Project struct {
-	analysis    *analysis
-	Root, Name  string
-	Sources     map[string]*Source
-	Selected    map[string]bool
-	Diagnostics []Diagnostic
+	identity     []DependencyFile
+	discovery    []DependencyFile
+	directories  map[string]string
+	analysis     *analysis
+	Root, Name   string
+	Sources      map[string]*Source
+	Selected     map[string]bool
+	Diagnostics  []Diagnostic
+	Dependencies *AnalysisRecord
 }
 type Options struct {
-	Root          string
-	Paths         []string
-	StdinFilename string
-	Stdin         []byte
+	Root            string
+	Paths           []string
+	StdinFilename   string
+	Stdin           []byte
+	IncludeAnalysis bool
 }
 type Change struct {
 	fixRules      []string
