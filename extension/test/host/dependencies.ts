@@ -95,6 +95,20 @@ export async function runDependencies(): Promise<void> {
   );
   // This primary is excluded from full coverage and has no accepted graph yet.
   let editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
+  // The lane releases a child before a saved check finishes rendering and
+  // synchronizing open sources. Track that whole operation when joining work.
+  const savedChecks = new Set<Promise<unknown>>();
+  const checkSaved = Reflect.get(editor, "checkSaved");
+  Reflect.set(
+    editor,
+    "checkSaved",
+    function (this: EditorIntegration, ...args: unknown[]) {
+      const pending: Promise<unknown> = checkSaved.apply(this, args);
+      const joined = pending.finally(() => savedChecks.delete(joined));
+      savedChecks.add(joined);
+      return joined;
+    },
+  );
   const subscriptions = [
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length) editor.change(event.document);
@@ -166,16 +180,43 @@ export async function runDependencies(): Promise<void> {
       "initial coverage must quiesce with invalid UTF-8",
     );
     const invalidChanged = Buffer.from([0xfe, 0x0a]);
-    await Promise.all([
-      writeFile(invalidUri.fsPath, invalidChanged),
-      writeFile(
-        unrelatedUri.fsPath,
-        unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
-      ),
-    ]);
-    quietCount = invocations().length;
-    editor.removeFile(invalidUri);
-    editor.removeFile(unrelatedUri);
+    const initialLane = Reflect.get(editor, "lint");
+    await waitFor(
+      () =>
+        !Reflect.get(initialLane, "active") &&
+        Reflect.get(initialLane, "pending").size === 0 &&
+        Reflect.get(editor, "pendingFiles").size === 0 &&
+        Reflect.get(editor, "pendingRefresh").size === 0 &&
+        !Reflect.get(editor, "flushingFiles") &&
+        savedChecks.size === 0,
+      "initial saved work settles before the selected-batch mutation cohort",
+    );
+    // Both writes belong to this selected-batch control. Keep real watcher
+    // notifications active, but join the cohort before any flush snapshots it.
+    const flushFiles = Reflect.get(editor, "flushFiles");
+    let releaseFlush!: () => void;
+    const flushBarrier = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    Reflect.set(editor, "flushFiles", async () => {
+      await flushBarrier;
+      return flushFiles.call(editor);
+    });
+    try {
+      await Promise.all([
+        writeFile(invalidUri.fsPath, invalidChanged),
+        writeFile(
+          unrelatedUri.fsPath,
+          unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+        ),
+      ]);
+      quietCount = invocations().length;
+      editor.removeFile(invalidUri);
+      editor.removeFile(unrelatedUri);
+    } finally {
+      Reflect.set(editor, "flushFiles", flushFiles);
+      releaseFlush();
+    }
     await waitFor(
       () =>
         invocations().length > quietCount &&
@@ -845,7 +886,17 @@ export async function runDependencies(): Promise<void> {
       roots[1].uri,
       "roles/example/tasks/first-open/ignored.yml",
     );
-    const queuedDocument = await vscode.workspace.openTextDocument(queuedUri);
+    const lane = Reflect.get(editor, "lint");
+    await waitFor(
+      () =>
+        !Reflect.get(lane, "active") &&
+        Reflect.get(lane, "pending").size === 0 &&
+        Reflect.get(editor, "pendingFiles").size === 0 &&
+        Reflect.get(editor, "pendingRefresh").size === 0 &&
+        !Reflect.get(editor, "flushingFiles") &&
+        savedChecks.size === 0,
+      "preceding context work settles before acquiring the queued-source blocker",
+    );
     const blockerDocument =
       await vscode.workspace.openTextDocument(unrelatedUri);
     const otherTemplate = vscode.Uri.joinPath(
@@ -856,26 +907,7 @@ export async function runDependencies(): Promise<void> {
     const queuedGate = join(temporary, "queued-status-admission");
     const blockerNonce = randomBytes(32).toString("hex");
     const queuedNonce = randomBytes(32).toString("hex");
-    let queuedReads = 0;
-    const queuedTracked: vscode.TextDocument = Object.create(queuedDocument, {
-      version: { get: () => queuedDocument.version },
-      isDirty: { get: () => queuedDocument.isDirty },
-      getText: {
-        value: () => {
-          queuedReads++;
-          return queuedDocument.getText();
-        },
-      },
-    });
     const queuedOriginalStatus = editor.status;
-    editor.status = function (
-      source = vscode.window.activeTextEditor?.document,
-    ) {
-      return queuedOriginalStatus.call(
-        this,
-        source === queuedDocument ? queuedTracked : source,
-      );
-    };
     try {
       await writeFile(blockerGate, "");
       process.env.SALTBOX_TEST_PROCESS_GATE = blockerGate;
@@ -899,6 +931,29 @@ export async function runDependencies(): Promise<void> {
       );
       const blockerInstance = fixtureGateInstance(blockerReady, instancesLog);
       assert.equal(await fixtureRunning(blockerInstance), true);
+      // Saved checks synchronize every open YAML source, including ignored
+      // sources in other roots. Open this unknown source only after the exact
+      // blocker owns the lane, so refreshes cannot admit it before its request.
+      const queuedDocument = await vscode.workspace.openTextDocument(queuedUri);
+      let queuedReads = 0;
+      const queuedTracked: vscode.TextDocument = Object.create(queuedDocument, {
+        version: { get: () => queuedDocument.version },
+        isDirty: { get: () => queuedDocument.isDirty },
+        getText: {
+          value: () => {
+            queuedReads++;
+            return queuedDocument.getText();
+          },
+        },
+      });
+      editor.status = function (
+        source = vscode.window.activeTextEditor?.document,
+      ) {
+        return queuedOriginalStatus.call(
+          this,
+          source === queuedDocument ? queuedTracked : source,
+        );
+      };
       await vscode.window.showTextDocument(queuedDocument, { preview: false });
       assert.equal(
         Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
@@ -909,7 +964,6 @@ export async function runDependencies(): Promise<void> {
       process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = queuedNonce;
       const queuedCount = invocations().length;
       const queuedCheck = editor.check(queuedTracked);
-      const lane = Reflect.get(editor, "lint");
       await waitFor(
         () => Reflect.get(lane, "pending").has(queuedUri.toString()),
         "new source is actually queued behind the exact held child",
@@ -1040,6 +1094,10 @@ export async function runDependencies(): Promise<void> {
       await rm(queuedGate, { force: true });
     }
 
+    await waitFor(
+      () => savedChecks.size === 0,
+      "saved check postprocessing joins before opening the independent unknown source",
+    );
     const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
     await vscode.window.showTextDocument(firstDocument, { preview: false });
     assert.equal(
@@ -1206,6 +1264,9 @@ export async function runDependencies(): Promise<void> {
       editor.dispose();
       await replacement;
       assert.equal(await fixtureRunning(replacementInstance), false);
+      // Disposing Output can change the active editor. Keep this root-disposal
+      // assertion bound to the same alias document as the held source request.
+      await vscode.window.showTextDocument(aliasDocument, { preview: false });
       assert.equal(editor.status().state, "missing-marker");
       assert.equal(Reflect.get(editor, "checking").size, 0);
     } finally {
