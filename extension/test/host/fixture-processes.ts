@@ -14,6 +14,7 @@ export interface FixtureProcess {
 export function fixtureGateInstance(
   ready: { pid: number; instance: FixtureProcess },
   filename: string,
+  journal?: FixtureJournal,
 ): FixtureProcess {
   assert.ok(ready.instance, "readiness includes its instance endpoint");
   assert.equal(
@@ -22,7 +23,7 @@ export function fixtureGateInstance(
     "readiness instance owns its PID",
   );
   assert.ok(
-    fixtureProcesses(filename).some(
+    (journal ? journal.processes() : fixtureProcesses(filename)).some(
       (instance) =>
         instance.pid === ready.instance.pid &&
         instance.port === ready.instance.port &&
@@ -30,7 +31,97 @@ export function fixtureGateInstance(
     ),
     "readiness includes the exact recorded instance endpoint",
   );
+  if (journal) journal.expect(ready.instance);
   return ready.instance;
+}
+
+// The journal is append-only. Keep independent earlier observations so two
+// projections of a lost or truncated file cannot establish cleanup membership.
+// Before the first complete observation a missing file is unrecorded startup.
+export class FixtureJournal {
+  private readonly observed = new Map<string, FixtureProcess>();
+  private readonly filename: string;
+
+  constructor(filename: string) {
+    this.filename = filename;
+  }
+
+  observations(): FixtureProcess[] {
+    return [...this.observed.values()].map((instance) => ({
+      ...instance,
+      args: [...instance.args!],
+    }));
+  }
+
+  expect(instance: FixtureProcess): void {
+    assert.ok(
+      Array.isArray(instance.args),
+      "fixture instance includes actual argv",
+    );
+    assert.ok(instance.args.every((argument) => typeof argument === "string"));
+    const previous = this.observed.get(instance.token);
+    if (previous)
+      assert.deepEqual(
+        instance,
+        previous,
+        "observed fixture identity must not change",
+      );
+    // Own the record and argv, rather than mutable objects returned to callers.
+    this.observed.set(instance.token, {
+      ...instance,
+      args: [...instance.args],
+    });
+  }
+
+  processes(final = false): FixtureProcess[] {
+    let source: string;
+    try {
+      source = readFileSync(this.filename, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      assert.ok(
+        !final && this.observed.size === 0,
+        "observed fixture journal is missing",
+      );
+      return [];
+    }
+    if (source === "") {
+      assert.ok(
+        !final && this.observed.size === 0,
+        "observed fixture journal is empty",
+      );
+      return [];
+    }
+    assert.ok(
+      source.endsWith("\n"),
+      "fixture journal has an incomplete record",
+    );
+    const lines = source.slice(0, -1).split("\n");
+    assert.ok(lines.every(Boolean), "fixture journal has an empty record");
+    const instances = parseFixtureProcesses(source);
+    assert.equal(
+      new Set(instances.map((instance) => instance.token)).size,
+      instances.length,
+      "fixture journal has duplicate credentials",
+    );
+    const current = new Map(
+      instances.map((instance) => [instance.token, instance]),
+    );
+    for (const [token, previous] of this.observed)
+      assert.deepEqual(
+        current.get(token),
+        previous,
+        "observed fixture journal lost or changed a record",
+      );
+    for (const instance of instances) this.expect(instance);
+    return instances;
+  }
+
+  invocations(): string[] {
+    return this.processes().map(
+      (instance) => `${instance.pid} ${instance.args!.join(" ")}`,
+    );
+  }
 }
 
 export function fixtureProcesses(filename: string): FixtureProcess[] {
@@ -41,6 +132,10 @@ export function fixtureProcesses(filename: string): FixtureProcess[] {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+  return parseFixtureProcesses(source);
+}
+
+function parseFixtureProcesses(source: string): FixtureProcess[] {
   return source
     .split("\n")
     .filter(Boolean)

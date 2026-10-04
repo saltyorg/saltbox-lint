@@ -20,8 +20,7 @@ import { EditorIntegration } from "../../src/editor.ts";
 import { hash, parseCheck } from "../../src/protocol.ts";
 import {
   fixtureGateInstance,
-  fixtureInvocations,
-  fixtureProcesses,
+  FixtureJournal,
   fixtureRunning,
   type FixtureProcess,
 } from "./fixture-processes.ts";
@@ -82,7 +81,8 @@ export async function runDependencies(): Promise<void> {
   const instancesLog = join(temporary, "instances.log");
   process.env.SALTBOX_TEST_PROCESS_LOG = log;
   process.env.SALTBOX_TEST_PROCESS_INSTANCES = instancesLog;
-  const invocations = () => fixtureInvocations(instancesLog);
+  const journal = new FixtureJournal(instancesLog);
+  const invocations = () => journal.invocations();
   let cleanupStatus: { pid: number; token: string; running: boolean }[] = [];
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");
@@ -544,7 +544,7 @@ export async function runDependencies(): Promise<void> {
       firstAdmissionBatch.includes(`${held.pid} ${held.args.join(" ")}`),
       "readiness identifies the exact new invocation",
     );
-    const heldInstance = fixtureGateInstance(held, instancesLog);
+    const heldInstance = fixtureGateInstance(held, instancesLog, journal);
     assert.equal(
       await fixtureRunning(heldInstance),
       true,
@@ -927,7 +927,11 @@ export async function runDependencies(): Promise<void> {
       assert.ok(
         blockerReady.args.includes(await realpath(unrelatedUri.fsPath)),
       );
-      const blockerInstance = fixtureGateInstance(blockerReady, instancesLog);
+      const blockerInstance = fixtureGateInstance(
+        blockerReady,
+        instancesLog,
+        journal,
+      );
       assert.equal(await fixtureRunning(blockerInstance), true);
       // Saved checks synchronize every open YAML source, including ignored
       // sources in other roots. Open this unknown source only after the exact
@@ -1046,7 +1050,11 @@ export async function runDependencies(): Promise<void> {
         ),
       );
       assert.ok(queuedReady.args.includes(await realpath(queuedUri.fsPath)));
-      const queuedInstance = fixtureGateInstance(queuedReady, instancesLog);
+      const queuedInstance = fixtureGateInstance(
+        queuedReady,
+        instancesLog,
+        journal,
+      );
       assert.equal(await fixtureRunning(queuedInstance), true);
       assert.equal(await fixtureRunning(blockerInstance), false);
       assert.equal(
@@ -1129,6 +1137,7 @@ export async function runDependencies(): Promise<void> {
     const firstInstance = fixtureGateInstance(
       JSON.parse(await readFile(firstGate + ".ready", "utf8")),
       instancesLog,
+      journal,
     );
     assert.equal(await fixtureRunning(firstInstance), true);
     assert.equal(firstDocument.version, firstVersion);
@@ -1227,7 +1236,11 @@ export async function runDependencies(): Promise<void> {
       );
       assert.ok(aliasReady.args.includes(firstFilename));
       assert.ok(aliasReady.args.includes("--stdin-filename"));
-      const aliasInstance = fixtureGateInstance(aliasReady, instancesLog);
+      const aliasInstance = fixtureGateInstance(
+        aliasReady,
+        instancesLog,
+        journal,
+      );
       assert.equal(await fixtureRunning(aliasInstance), true);
       // Alias publication itself updates this item before manual status runs.
       assert.equal(firstBar.text, "Saltbox Lint: checking");
@@ -1249,6 +1262,7 @@ export async function runDependencies(): Promise<void> {
       const replacementInstance = fixtureGateInstance(
         JSON.parse(await readFile(aliasGate + ".ready", "utf8")),
         instancesLog,
+        journal,
       );
       assert.notEqual(replacementInstance.token, aliasInstance.token);
       assert.equal(await fixtureRunning(replacementInstance), true);
@@ -1406,7 +1420,7 @@ export async function runDependencies(): Promise<void> {
     editor.dispose();
     await pause(150);
     await waitFor(async () => {
-      const instances = fixtureProcesses(instancesLog);
+      const instances = journal.processes(true);
       const pids = invocations().map((line) => Number(line.split(" ")[0]));
       if (instances.length !== pids.length) return false;
       assert.deepEqual(
@@ -1427,13 +1441,18 @@ export async function runDependencies(): Promise<void> {
       return !live.some(Boolean);
     }, "completed dependency checks must leave no fixture processes running");
     console.log(
-      `MEASURE dependency cleanup observed_processes=${fixtureProcesses(instancesLog).length} surviving=0`,
+      `MEASURE dependency cleanup observed_processes=${journal.processes().length} surviving=0`,
     );
   } catch (error) {
-    console.error("Dependency host process log:", invocations());
+    console.error(
+      "Dependency host process log:",
+      journal
+        .observations()
+        .map((instance) => `${instance.pid} ${instance.args!.join(" ")}`),
+    );
     console.error(
       "Dependency host process instances:",
-      JSON.stringify(fixtureProcesses(instancesLog)),
+      JSON.stringify(journal.observations()),
     );
     console.error(
       "Dependency host cleanup status:",

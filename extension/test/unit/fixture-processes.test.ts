@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  FixtureJournal,
   fixtureGateInstance,
   fixtureInvocations,
   fixtureProcesses,
@@ -178,6 +179,118 @@ test("a cancelled fixture keeps its exact argv and lifetime in one journal recor
     assert.equal(await fixtureRunning(fixtureProcesses(filename)[0]), false);
     await writeFile(filename, JSON.stringify(live.instance) + "\n");
     assert.throws(() => fixtureInvocations(filename), /includes actual argv/);
+  } finally {
+    await live.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("observed fixture journal fails closed when complete membership regresses", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "saltbox-journal-membership-"),
+  );
+  const filename = join(directory, "instances.jsonl");
+  const first = {
+    pid: 123,
+    port: 321,
+    token: "a".repeat(64),
+    args: ["check", "--root", "root with spaces"],
+  };
+  const middle = {
+    pid: 124,
+    port: 322,
+    token: "b".repeat(64),
+    args: ["check", "--", "middle.yml"],
+  };
+  const last = {
+    pid: 125,
+    port: 323,
+    token: "c".repeat(64),
+    args: ["check", "--", "last.yml"],
+  };
+  const rows = (...instances: (typeof first)[]) =>
+    instances.map((instance) => JSON.stringify(instance) + "\n").join("");
+  try {
+    for (const [name, corrupted] of [
+      ["missing", undefined],
+      ["empty", ""],
+      ["older valid prefix", rows(first)],
+      ["omitted earlier row", rows(middle, last)],
+      ["omitted middle row", rows(first, last)],
+      ["mutated argv", rows(first, { ...middle, args: ["rules"] }, last)],
+      ["mutated PID", rows(first, { ...middle, pid: 999 }, last)],
+      ["mutated endpoint", rows(first, { ...middle, port: 999 }, last)],
+      [
+        "mutated credential",
+        rows(first, { ...middle, token: "d".repeat(64) }, last),
+      ],
+      ["duplicate credential", rows(first, middle, last, middle)],
+      ["incomplete JSON", rows(first, middle) + "{"],
+      ["missing newline", rows(first, middle, last).slice(0, -1)],
+      ["blank row", rows(first, middle, last) + "\n"],
+      [
+        "missing argv",
+        rows(
+          first,
+          { ...middle, args: undefined } as unknown as typeof first,
+          last,
+        ),
+      ],
+      [
+        "malformed argv",
+        rows(first, { ...middle, args: [1] } as unknown as typeof first, last),
+      ],
+    ] as const) {
+      const journal = new FixtureJournal(filename);
+      await writeFile(filename, rows(first));
+      assert.equal(journal.invocations().length, 1);
+      // A later real complete read expands the retained membership. Neither a
+      // suffix truncation nor a middle omission can forget this observation.
+      await writeFile(filename, rows(first, middle, last));
+      assert.equal(journal.invocations().length, 3);
+      if (corrupted === undefined) await rm(filename);
+      else await writeFile(filename, corrupted);
+      assert.throws(() => journal.processes(true), name);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("journal readiness binds exact argv and owns copies of complete observations", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-journal-ready-"));
+  const filename = join(directory, "instances.jsonl");
+  const live = await endpoint("a".repeat(64) + "\n");
+  const instance = { ...live.instance, args: ["check", "--", "real path.yml"] };
+  const journal = new FixtureJournal(filename);
+  try {
+    assert.deepEqual(journal.processes(), []);
+    assert.throws(() => journal.processes(true), /journal is missing/);
+    await writeFile(filename, "");
+    assert.deepEqual(journal.processes(), []);
+    assert.throws(() => journal.processes(true), /journal is empty/);
+    await writeFile(filename, JSON.stringify(instance) + "\n");
+    const ready = { pid: instance.pid, instance };
+    assert.deepEqual(fixtureGateInstance(ready, filename, journal), instance);
+    assert.equal(await fixtureRunning(journal.processes(true)[0]), true);
+    assert.throws(
+      () =>
+        fixtureGateInstance(
+          { ...ready, instance: { ...instance, args: ["rules"] } },
+          filename,
+          journal,
+        ),
+      /identity must not change/,
+    );
+    // Mutating a returned observation cannot alter retained expected membership.
+    const returned = journal.processes()[0];
+    returned.args![0] = "rules";
+    returned.port = 1;
+    assert.deepEqual(journal.processes(true), [instance]);
+    await live.close();
+    assert.equal(await fixtureRunning(journal.processes(true)[0]), false);
+    await rm(filename);
+    assert.throws(() => journal.processes(true), /journal is missing/);
   } finally {
     await live.close();
     await rm(directory, { recursive: true, force: true });
