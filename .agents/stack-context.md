@@ -1,6 +1,7 @@
 # Stack Context
 
 Generated: 2026-09-12
+Updated: 2026-10-04 for Windows release-staging tooling
 
 ## Stack
 - Go 1.27.1; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
@@ -11,6 +12,7 @@ Generated: 2026-09-12
 - Go testing covers table/golden fixtures, race safety and real Makefile/editor/terminal harnesses. Shared Action installer/runner tests live in `saltyorg/github-actions`; local `integration/` retains Makefile and VS Code task tests.
 - extension/: TypeScript 5.9.3, esbuild 0.28.2, stable VS Code APIs/types 1.100.0 and Node 24.20.0 build pin; no runtime Node dependencies.
 - Editor protocol/coordinates, canonical identities, bounded subprocess scheduling, diagnostics rendering and VS Code orchestration are separate modules. Windows editor-only invocations self-assign to a kill-on-close Job; POSIX uses extension-owned process groups.
+- Windows release-staging probes use a development-only PowerShell 7 launcher with in-process C# compilation and an atomically assigned kill-on-close Job. Shipped CLI/editor packages have no PowerShell or C# runtime dependency.
 - Secondary languages: opt-in Python qualification tools use pinned Ansible/Jinja loader-only comparisons and Linux PTY/resource measurements; YAML/JSON for workflows, packaging and VS Code tasks; pinned JavaScript/TypeScript under tools/oracles for explicit offline evidence regeneration with Node 24.20.0 (outside normal Go gates).
 
 ## Conventions
@@ -27,7 +29,7 @@ Generated: 2026-09-12
 - Explicit fixes preserve YAML/Jinja meaning and already-valid bytes. Consumer repositories remain read-only; examples are adoption templates.
 
 ## CI gates
-- Native CI source checks run independently on all six release targets; a shared matrix runs packaged acceptance after packaging. `CI required` aggregates all jobs; matrix/release parity is tested. Native lint and extension release tests run everywhere; only Windows arm64 lacks race support.
+- Native CI source checks run independently on all six release targets; a shared matrix runs packaged acceptance after packaging. `CI required` aggregates all jobs; matrix/release parity is tested. Native lint and extension release tests run everywhere; five named npm phases have failing deadlines and match `make check`. Only Windows arm64 lacks race support.
 - Extension gates (included in make check): npm run build, npm test and npm run format:check; installed VSIX host tests run on six native CI targets at minimum/current SDKs, with same-architecture Alpine musl probes. Shared CLI probes execute standalone archives and VSIX binaries and verify formatting/fix preservation and idempotence.
 - make check: non-mutating gofmt/module-tidiness checks, vet, pinned golangci-lint and root plus patched Nuri race suites; workflow/example actionlint and GoReleaser validation.
 - make build runs that gate before the CGO-free binary; make snapshot runs it before six native CLI archives, eight VSIXs, checksums and hash-linked corresponding source with vendored modules, Nuri WASM build inputs and Oniguruma source.

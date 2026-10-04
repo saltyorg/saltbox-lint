@@ -4,7 +4,7 @@ import { createServer, type Socket } from "node:net";
 import { test } from "node:test";
 import { fixtureRunning } from "../host/fixture-processes.ts";
 
-async function endpoint(answer: string | undefined) {
+async function endpoint(answer: string | undefined, closeTimeoutMs = 5000) {
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
     sockets.add(socket);
@@ -19,10 +19,22 @@ async function endpoint(answer: string | undefined) {
     instance: { pid: process.pid, port: address.port, token: "a".repeat(64) },
     async close() {
       for (const socket of sockets) socket.destroy();
-      const closed = once(server, "close");
-      server.close();
-      await closed;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), closeTimeoutMs);
+      try {
+        const closed = once(server, "close", { signal: controller.signal });
+        server.close();
+        await closed;
+      } catch (error) {
+        throw new Error(
+          `Owned fixture endpoint ${process.pid}:${address.port} close failed within ${closeTimeoutMs}ms`,
+          { cause: error },
+        );
+      } finally {
+        clearTimeout(timer);
+      }
     },
+    server,
   };
 }
 
@@ -38,6 +50,20 @@ test("fixture lifetime rejects quiescence while the exact instance is alive", as
   }
   process.kill(live.instance.pid, 0);
   assert.equal(await fixtureRunning(live.instance), false);
+});
+
+test("missing endpoint close notification fails within its cleanup deadline", async () => {
+  const live = await endpoint("a".repeat(64) + "\n", 50);
+  const emit = live.server.emit;
+  live.server.emit = function (event, ...args) {
+    if (event === "close") return false;
+    return Reflect.apply(emit, this, [event, ...args]);
+  };
+  assert.equal(await fixtureRunning(live.instance), true);
+  await assert.rejects(live.close(), /Owned fixture endpoint .*50ms/);
+  assert.equal(live.server.listening, false);
+  assert.equal(await fixtureRunning(live.instance), false);
+  assert.equal(live.server.listenerCount("close"), 0);
 });
 
 test("a different valid instance token does not identify an owned survivor", async () => {

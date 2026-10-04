@@ -119,6 +119,45 @@ func TestCIRequiresAllPlatforms(t *testing.T) {
 	t.Fatal("Makefile golangci-lint pin missing")
 }
 
+func TestNativeExtensionPhasesHaveFailingDeadlines(t *testing.T) {
+	type step struct {
+		Name            string
+		Run             string
+		TimeoutMinutes  int  `yaml:"timeout-minutes"`
+		ContinueOnError bool `yaml:"continue-on-error"`
+	}
+	var ci struct {
+		Jobs map[string]struct{ Steps []step }
+	}
+	readYAML(t, "../.github/workflows/ci.yml", &ci)
+	makefile, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, remaining, ok := strings.Cut(string(makefile), "extension-check:\n")
+	if !ok {
+		t.Fatal("Makefile extension-check target missing")
+	}
+	commands, _, _ := strings.Cut(remaining, "\n\n")
+	var got []string
+	for _, step := range ci.Jobs["native"].Steps {
+		if !strings.HasPrefix(step.Run, "npm --prefix extension ") {
+			continue
+		}
+		if step.Name == "" || step.TimeoutMinutes < 1 || step.TimeoutMinutes > 10 || step.ContinueOnError {
+			t.Errorf("native extension phase requires a named failing deadline: %+v", step)
+		}
+		got = append(got, step.Run)
+	}
+	want := strings.Split(strings.TrimSpace(commands), "\n")
+	for i := range want {
+		want[i] = strings.TrimSpace(want[i])
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("native extension phases %q differ from make check %q", got, want)
+	}
+}
+
 func readYAML(t *testing.T, path string, value any) {
 	t.Helper()
 	data, err := os.ReadFile(path)
