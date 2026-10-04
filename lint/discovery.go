@@ -174,6 +174,37 @@ func preflightGitControls(ctx context.Context, root, gitRoot string) error {
 	if _, err := ownedSourcePath(gitRoot, filepath.Join(gitRoot, ".git")); errors.Is(err, errOutsideRoot) {
 		return err
 	}
+	marker := filepath.Join(gitRoot, ".git")
+	if info, err := os.Stat(marker); err == nil && info.Mode().IsRegular() {
+		// Git canonicalizes gitdir pointers before reporting --git-common-dir.
+		// Admit the declared pointer first, retaining its original owner.
+		name, err := ownedSourcePath(gitRoot, marker)
+		if err != nil {
+			return err
+		}
+		files, err := os.OpenRoot(gitRoot)
+		if err != nil {
+			return err
+		}
+		data, readErr := files.ReadFile(filepath.FromSlash(name))
+		closeErr := files.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return fmt.Errorf("read Git administrative pointer: %w", err)
+		}
+		if pointer, ok := strings.CutPrefix(strings.TrimRight(string(data), "\r\n"), "gitdir: "); ok {
+			pointer = filepath.FromSlash(pointer)
+			if !filepath.IsAbs(pointer) {
+				pointer = filepath.Join(gitRoot, pointer)
+			}
+			owner, err := gitAdministrativeOwner(gitRoot, filepath.Clean(pointer))
+			if err != nil {
+				return err
+			}
+			if _, err := ownedSourcePath(owner, pointer); err != nil {
+				return fmt.Errorf("admit Git administrative pointer: %w", err)
+			}
+		}
+	}
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	output, err := cmd.Output()
 	if err != nil {
@@ -182,21 +213,60 @@ func preflightGitControls(ctx context.Context, root, gitRoot string) error {
 		}
 		return fmt.Errorf("locate Git discovery controls in %s: %w", root, err)
 	}
-	common, err := filepath.EvalSymlinks(strings.TrimSuffix(string(output), "\n"))
+	common := filepath.Clean(strings.TrimSuffix(string(output), "\n"))
+	owner, err := gitAdministrativeOwner(gitRoot, common)
 	if err != nil {
-		return fmt.Errorf("resolve Git administrative directory: %w", err)
+		return err
 	}
-	owner := gitRoot
-	if _, err := relativeSource(owner, common); err != nil {
-		owner = common
-		if filepath.Base(common) == ".git" {
-			owner = filepath.Dir(common)
-		}
+	if _, err := ownedSourcePath(owner, common); err != nil {
+		return fmt.Errorf("admit Git administrative directory: %w", err)
 	}
 	if _, err := ownedSourcePath(owner, filepath.Join(common, "info", "exclude")); errors.Is(err, errOutsideRoot) {
 		return err
 	}
 	return nil
+}
+
+// gitAdministrativeOwner binds lexical administration to an independent owner.
+// Conventional .git paths belong to their enclosing repository. A separately
+// declared administrative root owns only itself, without resolving its aliases.
+func gitAdministrativeOwner(gitRoot, administrative string) (string, error) {
+	if _, err := relativeSource(gitRoot, administrative); err == nil {
+		return gitRoot, nil
+	}
+	for current := administrative; ; current = filepath.Dir(current) {
+		if filepath.Base(current) == ".git" {
+			return canonicalDirectory(filepath.Dir(current))
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
+	// Normalize only the shared ancestor, which is independent of the separate
+	// administration path. Resolving its parent could already cross an escaped
+	// root alias in a linked worktree's declared gitdir path.
+	ancestor := gitRoot
+	for {
+		if _, err := relativeSource(ancestor, administrative); err == nil {
+			break
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			// Different volumes have no shared ancestor. Retain the declared
+			// lexical root rather than granting its resolved target authority.
+			return administrative, nil
+		}
+		ancestor = parent
+	}
+	canonical, err := canonicalDirectory(ancestor)
+	if err != nil {
+		return "", fmt.Errorf("resolve Git administrative owner: %w", err)
+	}
+	relative, err := filepath.Rel(ancestor, administrative)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(canonical, relative), nil
 }
 
 type sourceLoader struct {

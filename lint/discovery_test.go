@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -563,5 +564,147 @@ func TestNestedSourceRootRetainsOpaqueGitPolicy(t *testing.T) {
 				t.Fatalf("ancestor ignore selection changed: %#v", p.Selected)
 			}
 		})
+	}
+}
+
+func TestGitAdministrativeOwnershipPreservesLexicalCommonDirectory(t *testing.T) {
+	for _, separate := range []bool{false, true} {
+		for _, linked := range []bool{false, true} {
+			for _, alias := range []string{"regular", "owned leaf", "owned parent", "escaped leaf", "escaped parent", "escaped common"} {
+				t.Run(fmt.Sprintf("separate=%v/linked=%v/%s", separate, linked, alias), func(t *testing.T) {
+					base := t.TempDir()
+					repo := filepath.Join(base, "repo")
+					if err := os.Mkdir(repo, 0755); err != nil {
+						t.Fatal(err)
+					}
+					common := filepath.Join(repo, ".git")
+					if separate {
+						common = filepath.Join(base, "separate-admin")
+						gitTest(t, repo, "init", "-q", "--separate-git-dir", common)
+					} else {
+						gitTest(t, repo, "init", "-q")
+					}
+					checkout := repo
+					if linked {
+						gitTest(t, repo, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: initialize fixture")
+						checkout = filepath.Join(base, "worktree")
+						gitTest(t, repo, "worktree", "add", "-q", "-b", "fixture", checkout)
+					}
+					if separate && linked {
+						marker := filepath.Join(checkout, ".git")
+						owned := filepath.Join(checkout, "owned-pointer")
+						if err := os.Rename(marker, owned); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Symlink(owned, marker); err != nil {
+							t.Fatal(err)
+						}
+					}
+					root := filepath.Join(checkout, "subdir")
+					source := putFile(t, root, "main.yml", "---\n- hosts: all\n  tasks: []\n")
+					putFile(t, root, "visible.yml", "---\n- hosts: all\n  tasks: []\n")
+					const policy = "subdir/main.yml\n"
+					putFile(t, common, "info/exclude", policy)
+					switch alias {
+					case "owned leaf", "owned parent", "escaped leaf", "escaped parent":
+						owner := repo
+						if separate {
+							owner = common
+						}
+						if strings.HasPrefix(alias, "escaped") {
+							owner = filepath.Join(base, "outside")
+						}
+						target := putFile(t, owner, "owned/exclude", policy)
+						link := filepath.Join(common, "info/exclude")
+						if strings.HasSuffix(alias, "parent") {
+							link, target = filepath.Dir(link), filepath.Dir(target)
+						}
+						if err := os.RemoveAll(link); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Symlink(target, link); err != nil {
+							t.Fatal(err)
+						}
+					case "escaped common":
+						target := filepath.Join(base, "outside-admin")
+						if err := os.Rename(common, target); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Symlink(target, common); err != nil {
+							t.Fatal(err)
+						}
+					}
+					for _, analysis := range []bool{false, true} {
+						p, err := Load(t.Context(), Options{Root: root, Paths: []string{source}, IncludeAnalysis: analysis})
+						if strings.HasPrefix(alias, "escaped") {
+							if !errors.Is(err, errOutsideRoot) {
+								t.Fatalf("escaped administrative control admitted: %v", err)
+							}
+							continue
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						if !p.Selected["main.yml"] || p.discoverable["main.yml"] {
+							t.Fatalf("explicit ignored source: %#v", p.Selected)
+						}
+						if analysis {
+							for _, observed := range p.Dependencies.Sources[0].Discovery {
+								if observed.State != "missing" || observed.SHA256 != "" {
+									t.Fatalf("opaque administrative policy became a source fact: %#v", observed)
+								}
+							}
+						}
+					}
+					if !strings.HasPrefix(alias, "escaped") {
+						p, err := Load(t.Context(), Options{Root: root, Paths: []string{root}})
+						if err != nil {
+							t.Fatal(err)
+						}
+						if p.Selected["main.yml"] || !p.Selected["visible.yml"] {
+							t.Fatalf("administrative ignore selection changed: %#v", p.Selected)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestLinkedCommonDirectoryAliasWithinMainRepository(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	if err := os.Mkdir(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, repo, "init", "-q")
+	gitTest(t, repo, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: initialize fixture")
+	checkout := filepath.Join(base, "worktree")
+	gitTest(t, repo, "worktree", "add", "-q", "-b", "fixture", checkout)
+	marker, err := os.ReadFile(filepath.Join(checkout, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(checkout, "subdir")
+	source := putFile(t, root, "main.yml", "---\n- hosts: all\n  tasks: []\n")
+	putFile(t, repo, ".git/info/exclude", "subdir/main.yml\n")
+	common := filepath.Join(repo, ".git")
+	owned := filepath.Join(repo, "owned-admin")
+	if err := os.Rename(common, owned); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(owned, common); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Load(t.Context(), Options{Root: root, Paths: []string{source}, IncludeAnalysis: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Selected["main.yml"] || p.discoverable["main.yml"] {
+		t.Fatalf("owned administrative alias changed selection: %#v", p.Selected)
+	}
+	after, err := os.ReadFile(filepath.Join(checkout, ".git"))
+	if err != nil || string(marker) != string(after) {
+		t.Fatalf("linked marker changed: %v", err)
 	}
 }
