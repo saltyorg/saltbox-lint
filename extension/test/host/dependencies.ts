@@ -88,6 +88,90 @@ export async function runDependencies(): Promise<void> {
     assert.equal(renderer(task), false);
     assert.equal(renderer(otherTask), false);
     assert.equal(findings(task).length, 0);
+    const unrelatedGood = await readFile(unrelatedUri.fsPath, "utf8");
+    const batchGate = join(temporary, "batch-gate");
+    const lateTemplate = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/example/templates/late.conf",
+    );
+    assert.ok(
+      findings(unrelatedUri).some((item) => item.code === "jinja-layout"),
+    );
+    assert.ok(
+      !vscode.workspace.textDocuments.some(
+        (document) =>
+          !document.isClosed &&
+          [defaults.toString(), unrelatedUri.toString()].includes(
+            document.uri.toString(),
+          ),
+      ),
+      "mixed selected batch must contain closed primaries",
+    );
+    let count = invocations().length;
+    await writeFile(batchGate, "");
+    process.env.SALTBOX_TEST_PROCESS_GATE = batchGate;
+    await Promise.all([
+      writeFile(
+        defaults.fsPath,
+        defaultsGood + 'example_batch_value: "{{ value\n }}"\n',
+      ),
+      writeFile(
+        unrelatedUri.fsPath,
+        unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+      ),
+    ]);
+    // Deliver both events together so the real queue forms one mixed batch.
+    editor.removeFile(defaults);
+    editor.removeFile(unrelatedUri);
+    await waitFor(
+      () => existsSync(batchGate + ".ready"),
+      "mixed selected batch must hold its already-computed output",
+    );
+    assert.ok(
+      invocations()
+        .slice(count)
+        .some(
+          (line) =>
+            line.includes("roles/example/defaults/main.yml") &&
+            line.includes("roles/unrelated/defaults/main.yml"),
+        ),
+      "both changed closed roles must share the held selected batch",
+    );
+    await writeFile(lateTemplate.fsPath, "late membership\n");
+    await writeFile(template.fsPath, bad);
+    editor.removeFile(lateTemplate);
+    editor.removeFile(template);
+    delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    await rm(batchGate);
+    await waitFor(
+      () =>
+        findings(defaults).some((item) => item.code === "jinja-layout") &&
+        findings(unrelatedUri).length === 0 &&
+        renderer(task),
+      "rejected mixed batch must refresh both changed primaries and context-driven peers",
+    );
+    assert.ok(
+      invocations()
+        .slice(count)
+        .every((line) => !line.endsWith(" .")),
+      "rejected selected batches must retain established full coverage",
+    );
+    await Promise.all([
+      writeFile(defaults.fsPath, defaultsGood),
+      writeFile(unrelatedUri.fsPath, unrelatedGood),
+      writeFile(template.fsPath, good),
+      rm(lateTemplate.fsPath),
+    ]);
+    await waitFor(
+      () =>
+        findings(defaults).length === 0 &&
+        findings(unrelatedUri).some((item) => item.code === "jinja-layout") &&
+        !renderer(task),
+      "mixed-batch recovery must restore the original diagnostics",
+    );
+    success(
+      "late context events retain every rejected selected source after full coverage",
+    );
     const unrelated = await vscode.workspace.openTextDocument(unrelatedUri);
     await vscode.window.showTextDocument(unrelated, { preview: false });
     await editor.check(unrelated, true);
@@ -98,7 +182,7 @@ export async function runDependencies(): Promise<void> {
     assert.ok(unrelatedActions.length > 0);
     const otherBefore = findings(otherTask),
       unrelatedBefore = findings(unrelatedUri);
-    let count = invocations().length;
+    count = invocations().length;
     await writeFile(template.fsPath, bad);
     await waitFor(
       () => renderer(task),

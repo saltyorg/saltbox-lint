@@ -490,6 +490,10 @@ export class EditorIntegration implements vscode.Disposable {
       admissionRevision === this.dependencies.admissionRevision(folderKey) &&
       (selected !== undefined ||
         scanRevision === this.scanRevisions.get(folderKey));
+    const retrySelected = () => {
+      if (selected && current())
+        for (const { uri } of selected.values()) this.queueFile(uri, true);
+    };
     try {
       const root = await this.root(folder);
       if (!root || !current()) return;
@@ -604,7 +608,11 @@ export class EditorIntegration implements vscode.Disposable {
       const observed = await observeAnalysis(acceptedAnalysis);
       for (const file of observed.changed)
         this.contextEvent(vscode.Uri.file(path.join(root, ...file.split("/"))));
-      if (!current() || observed.changed.size) return;
+      if (!current()) return;
+      if (observed.changed.size) {
+        retrySelected();
+        return;
+      }
       if (
         !this.dependencies.accept(
           folderKey,
@@ -620,8 +628,12 @@ export class EditorIntegration implements vscode.Disposable {
             .map(([, owner]) => owner.path),
           observed.fingerprints,
         )
-      )
+      ) {
+        // Freshness rejects the entire batch, including unchanged peers whose
+        // disk events were already consumed by flushFiles.
+        retrySelected();
         return;
+      }
       for (const uri of this.results.storeScan(folderKey, entries, !!selected))
         this.publish(vscode.Uri.parse(uri));
       return accepted;
