@@ -3,8 +3,9 @@ package lint
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"slices"
@@ -149,7 +150,7 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 				dep.SHA256 = hashes[file]
 			}
 			if dep.State != "read" {
-				if _, err := os.Stat(filepath.Join(p.Root, filepath.FromSlash(file))); os.IsNotExist(err) {
+				if _, err := ownedSourcePath(p.Root, filepath.Join(p.Root, filepath.FromSlash(file))); errors.Is(err, fs.ErrNotExist) {
 					dep.State = "missing"
 				}
 			}

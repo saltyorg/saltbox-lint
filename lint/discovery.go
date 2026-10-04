@@ -3,6 +3,7 @@ package lint
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"iter"
@@ -39,20 +40,30 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 		return nil, err
 	}
 	p := &Project{discoverable: map[string]bool{}, Root: root, Name: name, Sources: map[string]*Source{}, Selected: map[string]bool{}, identity: identity, directories: map[string]string{}, discovery: []DependencyFile{}}
-	l := sourceLoader{ctx: ctx, project: p, explain: explain}
+	files, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open source root %s: %w", root, err)
+	}
+	defer func() { _ = files.Close() }()
+	l := sourceLoader{ctx: ctx, project: p, explain: explain, files: files}
 	gitRoot, err := enclosingGitRoot(root)
 	if err != nil {
 		return nil, err
 	}
 	if gitRoot != "" {
-		if opts.IncludeAnalysis {
-			for _, name := range []string{".gitignore", ".git/info/exclude"} {
+		for _, name := range []string{".gitignore", ".git/info/exclude"} {
+			absolute := filepath.Join(root, filepath.FromSlash(name))
+			// Refuse escaped controls before Git can read them as well. Other
+			// failed observations retain the existing missing/unavailable states.
+			if _, err := ownedSourcePath(root, absolute); errors.Is(err, errOutsideRoot) {
+				return nil, err
+			}
+			if opts.IncludeAnalysis {
 				observation := DependencyFile{Path: name, State: "missing"}
-				absolute := filepath.Join(root, filepath.FromSlash(name))
-				if data, err := os.ReadFile(absolute); err == nil {
+				if data, err := l.readFile(absolute); err == nil {
 					observation.State = "read"
 					observation.SHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
-				} else if !os.IsNotExist(err) {
+				} else if !errors.Is(err, fs.ErrNotExist) {
 					observation.State = "unavailable"
 				}
 				p.discovery = append(p.discovery, observation)
@@ -126,8 +137,8 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 		if err != nil {
 			return nil, err
 		}
-		info, err := os.Stat(dir)
-		if os.IsNotExist(err) {
+		info, err := l.stat(dir)
+		if errors.Is(err, fs.ErrNotExist) {
 			p.directories[relative] = "missing"
 			continue
 		}
@@ -152,6 +163,7 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 }
 
 type sourceLoader struct {
+	files     *os.Root
 	explain   bool
 	ctx       context.Context
 	project   *Project
@@ -197,27 +209,64 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 		s, _ := Parse(relative, data)
 		return s, nil
 	} else {
-		resolved, err := filepath.EvalSymlinks(absolute)
+		var err error
+		data, err = l.readFile(absolute)
 		if err != nil {
-			return nil, fmt.Errorf("resolve source %s: %w", absolute, err)
-		}
-		if _, err := relativeSource(l.project.Root, resolved); err != nil {
 			return nil, err
-		}
-		info, err := os.Stat(absolute)
-		if err != nil {
-			return nil, fmt.Errorf("inspect source %s: %w", absolute, err)
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("source is not a regular file: %s", absolute)
-		}
-		data, err = os.ReadFile(absolute)
-		if err != nil {
-			return nil, fmt.Errorf("read source %s: %w", absolute, err)
 		}
 	}
 	s, _ := parseOwnedSource(relative, data)
 	return s, nil
+}
+
+var errOutsideRoot = errors.New("outside root")
+
+// ownedSourcePath admits the resolved identity before any content read. Keep
+// the original lexical identity in Source.Path for fix and dependency callers.
+func ownedSourcePath(root, absolute string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		// A missing leaf still needs its existing parent checked. This prevents
+		// an escaped directory from masquerading as an owned negative lookup.
+		parent, parentErr := canonicalDirectory(filepath.Dir(absolute))
+		if parentErr == nil {
+			if _, boundaryErr := relativeSource(root, parent); boundaryErr != nil {
+				return "", boundaryErr
+			}
+		}
+		return "", fmt.Errorf("resolve source %s: %w", absolute, err)
+	}
+	return relativeSource(root, resolved)
+}
+
+func (l *sourceLoader) stat(absolute string) (os.FileInfo, error) {
+	name, err := ownedSourcePath(l.project.Root, absolute)
+	if err != nil {
+		return nil, err
+	}
+	return l.files.Stat(filepath.FromSlash(name))
+}
+
+func (l *sourceLoader) readFile(absolute string) ([]byte, error) {
+	name, err := ownedSourcePath(l.project.Root, absolute)
+	if err != nil {
+		return nil, err
+	}
+	name = filepath.FromSlash(name)
+	info, err := l.files.Stat(name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect source %s: %w", absolute, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("source is not a regular file: %s", absolute)
+	}
+	// Root confines the actual read even if a resolved parent is replaced
+	// after admission. This is an observation, not atomic result acceptance.
+	data, err := l.files.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("read source %s: %w", absolute, err)
+	}
+	return data, nil
 }
 
 func (l *sourceLoader) directory(dir string, selected bool) error {
@@ -276,9 +325,12 @@ func (l *sourceLoader) directorySources(paths []string, selected bool) error {
 	results := readSourceBatch(paths, func(absolute string) (*Source, error) {
 		// Tracked files deleted from the worktree are not source inputs.
 		if l.gitFiles != nil {
-			if _, err := os.Stat(absolute); os.IsNotExist(err) {
+			if _, err := l.stat(absolute); errors.Is(err, fs.ErrNotExist) {
 				return nil, nil
 			} else if err != nil {
+				if errors.Is(err, errOutsideRoot) {
+					return nil, err
+				}
 				return nil, fmt.Errorf("inspect source %s: %w", absolute, err)
 			}
 		}
@@ -445,7 +497,7 @@ func canonicalDirectory(dir string) (string, error) {
 func relativeSource(root, absolute string) (string, error) {
 	relative, err := filepath.Rel(root, absolute)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("source %s is outside root %s", absolute, root)
+		return "", fmt.Errorf("source %s is %w %s", absolute, errOutsideRoot, root)
 	}
 	return filepath.ToSlash(relative), nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,5 +56,47 @@ func TestMetadataAndExplainCommands(t *testing.T) {
 	actual, err := os.ReadFile(filename)
 	if err != nil || string(actual) != input {
 		t.Fatal("help changed input")
+	}
+}
+
+func TestDiscoveryControlsRejectExternalSymlinks(t *testing.T) {
+	for _, control := range []string{".gitignore", ".git/info/exclude", ".git/info"} {
+		t.Run(control, func(t *testing.T) {
+			root := t.TempDir()
+			if output, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v: %s", err, output)
+			}
+			filename := filepath.Join(root, "source.yml")
+			if err := os.WriteFile(filename, []byte("value: ok\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			external := t.TempDir()
+			canary := []byte("external discovery bytes must remain unread\n")
+			target := filepath.Join(external, "exclude")
+			if err := os.WriteFile(target, canary, 0644); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(root, filepath.FromSlash(control))
+			if err := os.RemoveAll(link); err != nil {
+				t.Fatal(err)
+			}
+			if control == ".git/info" {
+				target = external
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{
+				{"explain", filename, "--root", root, "--format", "json"},
+				{"check", filename, "--root", root, "--format", "json", "--include-analysis"},
+				{"check", filename, "--root", root, "--format", "json"},
+			} {
+				var out, stderr bytes.Buffer
+				code := Run(t.Context(), args, Streams{Out: &out, Err: &stderr}, "test")
+				if code != 2 || out.Len() != 0 || !strings.Contains(stderr.String(), "outside root") {
+					t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, out.String(), stderr.String())
+				}
+			}
+		})
 	}
 }

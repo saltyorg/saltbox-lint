@@ -149,3 +149,27 @@ func TestGitStatusMetadataDoesNotInvalidatePolicyGeneration(t *testing.T) {
 		}
 	}
 }
+
+func TestEscapedNegativeDependencyIsUnavailable(t *testing.T) {
+	root := t.TempDir()
+	gitTest(t, root, "init", "-q")
+	putFile(t, root, ".gitignore", "roles/demo/templates/nested\n")
+	source := putFile(t, root, "roles/demo/tasks/main.yml", "- template: {src: nested/missing.conf, dest: /tmp/out}\n")
+	putFile(t, root, "roles/demo/templates/owned.conf", "owned\n")
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "roles/demo/templates/nested")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Load(t.Context(), Options{Root: root, Paths: []string{source}, IncludeAnalysis: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range p.Dependencies.Sources[0].Files {
+		if file.Path == "roles/demo/templates/nested/missing.conf" {
+			if file.State != "unavailable" || file.SHA256 != "" {
+				t.Fatalf("escaped negative lookup: %#v", file)
+			}
+			return
+		}
+	}
+	t.Fatal("missing negative dependency")
+}

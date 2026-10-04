@@ -2,6 +2,7 @@ package lint
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -412,6 +413,107 @@ func TestLoadPreservesSymlinkFileProvenance(t *testing.T) {
 		info, err := os.Lstat(filepath.Join(p.Root, filepath.FromSlash(p.Sources["roles/demo/tasks/alias.yml"].Path)))
 		if err != nil || info.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("fix layer cannot detect original symlink: %v %v", info, err)
+		}
+	}
+}
+
+func TestOwnedDiscoveryControlsPreserveObservations(t *testing.T) {
+	for _, kind := range []string{"regular", "leaf alias", "parent alias", "missing", "directory", "dangling"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			gitTest(t, root, "init", "-q")
+			source := putFile(t, root, "source.yml", "value: ok\n")
+			control := filepath.Join(root, ".gitignore")
+			exclude := filepath.Join(root, ".git/info/exclude")
+			want := "read"
+			const ignore = "ignored.yml\n"
+			switch kind {
+			case "regular":
+				putFile(t, root, ".gitignore", ignore)
+			case "leaf alias":
+				owned := putFile(t, root, "owned/ignore", ignore)
+				if err := os.Symlink(owned, control); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(exclude); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(owned, exclude); err != nil {
+					t.Fatal(err)
+				}
+			case "parent alias":
+				owned := putFile(t, root, "owned/exclude", ignore)
+				if err := os.RemoveAll(filepath.Dir(exclude)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Dir(owned), filepath.Dir(exclude)); err != nil {
+					t.Fatal(err)
+				}
+				want = "missing"
+			case "missing":
+				want = "missing"
+			case "directory":
+				if err := os.Mkdir(control, 0755); err != nil {
+					t.Fatal(err)
+				}
+				want = "unavailable"
+			case "dangling":
+				if err := os.Symlink(filepath.Join(root, "absent"), control); err != nil {
+					t.Fatal(err)
+				}
+				want = "missing"
+			}
+			p, err := Load(t.Context(), Options{Root: root, Paths: []string{source}, IncludeAnalysis: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			observations := p.Dependencies.Sources[0].Discovery
+			if len(observations) != 2 || observations[0].Path != ".gitignore" || observations[0].State != want {
+				t.Fatalf("observations: %#v", observations)
+			}
+			if want == "read" && observations[0].SHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(ignore))) {
+				t.Fatalf("owned hash: %#v", observations[0])
+			}
+			if want != "read" && observations[0].SHA256 != "" {
+				t.Fatalf("negative observation has a hash: %#v", observations[0])
+			}
+			if kind == "parent alias" && (observations[1].State != "read" || observations[1].SHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(ignore)))) {
+				t.Fatalf("owned parent hash: %#v", observations[1])
+			}
+		})
+	}
+}
+
+func TestLoadRejectsEscapedNestedContext(t *testing.T) {
+	for _, useGit := range []bool{false, true} {
+		for _, parent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("git=%v/parent=%v", useGit, parent), func(t *testing.T) {
+				root := t.TempDir()
+				if useGit {
+					gitTest(t, root, "init", "-q")
+				}
+				source := putFile(t, root, "roles/demo/tasks/main.yml", "- debug: {msg: ok}\n")
+				outside := t.TempDir()
+				external := putFile(t, outside, "linked.yml", "external bytes\n")
+				member := putFile(t, root, "roles/demo/templates/nested/linked.yml", "owned bytes\n")
+				if useGit {
+					gitTest(t, root, "add", "roles/demo/templates/nested/linked.yml")
+				}
+				link, target := member, external
+				if parent {
+					link, target = filepath.Dir(member), outside
+				}
+				if err := os.RemoveAll(link); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+				_, err := Load(t.Context(), Options{Root: root, Paths: []string{source}, IncludeAnalysis: true})
+				if !errors.Is(err, errOutsideRoot) {
+					t.Fatalf("escaped context: %v", err)
+				}
+			})
 		}
 	}
 }
