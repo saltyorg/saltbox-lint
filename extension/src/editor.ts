@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { isUtf8 } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { lstatSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -396,27 +397,48 @@ export class EditorIntegration implements vscode.Disposable {
           if (signal.aborted || !current()) return;
           const snapshot = await this.snapshot(document, version);
           if (!snapshot || signal.aborted || !current()) return;
+          const bytes = !document.isDirty
+            ? await readFile(snapshot.filename)
+            : undefined;
+          if (signal.aborted || !current()) return;
+          const unsupported = bytes !== undefined && !isUtf8(bytes);
           const wire = await runProcess(
             {
               executable: this.executable,
               cwd: snapshot.root,
-              args: [
-                "check",
-                "--root",
-                snapshot.root,
-                "--stdin-filename",
-                snapshot.filename,
-                "--format",
-                "json",
-                "--include-analysis",
-                "-",
-              ],
-              input: snapshot.text,
+              args: unsupported
+                ? [
+                    "check",
+                    "--root",
+                    snapshot.root,
+                    "--format",
+                    "json",
+                    "--include-analysis",
+                    "--",
+                    snapshot.path,
+                  ]
+                : [
+                    "check",
+                    "--root",
+                    snapshot.root,
+                    "--stdin-filename",
+                    snapshot.filename,
+                    "--format",
+                    "json",
+                    "--include-analysis",
+                    "-",
+                  ],
+              input: unsupported ? undefined : snapshot.text,
               successCodes: [0, 1],
             },
             signal,
           );
-          return { wire, snapshot };
+          return {
+            wire,
+            snapshot,
+            sourceHash: unsupported ? hash(bytes!) : snapshot.hash,
+            unsupported,
+          };
         },
       );
       if (!current()) return;
@@ -424,28 +446,37 @@ export class EditorIntegration implements vscode.Disposable {
         if (dependencyToken !== this.dependencies.begin()) return retry();
         return;
       }
-      const { wire, snapshot } = result;
+      const { wire, snapshot, sourceHash, unsupported } = result;
       if (!this.current(document, snapshot)) return retry();
+      if (unsupported && document.isDirty) return;
       const report = parseCheck(wire, true);
       if (
         report.analysis!.root !== snapshot.root ||
         report.analysis!.sources.length !== 1 ||
-        report.analysis!.sources[0].path !== snapshot.path ||
-        report.analysis!.sources[0].source_sha256 !== snapshot.hash
+        report.analysis!.sources[0].path !== snapshot.path
       )
         throw new Error("Check returned inconsistent analysis identity");
+      if (report.analysis!.sources[0].source_sha256 !== sourceHash) {
+        // A raw saved-file request can observe a later disk snapshot.
+        if (unsupported) return retry();
+        throw new Error("Check returned inconsistent analysis identity");
+      }
       if (
         report.diagnostics.some((finding) => finding.path !== snapshot.path) ||
         [...report.fixes.values()].some((fix) => fix.path !== snapshot.path)
       )
         throw new Error("Check returned an unselected source");
-      for (const fix of report.fixes.values()) snapshot.index.edits(fix.edits);
+      if (!unsupported)
+        for (const fix of report.fixes.values())
+          snapshot.index.edits(fix.edits);
       const relatedRevision = this.relatedRevision;
-      const diagnostics = await renderDiagnostics(
-        report.diagnostics,
-        snapshot.index,
-        snapshot.root,
-      );
+      const diagnostics = unsupported
+        ? []
+        : await renderDiagnostics(
+            report.diagnostics,
+            snapshot.index,
+            snapshot.root,
+          );
       if (!this.current(document, snapshot)) return retry();
       if (relatedRevision !== this.relatedRevision)
         for (const diagnostic of diagnostics)
@@ -460,6 +491,7 @@ export class EditorIntegration implements vscode.Disposable {
         );
       if (!this.current(document, snapshot) || observed.changed.size)
         return retry();
+      if (unsupported && document.isDirty) return;
       if (
         !this.dependencies.accept(
           folder,
@@ -471,6 +503,18 @@ export class EditorIntegration implements vscode.Disposable {
         )
       )
         return retry();
+      if (unsupported) {
+        // Clean buffers may contain replacement characters for raw disk bytes.
+        // Keep the raw dependency record without publishing invented positions.
+        const canonical = vscode.Uri.file(snapshot.filename);
+        this.results.close(key, canonical.toString());
+        this.output.appendLine(
+          `Skipped ${snapshot.path}: invalid UTF-8; editor diagnostics require UTF-8. Use the CLI to inspect parse findings.`,
+        );
+        this.publish(document.uri);
+        this.publish(canonical);
+        return;
+      }
       this.results.storeDocument(key, {
         id: randomUUID(),
         snapshot,
@@ -495,7 +539,10 @@ export class EditorIntegration implements vscode.Disposable {
   private async checkSaved(
     folder: vscode.WorkspaceFolder,
     manual: boolean,
-    selected?: Map<string, { filename: string; text: string; uri: vscode.Uri }>,
+    selected?: Map<
+      string,
+      { filename: string; sourceHash: string; uri: vscode.Uri }
+    >,
   ): Promise<Set<string> | undefined> {
     if (folder.uri.scheme !== "file" || this.disposed) return;
     const folderKey = folder.uri.toString();
@@ -569,12 +616,13 @@ export class EditorIntegration implements vscode.Disposable {
       const relatedRevision = this.relatedRevision;
       const entries = new Map<string, vscode.Diagnostic[]>();
       const accepted = new Set<string>();
+      const unsupported = new Set<string>();
       for (const [relative, findings] of grouped) {
         let filename: string;
-        let text: string;
+        let bytes: Buffer;
         try {
           filename = await resolveSource(root, relative);
-          text = await readFile(filename, "utf8");
+          bytes = await readFile(filename);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             this.confirmMissing(
@@ -590,18 +638,28 @@ export class EditorIntegration implements vscode.Disposable {
         const uri = vscode.Uri.file(filename);
         const owner = this.roots.folder(uri);
         if (owner && owner.uri.toString() !== folderKey) continue;
-        if (selected && text !== selected.get(relative)!.text) {
+        const sourceHash = hash(bytes);
+        if (selected && sourceHash !== selected.get(relative)!.sourceHash) {
           this.queueFile(uri, true);
           continue;
         }
         if (
-          hash(text) !==
+          sourceHash !==
           report.analysis!.sources.find((source) => source.path === relative)!
             .source_sha256
         ) {
           this.queueFile(uri, true);
           continue;
         }
+        if (!isUtf8(bytes)) {
+          // Retain raw-byte dependency coverage, but never map byte offsets
+          // through replacement characters or retry a stable unsupported file.
+          entries.set(uri.toString(), []);
+          accepted.add(relative);
+          unsupported.add(relative);
+          continue;
+        }
+        const text = bytes.toString("utf8");
         const index = new SnapshotIndex(text);
         for (const fix of report.fixes.values())
           if (fix.path === relative) index.edits(fix.edits);
@@ -653,6 +711,10 @@ export class EditorIntegration implements vscode.Disposable {
         retrySelected();
         return;
       }
+      for (const relative of unsupported)
+        this.output.appendLine(
+          `Skipped ${relative}: invalid UTF-8; editor diagnostics require UTF-8. Use the CLI to inspect parse findings.`,
+        );
       for (const uri of this.results.storeScan(folderKey, entries, !!selected))
         this.publish(vscode.Uri.parse(uri));
       return accepted;
@@ -741,6 +803,13 @@ export class EditorIntegration implements vscode.Disposable {
     try {
       const snapshot = await this.snapshot(document);
       if (!snapshot || abort.signal.aborted) return [];
+      if (!document.isDirty && !isUtf8(await readFile(snapshot.filename))) {
+        this.output.appendLine(
+          `Skipped ${snapshot.path}: invalid UTF-8; editor formatting requires UTF-8.`,
+        );
+        return [];
+      }
+      if (!this.current(document, snapshot) || abort.signal.aborted) return [];
       const wire = await this.formatting.submit(
         document.uri.toString(),
         mode === "canonical" ? 2 : 1,
@@ -1061,7 +1130,12 @@ export class EditorIntegration implements vscode.Disposable {
       string,
       Map<
         string,
-        { filename: string; text: string; uri: vscode.Uri; fingerprint: string }
+        {
+          filename: string;
+          sourceHash: string;
+          uri: vscode.Uri;
+          fingerprint: string;
+        }
       >
     >();
     try {
@@ -1085,12 +1159,13 @@ export class EditorIntegration implements vscode.Disposable {
           const identity = await identify(root, uri.fsPath);
           if (templatePath(identity.path)) continue;
           filename = identity.filename;
-          const text = await readFile(identity.filename, "utf8");
+          const bytes = await readFile(identity.filename);
+          const sourceHash = hash(bytes);
           this.missingFiles.delete(key);
           const document = vscode.workspace.textDocuments.find(
             (doc) => doc.uri.toString() === key && !doc.isClosed,
           );
-          const fingerprint = `${root}:${hash(text)}:${document?.version ?? 0}`;
+          const fingerprint = `${root}:${sourceHash}:${document?.version ?? 0}`;
           if (!force && this.fileFingerprints.get(key) === fingerprint)
             continue;
           if (document) {
@@ -1099,7 +1174,10 @@ export class EditorIntegration implements vscode.Disposable {
               (version !== undefined && document.version !== version)
             )
               continue;
-            if (!document.isDirty && document.getText() !== text) {
+            if (
+              !document.isDirty &&
+              document.getText() !== bytes.toString("utf8")
+            ) {
               this.pendingDiskReload.add(key);
               continue;
             }
@@ -1118,7 +1196,7 @@ export class EditorIntegration implements vscode.Disposable {
             const files = selected.get(folder.uri.toString()) ?? new Map();
             files.set(identity.path, {
               filename: identity.filename,
-              text,
+              sourceHash,
               uri,
               fingerprint,
             });

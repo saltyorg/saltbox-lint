@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import {
   mkdir,
@@ -14,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
+import { hash, parseCheck } from "../../src/protocol.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const findings = (uri: vscode.Uri) =>
@@ -96,6 +98,220 @@ export async function runDependencies(): Promise<void> {
     assert.equal(renderer(otherTask), false);
     assert.equal(findings(task).length, 0);
     const unrelatedGood = await readFile(unrelatedUri.fsPath, "utf8");
+    const invalidUri = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/invalid/defaults/main.yml",
+    );
+    const invalidBytes = await readFile(invalidUri.fsPath);
+    let parseWire: string;
+    try {
+      parseWire = execFileSync(
+        process.env.SALTBOX_TEST_REAL_CLI!,
+        [
+          "check",
+          "--root",
+          roots[0].uri.fsPath,
+          "--format",
+          "json",
+          "--include-analysis",
+          "--",
+          "roles/invalid/defaults/main.yml",
+        ],
+        { encoding: "utf8", cwd: roots[0].uri.fsPath },
+      );
+    } catch (error) {
+      const failure = error as { status: number; stdout: string };
+      assert.equal(failure.status, 1);
+      parseWire = failure.stdout;
+    }
+    const parseReport = parseCheck(parseWire, true);
+    assert.ok(
+      parseReport.diagnostics.some((item) => item.rule_id === "yaml-syntax"),
+    );
+    assert.equal(
+      parseReport.analysis!.sources[0].source_sha256,
+      hash(invalidBytes),
+    );
+    assert.equal(
+      findings(invalidUri).length,
+      0,
+      "unsupported bytes have no editor coordinates",
+    );
+    assert.ok(
+      !vscode.workspace.textDocuments.some(
+        (document) => document.uri.toString() === invalidUri.toString(),
+      ),
+    );
+    let quietCount = invocations().length;
+    await pause(600);
+    assert.equal(
+      invocations().length,
+      quietCount,
+      "initial coverage must quiesce with invalid UTF-8",
+    );
+    const invalidChanged = Buffer.from([0xfe, 0x0a]);
+    await Promise.all([
+      writeFile(invalidUri.fsPath, invalidChanged),
+      writeFile(
+        unrelatedUri.fsPath,
+        unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+      ),
+    ]);
+    quietCount = invocations().length;
+    editor.removeFile(invalidUri);
+    editor.removeFile(unrelatedUri);
+    await waitFor(
+      () =>
+        invocations().length > quietCount &&
+        findings(unrelatedUri).length === 0,
+      "valid peer must publish beside unsupported UTF-8",
+    );
+    await pause(400);
+    const settled = invocations().length;
+    await pause(600);
+    assert.equal(
+      invocations().length,
+      settled,
+      "stable invalid UTF-8 must not endlessly requeue selected checks",
+    );
+    assert.ok(
+      invocations()
+        .slice(quietCount)
+        .some(
+          (line) =>
+            line.includes("roles/invalid/defaults/main.yml") &&
+            line.includes("roles/unrelated/defaults/main.yml"),
+        ),
+      "unsupported source and valid peer must share a selected batch",
+    );
+    assert.ok(
+      invocations()
+        .slice(quietCount)
+        .every((line) => !line.endsWith(" .")),
+      "accepted parse sources must retain complete coverage",
+    );
+    assert.deepEqual(await readFile(invalidUri.fsPath), invalidChanged);
+    assert.equal(findings(invalidUri).length, 0);
+    await writeFile(invalidUri.fsPath, unrelatedGood);
+    editor.removeFile(invalidUri);
+    await waitFor(
+      () => findings(invalidUri).some((item) => item.code === "jinja-layout"),
+      "valid UTF-8 change must recover ordinary diagnostics",
+    );
+    await writeFile(invalidUri.fsPath, invalidBytes);
+    editor.removeFile(invalidUri);
+    await waitFor(
+      () => findings(invalidUri).length === 0,
+      "unsupported bytes must clear prior saved coordinates",
+    );
+    await writeFile(unrelatedUri.fsPath, unrelatedGood);
+    await waitFor(
+      () => findings(unrelatedUri).some((item) => item.code === "jinja-layout"),
+      "valid peer recovery",
+    );
+    await pause(400);
+    quietCount = invocations().length;
+    await pause(600);
+    assert.equal(
+      invocations().length,
+      quietCount,
+      "recovered unsupported source must remain quiescent",
+    );
+    assert.deepEqual(await readFile(invalidUri.fsPath), invalidBytes);
+    success(
+      "invalid UTF-8 retains parse identity and coverage, quiesces beside valid peers and recovers on valid edits",
+    );
+    const invalidDocument = await vscode.workspace.openTextDocument(invalidUri);
+    await vscode.window.showTextDocument(invalidDocument, { preview: false });
+    assert.equal(invalidDocument.isDirty, false);
+    assert.notEqual(hash(invalidDocument.getText()), hash(invalidBytes));
+    quietCount = invocations().length;
+    assert.deepEqual(await editor.format(invalidDocument, "canonical"), []);
+    assert.deepEqual(await editor.format(invalidDocument, "lint-fixes"), []);
+    assert.equal(
+      invocations().length,
+      quietCount,
+      "unsupported formatting must reject independently of checks",
+    );
+    await editor.check(invalidDocument, true);
+    editor.saved(invalidDocument);
+    await waitFor(
+      () => invocations().length > quietCount + 1,
+      "clean unsupported document must exercise the actual saved queue",
+    );
+    await pause(400);
+    const openSettled = invocations().length;
+    await pause(600);
+    assert.equal(
+      invocations().length,
+      openSettled,
+      "clean open invalid UTF-8 must not repeatedly retry decoded stdin",
+    );
+    assert.equal(findings(invalidUri).length, 0);
+    assert.deepEqual(
+      editor.actions(invalidDocument, new vscode.Range(0, 0, 20, 0)),
+      [],
+    );
+    assert.ok(
+      invocations()
+        .slice(quietCount)
+        .every((line) => !line.includes("--stdin-filename")),
+      "clean unsupported checks must preserve raw saved-file identity",
+    );
+    assert.deepEqual(await readFile(invalidUri.fsPath), invalidBytes);
+    await replace(invalidDocument, unrelatedGood);
+    await editor.check(invalidDocument, true);
+    assert.equal(invalidDocument.isDirty, true);
+    assert.ok(
+      findings(invalidUri).some((item) => item.code === "jinja-layout"),
+    );
+    assert.ok(
+      editor.actions(invalidDocument, new vscode.Range(0, 0, 100, 0)).length >
+        0,
+    );
+    assert.ok(
+      (await editor.format(invalidDocument, "lint-fixes")).length > 0,
+      "dirty-buffer formatting must use its explicit text snapshot",
+    );
+    assert.deepEqual(await readFile(invalidUri.fsPath), invalidBytes);
+    await invalidDocument.save();
+    await editor.check(invalidDocument, true);
+    assert.equal(invalidDocument.isDirty, false);
+    assert.ok(
+      findings(invalidUri).some((item) => item.code === "jinja-layout"),
+    );
+    assert.equal(await readFile(invalidUri.fsPath, "utf8"), unrelatedGood);
+    await pause(400);
+    quietCount = invocations().length;
+    await pause(600);
+    assert.equal(
+      invocations().length,
+      quietCount,
+      "valid clean document must recover and quiesce",
+    );
+    await writeFile(invalidUri.fsPath, invalidBytes);
+    editor.removeFile(invalidUri);
+    await waitFor(
+      () => findings(invalidUri).length === 0,
+      "clean unsupported reload must clear prior document coordinates",
+    );
+    assert.deepEqual(
+      editor.actions(invalidDocument, new vscode.Range(0, 0, 100, 0)),
+      [],
+    );
+    await pause(400);
+    quietCount = invocations().length;
+    await pause(600);
+    assert.equal(
+      invocations().length,
+      quietCount,
+      "clean unsupported reload must quiesce",
+    );
+    assert.deepEqual(await readFile(invalidUri.fsPath), invalidBytes);
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+    success(
+      "clean open invalid UTF-8 quiesces, rejects unsafe actions and formatting, preserves dirty snapshots and recovers after valid save",
+    );
     const batchGate = join(temporary, "batch-gate");
     const lateTemplate = vscode.Uri.joinPath(
       roots[0].uri,

@@ -124,6 +124,13 @@ if (process.env.SALTBOX_TEST_DEPENDENCIES === "1") {
     "utf8",
   );
   for (const name of ["one", "two"]) {
+    mkdirSync(resolve(root, name, "roles/invalid/defaults"), {
+      recursive: true,
+    });
+    writeFileSync(
+      resolve(root, name, "roles/invalid/defaults/main.yml"),
+      Buffer.from([0xff, 0x0a]),
+    );
     mkdirSync(resolve(root, name, "roles/example/tasks"), { recursive: true });
     mkdirSync(resolve(root, name, "roles/example/templates"), {
       recursive: true,

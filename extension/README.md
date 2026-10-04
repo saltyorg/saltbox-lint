@@ -49,6 +49,15 @@ trigger or Git polling. Dirty dependent buffers retain their displayed findings
 and lose stale actions until saved or explicitly checked. The Output channel
 identifies stale context and reports startup/background failures.
 
+Saved files with invalid UTF-8 retain their raw-byte analysis dependencies and
+saved-scan coverage, but editor diagnostics are skipped because byte offsets cannot
+be mapped safely to editor text. The Output channel identifies these files. The
+CLI still reports their parse findings. Stable unsupported bytes do not trigger
+retries, and a later valid UTF-8 edit restores normal diagnostics. Other selected
+files continue to publish their findings.
+Clean open buffers use the raw saved-file check for these unsupported bytes.
+Dirty buffers continue to check their current text, including explicit unsaved edits.
+
 By default, **Saltbox Lint: Active Project Only** (`saltboxLint.activeProjectOnly`)
 shows this extension's Problems entries and squiggles for the active file's
 project. Any file type selects its project, including a README. An unmarked
