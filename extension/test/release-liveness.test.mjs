@@ -547,6 +547,7 @@ async function outputControl(output, consumer, mode) {
   });
   let parent;
   let child;
+  let writer;
   try {
     parent = await record(filename);
     child = await record(filename + ".child");
@@ -558,6 +559,14 @@ async function outputControl(output, consumer, mode) {
     if (consumer === "blocked") {
       const status = await record(filename + ".pending");
       assert.equal(status.token, parent.token);
+      if (process.platform === "win32") {
+        writer = await record(filename + ".writer");
+        assert.equal(
+          await running(writer),
+          true,
+          "exact owned output writer is live while its write is pending",
+        );
+      }
       if (target.readableLength === 0) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 1000);
@@ -614,6 +623,12 @@ async function outputControl(output, consumer, mode) {
       false,
       "exact owned descendant is absent",
     );
+    if (writer)
+      assert.equal(
+        await running(writer),
+        false,
+        "exact owned blocked writer is absent",
+      );
     assert.doesNotMatch(otherOutput, /Unhandled 'error' event/);
   } finally {
     await exited;

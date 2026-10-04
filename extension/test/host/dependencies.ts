@@ -443,15 +443,16 @@ export async function runDependencies(): Promise<void> {
     // A preceding request must not satisfy this chunk's readiness gate.
     const admissionControlDocument =
       await vscode.workspace.openTextDocument(defaults);
+    const admissionControlFilename = await realpath(defaults.fsPath);
     void editor.check(admissionControlDocument);
     await waitFor(
       () =>
         invocations()
           .slice(count)
-          .some(
-            (line) =>
-              line.includes("--stdin-filename") &&
-              line.includes("roles/example/defaults/main.yml"),
+          .some((line) =>
+            line.includes(
+              ` --stdin-filename ${admissionControlFilename} --format `,
+            ),
           ),
       "unrelated document request must start under the admission gate",
     );
