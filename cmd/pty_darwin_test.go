@@ -11,7 +11,7 @@ import (
 
 func openTestPTY(t *testing.T) (*os.File, *os.File) {
 	t.Helper()
-	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0)
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,4 +41,8 @@ func openTestPTY(t *testing.T) (*os.File, *os.File) {
 	}
 	t.Cleanup(func() { _ = slave.Close() })
 	return master, slave
+}
+
+func drainTestPTY(slave *os.File) error {
+	return unix.IoctlSetInt(int(slave.Fd()), unix.TIOCDRAIN, 0)
 }

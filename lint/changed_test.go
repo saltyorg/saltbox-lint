@@ -224,6 +224,8 @@ func TestChangedDeletionRenameAndEmptyRepository(t *testing.T) {
 	}
 	root := t.TempDir()
 	gitTest(t, root, "init", "-q")
+	gitTest(t, root, "config", "--local", "user.name", "fixture")
+	gitTest(t, root, "config", "--local", "user.email", "fixture@example.invalid")
 	gitTest(t, root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: initialize fixture")
 	assertSelection(t, loadChangedTest(t, root, "HEAD"))
 	putFile(t, root, "tasks/main.yml", "[]\n")
