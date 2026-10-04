@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { runProcess } from "./process.ts";
+import { Scheduler } from "./scheduler.ts";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -36,12 +37,13 @@ export function ruleMarkdown(rule: RuleMetadata): vscode.MarkdownString {
 }
 
 // One bundled executable owns policy. Cache keys include its reported version;
-// failures are not cached, and all processes share the bounded process adapter.
+// failures are not cached. Its scheduler joins one child before admitting another.
 export class RuleHelp implements vscode.Disposable {
   private readonly scheme = `saltbox-lint-help-${randomUUID()}`;
-  private readonly abort = new AbortController();
+  private readonly processes = new Scheduler();
   private readonly cache = new Map<string, Promise<RuleMetadata[]>>();
-  private version?: Promise<string>;
+  private version?: { work: Promise<string>; pending: boolean };
+  private disposed = false;
   private readonly changed = new vscode.EventEmitter<vscode.Uri>();
   private readonly documents = new Map<string, vscode.MarkdownString>();
   private readonly registration: vscode.Disposable;
@@ -63,31 +65,46 @@ export class RuleHelp implements vscode.Disposable {
       ),
     );
   }
-  async registry(refreshVersion = false): Promise<RuleMetadata[]> {
-    if (refreshVersion) this.version = undefined;
-    this.version ??= runProcess(
-      {
-        executable: this.executable,
-        cwd: path.dirname(this.executable),
-        args: ["--version"],
-      },
-      this.abort.signal,
-    ).catch((error) => {
-      this.version = undefined;
-      throw error;
-    });
-    const version = await this.version;
-    const key = `${this.executable}\0${version}`;
-    let work = this.cache.get(key);
-    if (!work) {
-      work = runProcess(
+  private async process(key: string, args: string[]): Promise<string> {
+    const output = await this.processes.submit(key, 1, (signal) =>
+      runProcess(
         {
           executable: this.executable,
           cwd: path.dirname(this.executable),
-          args: ["rules", "--format", "json"],
+          args,
         },
-        this.abort.signal,
-      )
+        signal,
+      ),
+    );
+    if (output === undefined) throw new Error("Canceled");
+    return output;
+  }
+  async registry(refreshVersion = false): Promise<RuleMetadata[]> {
+    if (this.disposed) throw new Error("Canceled");
+    if (refreshVersion && !this.version?.pending) this.version = undefined;
+    if (!this.version) {
+      const observation = {
+        work: this.process("version", ["--version"]),
+        pending: true,
+      };
+      this.version = observation;
+      observation.work = observation.work.then(
+        (version) => {
+          observation.pending = false;
+          return version;
+        },
+        (error) => {
+          if (this.version === observation) this.version = undefined;
+          throw error;
+        },
+      );
+    }
+    const version = await this.version.work;
+    if (this.disposed) throw new Error("Canceled");
+    const key = `${this.executable}\0${version}`;
+    let work = this.cache.get(key);
+    if (!work) {
+      work = this.process(key, ["rules", "--format", "json"])
         .then(parseRegistry)
         .catch((error) => {
           this.cache.delete(key);
@@ -98,6 +115,7 @@ export class RuleHelp implements vscode.Disposable {
     return work;
   }
   async show(markdown: vscode.MarkdownString, name: string): Promise<void> {
+    if (this.disposed) throw new Error("Canceled");
     const uri = vscode.Uri.from({
       scheme: this.scheme,
       path: `/${name}`,
@@ -105,11 +123,13 @@ export class RuleHelp implements vscode.Disposable {
     this.documents.set(uri.toString(), markdown);
     this.changed.fire(uri);
     const document = await vscode.workspace.openTextDocument(uri);
+    if (this.disposed) throw new Error("Canceled");
     await vscode.window.showTextDocument(document, {
       viewColumn: vscode.ViewColumn.Beside,
       preview: true,
     });
-    await vscode.commands.executeCommand("editor.action.showHover");
+    if (!this.disposed)
+      await vscode.commands.executeCommand("editor.action.showHover");
   }
   async explain(id?: string): Promise<vscode.MarkdownString | undefined> {
     const rules = await this.registry(true);
@@ -128,7 +148,8 @@ export class RuleHelp implements vscode.Disposable {
     return markdown;
   }
   dispose(): void {
-    this.abort.abort();
+    this.disposed = true;
+    this.processes.dispose();
     this.registration.dispose();
     this.changed.dispose();
     this.documents.clear();

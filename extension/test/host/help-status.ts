@@ -226,4 +226,6 @@ export async function runHelpStatus(
   console.log(
     "PASS installed registry help, trusted command-disabled Markdown, existing documentation links, source and dependency status invalidation",
   );
+  const { runHelpConcurrency } = await import("./help-concurrency.ts");
+  await runHelpConcurrency(document);
 }
