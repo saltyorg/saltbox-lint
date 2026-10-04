@@ -841,6 +841,205 @@ export async function runDependencies(): Promise<void> {
     );
     success("watcher bursts coalesce without full-root rescans");
 
+    const queuedUri = vscode.Uri.joinPath(
+      roots[1].uri,
+      "roles/example/tasks/first-open/ignored.yml",
+    );
+    const queuedDocument = await vscode.workspace.openTextDocument(queuedUri);
+    const blockerDocument =
+      await vscode.workspace.openTextDocument(unrelatedUri);
+    const otherTemplate = vscode.Uri.joinPath(
+      roots[1].uri,
+      "roles/example/templates/router.conf",
+    );
+    const blockerGate = join(temporary, "queued-status-blocker");
+    const queuedGate = join(temporary, "queued-status-admission");
+    const blockerNonce = randomBytes(32).toString("hex");
+    const queuedNonce = randomBytes(32).toString("hex");
+    let queuedReads = 0;
+    const queuedTracked: vscode.TextDocument = Object.create(queuedDocument, {
+      version: { get: () => queuedDocument.version },
+      isDirty: { get: () => queuedDocument.isDirty },
+      getText: {
+        value: () => {
+          queuedReads++;
+          return queuedDocument.getText();
+        },
+      },
+    });
+    const queuedOriginalStatus = editor.status;
+    editor.status = function (
+      source = vscode.window.activeTextEditor?.document,
+    ) {
+      return queuedOriginalStatus.call(
+        this,
+        source === queuedDocument ? queuedTracked : source,
+      );
+    };
+    try {
+      await writeFile(blockerGate, "");
+      process.env.SALTBOX_TEST_PROCESS_GATE = blockerGate;
+      process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = blockerNonce;
+      const blocker = editor.check(blockerDocument);
+      await waitFor(
+        () => existsSync(blockerGate + ".ready"),
+        "unrelated primary holds the scheduler before source admission",
+      );
+      const blockerReady = JSON.parse(
+        await readFile(blockerGate + ".ready", "utf8"),
+      );
+      assert.equal(blockerReady.nonce, blockerNonce);
+      assert.ok(
+        invocations().includes(
+          `${blockerReady.pid} ${blockerReady.args.join(" ")}`,
+        ),
+      );
+      assert.ok(
+        blockerReady.args.includes(await realpath(unrelatedUri.fsPath)),
+      );
+      const blockerInstance = fixtureGateInstance(blockerReady, instancesLog);
+      assert.equal(await fixtureRunning(blockerInstance), true);
+      await vscode.window.showTextDocument(queuedDocument, { preview: false });
+      assert.equal(
+        Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
+        false,
+      );
+      await writeFile(queuedGate, "");
+      process.env.SALTBOX_TEST_PROCESS_GATE = queuedGate;
+      process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = queuedNonce;
+      const queuedCount = invocations().length;
+      const queuedCheck = editor.check(queuedTracked);
+      const lane = Reflect.get(editor, "lint");
+      await waitFor(
+        () => Reflect.get(lane, "pending").has(queuedUri.toString()),
+        "new source is actually queued behind the exact held child",
+      );
+      const queuedVersion = queuedDocument.version;
+      const dependencies = Reflect.get(editor, "dependencies");
+      const queuedFolder = roots[1].uri.toString();
+      const admissionRevision = dependencies.admissionRevision(queuedFolder);
+      const rootRevision = Reflect.get(editor, "rootRevisions").get(
+        queuedFolder,
+      );
+      const queuedBar: vscode.StatusBarItem = Reflect.get(editor, "statusBar");
+      for (const [scope, changedTemplate] of [
+        ["other-root", template],
+        ["own-root", otherTemplate],
+      ] as const) {
+        const token = dependencies.begin();
+        await writeFile(
+          changedTemplate.fsPath,
+          good + "\n# queued status event\n",
+        );
+        editor.removeFile(changedTemplate);
+        assert.ok(dependencies.begin() > token);
+        assert.equal(
+          dependencies.admissionRevision(queuedFolder),
+          admissionRevision,
+        );
+        assert.equal(
+          Reflect.get(editor, "rootRevisions").get(queuedFolder),
+          rootRevision,
+        );
+        assert.equal(queuedDocument.version, queuedVersion);
+        assert.equal(
+          Reflect.get(lane, "pending").has(queuedUri.toString()),
+          true,
+        );
+        assert.equal(
+          Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
+          false,
+        );
+        assert.equal(await fixtureRunning(blockerInstance), true);
+        const automaticBar = queuedBar.text;
+        const status = editor.status(queuedTracked);
+        const manual = await editor.showStatus();
+        console.log(
+          `MEASURE queued pending scope=${scope} status=${status.state} manual=${manual.state} automatic_bar=${automaticBar} bar=${queuedBar.text} canonical_admitted=false reads=${queuedReads} endpoint_live=true`,
+        );
+        assert.equal(automaticBar, "Saltbox Lint: checking");
+        assert.equal(status.state, "checking");
+        assert.equal(manual.state, "checking");
+        assert.equal(queuedBar.text, "Saltbox Lint: checking");
+        assert.equal(
+          queuedReads,
+          0,
+          "queued status and checks never copy source text",
+        );
+        assert.equal(invocations().length, queuedCount);
+      }
+      const queuedRequest = Reflect.get(lane, "pending").get(
+        queuedUri.toString(),
+      );
+      const queuedDuplicate = editor.check(queuedTracked);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(
+        Reflect.get(lane, "pending").get(queuedUri.toString()),
+        queuedRequest,
+      );
+      assert.equal(queuedReads, 0);
+      await rm(blockerGate);
+      await blocker;
+      await waitFor(
+        () => existsSync(queuedGate + ".ready"),
+        "the same queued request reaches canonical admission",
+      );
+      const queuedReady = JSON.parse(
+        await readFile(queuedGate + ".ready", "utf8"),
+      );
+      assert.equal(queuedReady.nonce, queuedNonce);
+      assert.ok(
+        invocations().includes(
+          `${queuedReady.pid} ${queuedReady.args.join(" ")}`,
+        ),
+      );
+      assert.ok(queuedReady.args.includes(await realpath(queuedUri.fsPath)));
+      const queuedInstance = fixtureGateInstance(queuedReady, instancesLog);
+      assert.equal(await fixtureRunning(queuedInstance), true);
+      assert.equal(await fixtureRunning(blockerInstance), false);
+      assert.equal(
+        Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
+        true,
+      );
+      assert.equal(editor.status().state, "checking");
+      assert.equal((await editor.showStatus()).state, "checking");
+      assert.equal(queuedBar.text, "Saltbox Lint: checking");
+      assert.ok(
+        queuedReads > 0,
+        "admission reads the source only after releasing the lane",
+      );
+      delete process.env.SALTBOX_TEST_PROCESS_GATE;
+      delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
+      await rm(queuedGate);
+      await Promise.all([queuedCheck, queuedDuplicate]);
+      assert.equal(await fixtureRunning(queuedInstance), false);
+      await writeFile(template.fsPath, good);
+      await writeFile(otherTemplate.fsPath, good);
+      editor.removeFile(template);
+      editor.removeFile(otherTemplate);
+      await waitFor(
+        () =>
+          !Reflect.get(lane, "active") &&
+          Reflect.get(lane, "pending").size === 0 &&
+          Reflect.get(editor, "pendingFiles").size === 0 &&
+          Reflect.get(editor, "pendingRefresh").size === 0 &&
+          !Reflect.get(editor, "flushingFiles"),
+        "restored context work settles before the independent first-open control",
+      );
+      await vscode.commands.executeCommand(
+        "workbench.action.closeActiveEditor",
+      );
+      success(
+        "queued unknown source keeps actual pending ownership across unrelated own and other root events without source reads and deduplicates through admission",
+      );
+    } finally {
+      editor.status = queuedOriginalStatus;
+      delete process.env.SALTBOX_TEST_PROCESS_GATE;
+      delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
+      await rm(blockerGate, { force: true });
+      await rm(queuedGate, { force: true });
+    }
+
     const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
     await vscode.window.showTextDocument(firstDocument, { preview: false });
     assert.equal(

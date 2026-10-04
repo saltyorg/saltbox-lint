@@ -56,9 +56,8 @@ interface DocumentResult {
   diagnostics: vscode.Diagnostic[];
 }
 interface PendingCheck {
-  key: string;
-  prefix: string;
   source?: string;
+  dependencyRevision: number;
   work: Promise<void>;
 }
 function textEdits(edits: EditorEdit[]): vscode.TextEdit[] {
@@ -167,6 +166,24 @@ export class EditorIntegration implements vscode.Disposable {
   private statusToken(document: vscode.TextDocument): string {
     return `${this.statusRevisionToken(document)}:${hash(document.getText())}`;
   }
+  private checkKey(document: vscode.TextDocument, folder: string): string {
+    // These revisions identify queued and admitted work. Global event tokens
+    // guard result acceptance, not ownership of an unknown source request.
+    return `${document.uri}:${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:${this.dependencies.admissionRevision(folder)}`;
+  }
+  private pendingCheck(
+    document: vscode.TextDocument,
+    folder: string,
+  ): PendingCheck | undefined {
+    const pending = this.checking.get(this.checkKey(document, folder));
+    if (
+      pending &&
+      (pending.source === undefined ||
+        pending.dependencyRevision ===
+          this.dependencies.revision(folder, pending.source))
+    )
+      return pending;
+  }
   status(document = vscode.window.activeTextEditor?.document): CheckStatus {
     if (
       !document ||
@@ -192,12 +209,7 @@ export class EditorIntegration implements vscode.Disposable {
         reason: "This source is not eligible. Templates remain context-only.",
       };
     const key = document.uri.toString();
-    const identity = this.sourceOwners.get(key);
-    const dependencyRevision = identity
-      ? this.dependencies.revision(folder, identity.path)
-      : this.dependencies.begin();
-    const requestKey = `${key}:${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:${dependencyRevision}`;
-    if (this.checking.has(requestKey))
+    if (this.pendingCheck(document, folder))
       return {
         state: "checking",
         reason: "A check for this source revision is pending.",
@@ -329,19 +341,15 @@ export class EditorIntegration implements vscode.Disposable {
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
-    const prefix = `${document.uri}:${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:`;
-    for (const pending of this.checking.values()) {
-      if (pending.prefix !== prefix || pending.source !== undefined) continue;
-      const key = `${prefix}${this.dependencies.revision(folder, identity.path)}`;
-      if (key !== pending.key) {
-        // Canonical admission refines the request's dependency identity. Keep
-        // its ownership before alias publication can refresh the status bar.
-        if (this.checking.has(key)) continue;
-        this.checking.delete(pending.key);
-        pending.key = key;
-        this.checking.set(key, pending);
-      }
+    const pending = this.pendingCheck(document, folder);
+    if (pending && pending.source === undefined) {
+      // Admission adds dependency identity to the same owned request before
+      // alias publication can refresh the status bar.
       pending.source = identity.path;
+      pending.dependencyRevision = this.dependencies.revision(
+        folder,
+        identity.path,
+      );
     }
     this.sourceOwners.set(document.uri.toString(), identity);
     this.eligibilityChanged.fire();
@@ -506,33 +514,28 @@ export class EditorIntegration implements vscode.Disposable {
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
+    const key = this.checkKey(document, folder);
     const identity = this.sourceOwners.get(document.uri.toString());
-    const contextRevision = identity
-      ? this.dependencies.revision(folder, identity.path)
-      : this.dependencies.begin();
-    const prefix = `${document.uri}:${version}:${revision}:${this.rootRevision(folder)}:`;
-    const requestKey = `${prefix}${contextRevision}`;
-    const existing = this.checking.get(requestKey);
+    const existing = this.pendingCheck(document, folder);
     if (existing) return existing.work;
     const work = this.checkSnapshot(document, manual, version).then((retry) => {
       // Release deduplication before a rejected request queues its replacement.
-      if (this.checking.get(pending.key) === pending)
-        this.checking.delete(pending.key);
+      if (this.checking.get(key) === pending) this.checking.delete(key);
       retry?.();
     });
     const pending: PendingCheck = {
-      key: requestKey,
-      prefix,
       source: identity?.path,
+      dependencyRevision: identity
+        ? this.dependencies.revision(folder, identity.path)
+        : 0,
       work,
     };
-    this.checking.set(requestKey, pending);
+    this.checking.set(key, pending);
     this.updateStatus();
     try {
       await work;
     } finally {
-      if (this.checking.get(pending.key) === pending)
-        this.checking.delete(pending.key);
+      if (this.checking.get(key) === pending) this.checking.delete(key);
       this.updateStatus();
     }
   }
