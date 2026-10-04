@@ -130,6 +130,8 @@ export async function runQueue(): Promise<void> {
           assert.equal(document.languageId, "yaml");
           assert.equal(document.isClosed, false);
           let reads = 0;
+          let statusReads = 0;
+          let readingStatus = false;
           let requested = false;
           // VS Code freezes TextDocument methods. Use an inheriting observer,
           // not a Proxy that violates non-writable property invariants.
@@ -137,6 +139,7 @@ export async function runQueue(): Promise<void> {
             getText: {
               value: (...args: Parameters<vscode.TextDocument["getText"]>) => {
                 reads++;
+                if (readingStatus) statusReads++;
                 return document.getText(...args);
               },
             },
@@ -148,20 +151,53 @@ export async function runQueue(): Promise<void> {
             },
           });
           const { pending: active } = await hold();
+          let activeStatusCalls = 0;
+          // Observe the real status method, including updateStatus's active
+          // document path. The frozen VS Code document cannot be instrumented.
+          const originalStatus = editor!.status;
+          editor!.status = function (
+            source = vscode.window.activeTextEditor?.document,
+          ) {
+            if (source === document) {
+              if (arguments.length) activeStatusCalls++;
+              readingStatus = true;
+              try {
+                return originalStatus.call(this, tracked);
+              } finally {
+                readingStatus = false;
+              }
+            }
+            return originalStatus.call(this, source);
+          };
           const before = invocations().length;
-          const pending = editor!.check(
-            tracked,
-            false,
-            invalidation === "version" ? undefined : document.version,
-          );
+          let pending: Promise<void>;
+          let queuedState: string;
+          try {
+            pending = editor!.check(
+              tracked,
+              false,
+              invalidation === "version" ? undefined : document.version,
+            );
+            await waitFor(
+              () => requested,
+              "requested document version captured",
+            );
+            // Roots are ready. The fixture gate holds the active subprocess
+            // while check's enqueue and active-editor status update finish.
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            await waitFor(
+              () => editor!.status().state === "checking",
+              "active source check is queued behind the fixture gate",
+            );
+            queuedState = editor!.status().state;
+            assert.ok(activeStatusCalls > 0, "active status path was observed");
+          } finally {
+            editor!.status = originalStatus;
+          }
           let settled = false;
           void pending.then(() => {
             settled = true;
           });
-          await waitFor(() => requested, "requested document version captured");
-          // Roots are already ready. Let check's enqueue continuation finish;
-          // the fixture gate, not elapsed time, holds the active subprocess.
-          await new Promise<void>((resolve) => setImmediate(resolve));
           const queuedReads = reads;
           try {
             if (invalidation === "edit" || invalidation === "version") {
@@ -203,6 +239,12 @@ export async function runQueue(): Promise<void> {
               );
             await release();
             await Promise.all([active, pending]);
+            assert.equal(queuedState, "checking", "queued status is checking");
+            assert.equal(
+              statusReads,
+              0,
+              "active queued status must not copy document text",
+            );
             assert.equal(
               queuedReads,
               0,

@@ -182,6 +182,47 @@ export async function runHelpStatus(
     await replace(document, original);
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
   }
+  let reads = 0;
+  let versionOffset = 0;
+  let textOverride: string | undefined;
+  const tracked: vscode.TextDocument = Object.create(document, {
+    getText: {
+      value: () => {
+        reads++;
+        return textOverride ?? document.getText();
+      },
+    },
+    version: { get: () => document.version + versionOffset },
+  });
+  const observed = new EditorIntegration(
+    process.env.SALTBOX_TEST_FIXTURE_PATH!,
+  );
+  const expectReads = (state: CheckStatus["state"], count: number) => {
+    reads = 0;
+    assert.equal(observed.status(tracked).state, state);
+    assert.equal(reads, count, `${state} status buffer reads`);
+  };
+  try {
+    await observed.check(tracked);
+    expectReads("failed", 1);
+    textOverride = original + "# same version, different contents\n";
+    expectReads("eligible", 1);
+    textOverride = undefined;
+    expectReads("failed", 1);
+    versionOffset++;
+    expectReads("eligible", 0);
+    expectReads("eligible", 0);
+    versionOffset = 0;
+    expectReads("failed", 1);
+    observed.change(tracked);
+    expectReads("eligible", 0);
+    expectReads("eligible", 0);
+  } finally {
+    observed.dispose();
+  }
+  console.log(
+    "PASS status hashes matching failure contents and skips changed failure versions and revisions",
+  );
   console.log(
     "PASS installed registry help, trusted command-disabled Markdown, existing documentation links, source and dependency status invalidation",
   );

@@ -152,11 +152,14 @@ export class EditorIntegration implements vscode.Disposable {
       return new Set();
     }
   }
-  private statusToken(document: vscode.TextDocument): string {
+  private statusRevisionToken(document: vscode.TextDocument): string {
     const folder =
       vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString() ?? "";
     const identity = this.sourceOwners.get(document.uri.toString());
-    return `${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:${identity ? this.dependencies.revision(folder, identity.path) : 0}:${hash(document.getText())}`;
+    return `${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:${identity ? this.dependencies.revision(folder, identity.path) : 0}`;
+  }
+  private statusToken(document: vscode.TextDocument): string {
+    return `${this.statusRevisionToken(document)}:${hash(document.getText())}`;
   }
   status(document = vscode.window.activeTextEditor?.document): CheckStatus {
     if (
@@ -183,7 +186,6 @@ export class EditorIntegration implements vscode.Disposable {
         reason: "This source is not eligible. Templates remain context-only.",
       };
     const key = document.uri.toString();
-    const token = this.statusToken(document);
     const identity = this.sourceOwners.get(key);
     const dependencyRevision = identity
       ? this.dependencies.revision(folder, identity.path)
@@ -195,7 +197,11 @@ export class EditorIntegration implements vscode.Disposable {
         reason: "A check for this source revision is pending.",
       };
     const failure = this.failures.get(key);
-    if (failure?.token === token)
+    if (
+      failure &&
+      failure.token.startsWith(`${this.statusRevisionToken(document)}:`) &&
+      failure.token === this.statusToken(document)
+    )
       return { state: "failed", reason: failure.message };
     const result = this.results.document(key);
     if (result)
