@@ -61,6 +61,12 @@ if (
   writeFileSync(resolve(root, "one/other.yml"), 'value: "{{ other\n }}"\n');
 }
 if (process.env.SALTBOX_TEST_ACTIVE_PROJECT === "1") {
+  // Late-save cache checks need a role with no pending context peers.
+  mkdirSync(resolve(root, "one/roles/late/defaults"), { recursive: true });
+  writeFileSync(
+    resolve(root, "one/roles/late/defaults/main.yml"),
+    'value: "{{ initial\n }}"\n',
+  );
   for (const name of ["one", "two"]) {
     writeFileSync(resolve(root, name, "README.md"), "Project context\n");
     writeFileSync(

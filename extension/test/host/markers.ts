@@ -388,6 +388,14 @@ export async function runMarkers(): Promise<void> {
       (await formatting(special)).length > 0,
       "literal glob characters retain formatter registration",
     );
+    // setTextDocumentLanguage is a no-op when the mode already matches.
+    // Establish a real transition before gating its automatic open check.
+    const languageSource = await vscode.languages.setTextDocumentLanguage(
+      special,
+      "plaintext",
+    );
+    assert.equal(languageSource.languageId, "plaintext");
+    assert.equal(languageSource.uri.toString(), special.uri.toString());
     const fsPromises =
       require("node:fs/promises") as typeof import("node:fs/promises");
     const originalRealpath = fsPromises.realpath;
@@ -400,6 +408,7 @@ export async function runMarkers(): Promise<void> {
       release = resolve;
     });
     let entries = 0;
+    const identityPaths: string[] = [];
     let enterFormatter!: () => void;
     const formatterIdentity = new Promise<void>((resolve) => {
       enterFormatter = resolve;
@@ -409,7 +418,8 @@ export async function runMarkers(): Promise<void> {
     Object.defineProperty(fsPromises, "realpath", {
       ...realpathDescriptor,
       value: (...args: Parameters<typeof originalRealpath>) => {
-        if (String(args[0]) !== special.uri.fsPath)
+        if (identityPaths.length < 32) identityPaths.push(String(args[0]));
+        if (String(args[0]) !== languageSource.uri.fsPath)
           return originalRealpath(...args);
         entries++;
         if (entries === 2) enterFormatter();
@@ -420,13 +430,22 @@ export async function runMarkers(): Promise<void> {
     });
     try {
       const changed = await vscode.languages.setTextDocumentLanguage(
-        special,
+        languageSource,
         "ansible",
       );
-      await waitFor(
-        () => entries > 0,
-        "automatic Ansible check enters source identity",
-      );
+      assert.equal(changed.languageId, "ansible");
+      assert.equal(changed.uri.toString(), languageSource.uri.toString());
+      try {
+        await waitFor(
+          () => entries > 0,
+          "automatic Ansible check enters source identity",
+        );
+      } catch (error) {
+        throw new Error(
+          `Ansible identity gate failed: ${JSON.stringify({ uri: changed.uri.toString(), language: changed.languageId, closed: changed.isClosed, entries, identityPaths })}`,
+          { cause: error },
+        );
+      }
       let settled = false;
       pendingFormat = formatting(changed).then((edits) => {
         settled = true;

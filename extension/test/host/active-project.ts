@@ -477,13 +477,18 @@ export async function runActiveProject(): Promise<void> {
       await run(
         "late hidden save and closed-file results update cache without publishing",
         async () => {
+          const late = await vscode.workspace.openTextDocument(
+            vscode.Uri.joinPath(roots[0].uri, "roles/late/defaults/main.yml"),
+          );
+          await show(late);
+          await check(late);
           const gate = join(temporary, "pending");
-          await show(a);
-          await replace(a, 'value: "{{ changed\n }}"\n');
+          await replace(late, 'value: "{{ changed\n }}"\n');
+          const beforeSave = invocations().length;
           await writeFile(gate, "");
           process.env.SALTBOX_TEST_PROCESS_GATE = gate;
           try {
-            assert.equal(await a.save(), true);
+            assert.equal(await late.save(), true);
             await waitFor(
               () => existsSync(gate + ".ready"),
               "real saved CLI result is pending",
@@ -493,19 +498,28 @@ export async function runActiveProject(): Promise<void> {
             await rm(gate);
             await waitFor(
               () =>
-                editor.actions(a, new vscode.Range(0, 0, a.lineCount, 0))
+                editor.actions(late, new vscode.Range(0, 0, late.lineCount, 0))
                   .length > 0,
               "late hidden result accepted",
             );
-            assert.equal(findings(a.uri).length, 0);
+            assert.equal(
+              invocations().length,
+              beforeSave + 1,
+              "the isolated save must check only its primary",
+            );
+            assert.equal(findings(late.uri).length, 0);
             const count = invocations().length;
-            await show(a);
+            await show(late);
             await waitFor(
-              () => findings(a.uri).some((d) => d.code === "jinja-layout"),
+              () => findings(late.uri).some((d) => d.code === "jinja-layout"),
               "late cached result restored",
             );
             await pause(150);
-            assert.equal(invocations().length, count);
+            assert.equal(
+              invocations().length,
+              count,
+              "restoring cached findings must not invoke CLI",
+            );
           } finally {
             delete process.env.SALTBOX_TEST_PROCESS_GATE;
             await rm(gate, { force: true });

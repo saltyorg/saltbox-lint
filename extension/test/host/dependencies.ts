@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -537,6 +538,7 @@ export async function runDependencies(): Promise<void> {
 
     const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
     await vscode.window.showTextDocument(firstDocument, { preview: false });
+    const firstFilename = await realpath(firstOpen.fsPath);
     const firstGate = join(temporary, "first-open-gate");
     await writeFile(firstGate, "");
     process.env.SALTBOX_TEST_PROCESS_GATE = firstGate;
@@ -549,7 +551,9 @@ export async function runDependencies(): Promise<void> {
     assert.ok(
       invocations()
         .slice(firstCount)
-        .some((line) => line.includes("--stdin-filename " + firstOpen.fsPath)),
+        .some((line) =>
+          line.includes("--stdin-filename " + firstFilename + " --format"),
+        ),
       "held output must belong to the first document check",
     );
     await writeFile(template.fsPath, bad);

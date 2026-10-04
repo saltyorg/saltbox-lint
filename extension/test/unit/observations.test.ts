@@ -14,7 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hash, type AnalysisRecord } from "../../src/protocol.ts";
-import { contentFingerprint, observeAnalysis } from "../../src/observations.ts";
+import {
+  contentFingerprint,
+  fileFingerprint,
+  observeAnalysis,
+} from "../../src/observations.ts";
 import { Dependencies } from "../../src/dependencies.ts";
 
 async function fixture(directory = tmpdir()) {
@@ -152,18 +156,66 @@ test("verified bytes coalesce late unchanged echoes while same-size restored-mti
     await cleanup();
   }
 });
+test("changed context read bytes reject even when disk identity is unchanged", async () => {
+  const { root, record, cleanup } = await fixture();
+  try {
+    const filename = join(root, "roles/a/templates/router.conf");
+    const before = await lstat(filename, { bigint: true });
+    let supplied = false;
+    const observed = await observeAnalysis(
+      record,
+      new Set(),
+      async (source) => {
+        if (source.endsWith("router.conf")) {
+          supplied = true;
+          return Buffer.from("evil");
+        }
+        return readFile(source);
+      },
+    );
+    assert.equal(supplied, true);
+    assert.equal(
+      fileFingerprint(await lstat(filename, { bigint: true })),
+      fileFingerprint(before),
+    );
+    assert.equal(String(await readFile(filename)), "good");
+    assert.ok(observed.changed.has("roles/a/templates/router.conf"));
+    assert.equal(
+      observed.fingerprints.has("roles/a/templates/router.conf"),
+      false,
+    );
+  } finally {
+    await cleanup();
+  }
+});
 test("a write during verification cannot pair old bytes with a newer identity", async () => {
   const { root, record, cleanup } = await fixture();
   try {
+    let wrote = false;
     const changed = await observeAnalysis(
       record,
       new Set(),
       async (filename) => {
         const bytes = await readFile(filename);
-        if (filename.endsWith("router.conf")) await writeFile(filename, "evil");
+        if (filename.endsWith("router.conf")) {
+          const before = await lstat(filename, { bigint: true });
+          await writeFile(filename, "evil");
+          // Immediate same-size writes can retain timestamps on Windows.
+          // Establish the newer identity this race is intended to reject.
+          await utimes(
+            filename,
+            Number(before.atimeMs) / 1000,
+            Number(before.mtimeMs) / 1000 + 2,
+          );
+          const after = await lstat(filename, { bigint: true });
+          assert.equal(after.size, before.size);
+          assert.notEqual(after.mtimeNs, before.mtimeNs);
+          wrote = true;
+        }
         return bytes;
       },
     );
+    assert.equal(wrote, true);
     assert.ok(changed.changed.has("roles/a/templates/router.conf"));
     assert.equal(
       changed.fingerprints.has("roles/a/templates/router.conf"),
