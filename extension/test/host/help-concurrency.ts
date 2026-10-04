@@ -1,11 +1,12 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RuleHelp } from "../../src/help.ts";
+import { helpChildMatcher } from "./help-child.ts";
 import {
   fixtureGateInstance,
   fixtureProcesses,
@@ -40,7 +41,9 @@ export async function runHelpConcurrency(document: vscode.TextDocument) {
   ) as typeof import("node:child_process");
   const descriptor = Object.getOwnPropertyDescriptor(childProcess, "spawn")!;
   const originalSpawn = childProcess.spawn;
+  const matchesHelpChild = helpChildMatcher(executable);
   const calls: string[][] = [];
+  const versionRequests: string[] = [];
   let prefix = "--version";
   const owned = new RuleHelp(executable);
   const pending: Promise<unknown>[] = [];
@@ -52,12 +55,9 @@ export async function runHelpConcurrency(document: vscode.TextDocument) {
         ...args: Parameters<typeof originalSpawn>
       ) {
         const [file, argv, options] = args;
-        if (
-          file === executable &&
-          Array.isArray(argv) &&
-          ["--version", "rules"].includes(argv[0])
-        ) {
+        if (Array.isArray(argv) && matchesHelpChild(file, argv)) {
           calls.push([...argv]);
+          if (argv[0] === "--version") versionRequests.push(file);
           return originalSpawn(process.env.SALTBOX_TEST_FIXTURE_PATH!, argv, {
             ...options,
             env: {
@@ -95,6 +95,24 @@ export async function runHelpConcurrency(document: vscode.TextDocument) {
       "manual version child reaches gate",
     );
     const ready = JSON.parse(readFileSync(gate + ".ready", "utf8"));
+    const contextExecutable = join(
+      product.extensionUri.fsPath,
+      "bin",
+      "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+    );
+    assert.equal(
+      versionRequests[0],
+      contextExecutable,
+      "observed installed version child uses the context URI filesystem path",
+    );
+    assert.equal(
+      realpathSync.native(versionRequests[0]),
+      realpathSync.native(executable),
+      "actual intercepted child owns the exact installed executable identity",
+    );
+    console.log(
+      `MEASURE help executable request=${JSON.stringify(versionRequests[0])} extension_path=${JSON.stringify(executable)} canonical=${JSON.stringify(realpathSync.native(executable))} argv=["--version"]`,
+    );
     assert.equal(
       await fixtureRunning(fixtureGateInstance(ready, instances)),
       true,
