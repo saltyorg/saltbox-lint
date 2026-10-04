@@ -111,3 +111,30 @@ func observedSource(source *Source) ObservedSource {
 	}
 	return result
 }
+
+// ChangedExplanation reports the same affected selection and authoritative fix
+// decisions as check, without applying edits or executing templates.
+type ChangedExplanation struct {
+	SchemaVersion int              `json:"schema_version"`
+	Root          string           `json:"root"`
+	Selection     *SelectionRecord `json:"selection"`
+	Dependencies  *AnalysisRecord  `json:"dependencies"`
+	FixDecisions  []FixDecision    `json:"fix_decisions"`
+}
+
+func ExplainChanged(ctx context.Context, opts Options) (ChangedExplanation, error) {
+	result := ChangedExplanation{SchemaVersion: 1, FixDecisions: []FixDecision{}}
+	if opts.ChangedSince == "" {
+		return result, fmt.Errorf("changed explanation requires a revision")
+	}
+	opts.IncludeAnalysis = true
+	project, err := Load(ctx, opts)
+	if err != nil {
+		return result, err
+	}
+	result.Root, result.Selection, result.Dependencies = project.Root, project.Selection, project.Dependencies
+	if _, err := planFixes(project, Analyze(project, Rules()), &result.FixDecisions); err != nil {
+		return result, err
+	}
+	return result, ctx.Err()
+}

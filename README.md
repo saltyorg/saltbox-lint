@@ -137,6 +137,74 @@ failures, cancellation, input failures, context loading failures, planner
 failures, and JSON output failures are operational errors on stderr with exit
 **2**. JSON stdout never contains ANSI styling or progress text.
 
+## Check affected worktree files
+
+`check --changed-since REF` is available in source builds and remains unreleased.
+The published v0.1.0 CLI does not provide it.
+
+```sh
+saltbox-lint check --root . --changed-since HEAD
+saltbox-lint check --root . --changed-since HEAD~1 --format json --include-analysis
+saltbox-lint explain --root . --changed-since HEAD~1 --format json
+saltbox-lint check --root . --changed-since HEAD --diff
+```
+
+`REF` resolves once to an exact commit. The comparison uses that commit's tree
+and current worktree bytes, including committed changes since the chosen commit,
+local edits and nonignored untracked files. It does not choose a merge base.
+Staged changes contribute only when they are present in the current worktree.
+Partial staging does not create an index snapshot for checking.
+
+Changed YAML sources and existing primaries affected by changed context are
+selected through the shared dependency observations. Template changes select
+YAML dependents; templates remain raw, read-only context. Rename pairs contribute
+both their old and new names. Deleted sources are never loaded as existing
+primaries. Removed context can erase earlier dependencies, so the command
+conservatively selects all current in-root primaries and explains that fallback.
+Changes to in-root `.gitignore` policy select all current primaries. A configured
+`--root` inside a larger checkout limits both source selection and changed names
+to that root. Git administration remains opaque discovery policy.
+
+The command reads the full current dependency graph before narrowing primary
+selection. This does not promise faster parsing. Findings, related locations and
+verified fix previews match a full check filtered to the affected primary paths.
+An empty selection emits the usual clean output and exits 0. Non-Git roots,
+unavailable revisions and invalid combinations exit 2. Explicit paths, stdin and
+`--fix` cannot be combined with `--changed-since`. `--diff` remains a read-only
+preview with its normal output restrictions. No fetch, checkout, index update or
+source write occurs.
+
+`--format json --include-analysis` adds `analysis.selection`, with its own
+`schema_version: 1`, resolved `commit`, ordered `changed` names, optional
+`fallback`, and ordered selected `sources`. Each source has `path` and `reasons`
+with a `kind` and contributing `path`. Reasons distinguish changed primaries,
+dependency files/scopes, project identity, discovery policy and conservative
+fallback. A fallback reason has an empty path. Default schema-2 check JSON stays
+unchanged. `explain --changed-since REF` accepts no path and reports `root`,
+`selection`, `dependencies` and authoritative `fix_decisions` in a separate
+schema-version-1 JSON object, or the corresponding human explanation. Both
+records describe observations of current bytes and visible identities; they do
+not promise atomic acceptance while another process edits files.
+
+For a local pre-commit hook, use an installed source-build CLI and select the
+base explicitly:
+
+```sh
+#!/bin/sh
+exec saltbox-lint check --root . --changed-since HEAD --format concise
+```
+
+This checks current worktree content, including unstaged edits. For CI, first
+make the intended base commit available through the checkout configuration, then
+pass its exact identity. For example, a repository's own shell step can use:
+
+```sh
+saltbox-lint check --root . --changed-since "$BASE_COMMIT" --format github
+```
+
+The caller owns the base choice and checkout depth. The linter does not fetch a
+missing commit. These examples do not modify consumer repositories.
+
 ## Rule and source explanations
 
 These commands are available in source builds and remain unreleased. The

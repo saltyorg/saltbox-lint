@@ -41,3 +41,29 @@ func RenderExplanation(out io.Writer, explanation lint.Explanation, format strin
 	_, err := io.WriteString(out, b.String())
 	return err
 }
+
+func RenderChangedExplanation(out io.Writer, explanation lint.ChangedExplanation, format string) error {
+	if format == "json" {
+		return json.NewEncoder(out).Encode(explanation)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Root: %s\nResolved commit: %s\nInput: current worktree\n", explanation.Root, explanation.Selection.Commit)
+	for _, name := range explanation.Selection.Changed {
+		fmt.Fprintf(&b, "Changed: %q\n", name)
+	}
+	if explanation.Selection.Fallback != "" {
+		fmt.Fprintf(&b, "Fallback: %s\n", explanation.Selection.Fallback)
+	}
+	for _, source := range explanation.Selection.Sources {
+		fmt.Fprintf(&b, "Selected: %q\n", source.Path)
+		for _, reason := range source.Reasons {
+			fmt.Fprintf(&b, "  Reason: %s %q\n", reason.Kind, reason.Path)
+		}
+	}
+	fmt.Fprintf(&b, "Dependency observations complete: %t\n", explanation.Dependencies.Complete)
+	for _, decision := range explanation.FixDecisions {
+		fmt.Fprintf(&b, "Fix %q %s: %s. %s\n", decision.Path, decision.RuleID, decision.State, decision.Reason)
+	}
+	_, err := io.WriteString(out, b.String())
+	return err
+}

@@ -119,6 +119,7 @@ type Project struct {
 	Selected     map[string]bool
 	Diagnostics  []Diagnostic
 	Dependencies *AnalysisRecord
+	Selection    *SelectionRecord
 }
 type Options struct {
 	Root            string
@@ -126,6 +127,8 @@ type Options struct {
 	StdinFilename   string
 	Stdin           []byte
 	IncludeAnalysis bool
+	ChangedSince    string
+	allowEmpty      bool
 }
 type Change struct {
 	fixRules      []string

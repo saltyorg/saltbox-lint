@@ -31,6 +31,7 @@ type AnalysisRecord struct {
 	Generation    string               `json:"generation"`
 	Complete      bool                 `json:"complete"`
 	Sources       []SourceDependencies `json:"sources"`
+	Selection     *SelectionRecord     `json:"selection,omitempty"`
 }
 type SourceDependencies struct {
 	Path         string                `json:"path"`

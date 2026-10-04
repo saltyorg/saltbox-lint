@@ -15,9 +15,9 @@ import (
 )
 
 type checkOptions struct {
-	root, format, stdinFilename string
-	fix, diff                   bool
-	includeAnalysis             bool
+	root, format, stdinFilename, changedSince string
+	fix, diff                                 bool
+	includeAnalysis                           bool
 }
 
 func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
@@ -25,13 +25,17 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "check [paths...]",
 		Short: "Check sources (defaults to the current directory)",
-		Long: "Check YAML sources and their required context. Use '-' with --stdin-filename to check an unsaved buffer.\n" +
+		Long: "Check YAML sources and their required context. --changed-since REF selects current worktree changes and dependents. Use '-' with --stdin-filename to check an unsaved buffer.\n" +
 			"Exit status: 0 clean, 1 findings, 2 usage or operational failure.",
 		RunE: func(command *cobra.Command, args []string) error {
+			if command.Flags().Changed("changed-since") && opts.changedSince == "" {
+				return fmt.Errorf("--changed-since requires a nonempty revision")
+			}
 			return runCheck(command, args, opts, rootOpts.color, rootOpts.theme)
 		},
 	}
 	flags := command.Flags()
+	flags.StringVar(&opts.changedSince, "changed-since", "", "Check current worktree changes from an exact commit and affected primary sources")
 	flags.StringVar(&opts.root, "root", "", "Source root for identities and context")
 	flags.StringVar(&opts.stdinFilename, "stdin-filename", "", "Working-directory-relative filename for '-' input")
 	flags.StringVar(&opts.format, "format", "auto", "Output format: auto, human, concise, json, github (auto uses human on a terminal)")
@@ -54,7 +58,13 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 	if opts.includeAnalysis && opts.format != "json" {
 		return lint.Options{}, fmt.Errorf("--include-analysis requires --format json")
 	}
-	load := lint.Options{Root: opts.root, IncludeAnalysis: opts.includeAnalysis}
+	load := lint.Options{Root: opts.root, IncludeAnalysis: opts.includeAnalysis, ChangedSince: opts.changedSince}
+	if opts.changedSince != "" {
+		if len(args) != 0 || opts.stdinFilename != "" || opts.fix {
+			return load, fmt.Errorf("--changed-since cannot be combined with paths, stdin or --fix")
+		}
+		return load, nil
+	}
 	stdin := 0
 	for _, arg := range args {
 		if arg == "-" {

@@ -18,6 +18,9 @@ import (
 // Explicit files override Git ignores; directory selections use Git's tracked
 // and nonignored untracked files. No repository or source files are changed.
 func Load(ctx context.Context, opts Options) (*Project, error) {
+	if opts.ChangedSince != "" {
+		return loadChanged(ctx, opts)
+	}
 	return load(ctx, opts, false)
 }
 
@@ -127,7 +130,7 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 			return nil, err
 		}
 	}
-	if len(p.Selected) == 0 {
+	if len(p.Selected) == 0 && !opts.allowEmpty {
 		return nil, fmt.Errorf("no supported sources selected")
 	}
 	rules := Rules()
