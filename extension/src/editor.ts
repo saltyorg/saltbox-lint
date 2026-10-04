@@ -1219,7 +1219,11 @@ export class EditorIntegration implements vscode.Disposable {
           (folder) => folder.uri.toString() === key,
         );
         if (!folder) continue;
-        const entries = [...files];
+        // Watcher arrival order varies by platform. Canonical paths give the
+        // same coalesced selection stable chunk membership and CLI ordering.
+        const entries = [...files].sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0,
+        );
         for (let offset = 0; offset < entries.length; offset += 64) {
           // Closed selections retain the authority that admitted this flush.
           // A later chunk must not adopt a new root or ignore decision.

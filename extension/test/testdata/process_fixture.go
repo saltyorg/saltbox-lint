@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -93,6 +94,18 @@ func main() {
 				}
 			}
 			if !matched {
+				gate = ""
+			}
+		}
+		if selection := os.Getenv("SALTBOX_TEST_PROCESS_GATE_PATHS"); selection != "" {
+			var expected []string
+			if json.Unmarshal([]byte(selection), &expected) != nil || len(expected) == 0 {
+				os.Exit(2)
+			}
+			separator := slices.Index(os.Args[1:], "--")
+			// A prefix also admits later chunks. Only the exact ordered selected
+			// paths may publish this gate's readiness and hold their output.
+			if separator < 0 || !slices.Equal(os.Args[separator+2:], expected) {
 				gate = ""
 			}
 		}

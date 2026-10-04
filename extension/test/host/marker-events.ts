@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   rename,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -348,13 +349,54 @@ export async function checkMarkerEvents(
       vscode.ConfigurationTarget.WorkspaceFolder,
     );
     capture.during(() => editor.configureRoots());
-    const aliased = await vscode.workspace.openTextDocument(
+    const opened = await vscode.workspace.openTextDocument(
       vscode.Uri.file(join(alias, "main.yml")),
     );
+    // Root identity is the subject of this control. Establish the provider's
+    // language precondition through a real close/open transition first.
+    const plaintext = await vscode.languages.setTextDocumentLanguage(
+      opened,
+      "plaintext",
+    );
+    await editor.check(plaintext, true);
+    assert.equal(editor.providerDocuments().includes(plaintext), false);
+    const displayed = await vscode.window.showTextDocument(plaintext, {
+      preview: false,
+    });
+    const aliased = await vscode.languages.setTextDocumentLanguage(
+      displayed.document,
+      "yaml",
+    );
     aliasedUri = aliased.uri;
-    await vscode.window.showTextDocument(aliased, { preview: false });
+    assert.equal(aliased.languageId, "yaml");
+    assert.equal(aliased.isClosed, false);
+    assert.ok(vscode.workspace.textDocuments.includes(aliased));
+    assert.equal(aliased.uri.toString(), opened.uri.toString());
+    const canonicalRoot = await realpath(first);
+    const canonicalSource = await realpath(aliased.uri.fsPath);
+    assert.equal(await realpath(alias), canonicalRoot);
+    assert.equal(canonicalSource, join(canonicalRoot, "main.yml"));
+    assert.equal(
+      vscode.workspace.getWorkspaceFolder(aliased.uri)?.uri.toString(),
+      folder.uri.toString(),
+    );
+    assert.ok((await lstat(join(alias, ".saltbox-lint"))).isFile());
     await editor.check(aliased, true);
-    assert.ok(editor.providerDocuments().includes(aliased));
+    assert.ok(
+      editor.providerDocuments().includes(aliased),
+      "alias source ownership is verified synchronously: " +
+        JSON.stringify({
+          uri: aliased.uri.toString(),
+          language: aliased.languageId,
+          closed: aliased.isClosed,
+          current: vscode.workspace.textDocuments.includes(aliased),
+          canonicalRoot,
+          canonicalSource,
+          root: vscode.workspace
+            .getConfiguration("saltboxLint", folder.uri)
+            .get<string>("root"),
+        }),
+    );
     const aliasEvents = capture.watchers.findLast(
       (watcher) => watcher.source.fsPath === alias,
     )!;

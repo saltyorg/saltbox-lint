@@ -435,9 +435,14 @@ export async function runDependencies(): Promise<void> {
     const admissionGate = join(temporary, "admission-gate");
     const admissionNonce = randomBytes(32).toString("hex");
     const admissionPrefix = "roles/admission/defaults/";
+    const admissionPaths = admissionFiles
+      .slice(0, 64)
+      .map((uri) => admissionPrefix + uri.path.split("/").at(-1));
     await writeFile(admissionGate, "");
     process.env.SALTBOX_TEST_PROCESS_GATE = admissionGate;
     process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX = admissionPrefix;
+    process.env.SALTBOX_TEST_PROCESS_GATE_PATHS =
+      JSON.stringify(admissionPaths);
     process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = admissionNonce;
     count = invocations().length;
     // A preceding request must not satisfy this chunk's readiness gate.
@@ -474,9 +479,7 @@ export async function runDependencies(): Promise<void> {
     assert.equal(held.nonce, admissionNonce, "readiness belongs to this gate");
     assert.deepEqual(
       held.args.filter((argument) => argument.startsWith(admissionPrefix)),
-      admissionFiles
-        .slice(0, 64)
-        .map((uri) => admissionPrefix + uri.path.split("/").at(-1)),
+      admissionPaths,
       "the held request contains the exact first 64 admission paths",
     );
     assert.ok(
@@ -500,6 +503,7 @@ export async function runDependencies(): Promise<void> {
     );
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
     delete process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
     delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
     await writeFile(
       admissionIgnore.fsPath,
@@ -946,6 +950,7 @@ export async function runDependencies(): Promise<void> {
     delete process.env.SALTBOX_TEST_PROCESS_INSTANCES;
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
     delete process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
     delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
     await rm(temporary, { recursive: true, force: true });
   }
