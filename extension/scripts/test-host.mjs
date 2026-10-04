@@ -32,6 +32,28 @@ for (const name of ["one", "two"]) {
   writeFileSync(resolve(root, name, "ignored.yml"), 'value: "{{ value\n }}"\n');
 }
 if (
+  [
+    "REGRESSIONS",
+    "MARKERS",
+    "PROFILE",
+    "QUALIFICATION",
+    "UNTRUSTED",
+    "DISABLED",
+    "ACTIVE_PROJECT",
+    "SAVE_SCOPE",
+    "DEPENDENCIES",
+    "QUEUE",
+  ].every((mode) => process.env[`SALTBOX_TEST_${mode}`] !== "1")
+) {
+  // Normal mode edits this buffer without changing role membership mid-test.
+  // The runner owns the saved fixture for the entire host session.
+  mkdirSync(resolve(root, "one/roles/example/tasks"), { recursive: true });
+  writeFileSync(
+    resolve(root, "one/roles/example/tasks/safe-rule-fixes.yml"),
+    "####################\n# Title: Example 🌨\n# Author(s): salty\n# URL: https://example.com\n# GNU General Public License v3.0\n---\n[]\n",
+  );
+}
+if (
   process.env.SALTBOX_TEST_SAVE_SCOPE === "1" &&
   process.env.SALTBOX_TEST_QUEUE !== "1" &&
   process.env.SALTBOX_TEST_ACTIVE_PROJECT !== "1"

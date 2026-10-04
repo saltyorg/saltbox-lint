@@ -6,6 +6,7 @@ import {
   writeFile,
   readFile,
   lstat,
+  realpath,
   symlink,
   rm,
   utimes,
@@ -16,8 +17,11 @@ import { hash, type AnalysisRecord } from "../../src/protocol.ts";
 import { contentFingerprint, observeAnalysis } from "../../src/observations.ts";
 import { Dependencies } from "../../src/dependencies.ts";
 
-async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "saltbox-observe-"));
+async function fixture(directory = tmpdir()) {
+  // Load and the editor publish canonical roots, even when tmpdir is an alias.
+  const root = await realpath(
+    await mkdtemp(join(directory, "saltbox-observe-")),
+  );
   await mkdir(join(root, "roles/a/tasks"), { recursive: true });
   await mkdir(join(root, "roles/a/templates"), { recursive: true });
   await writeFile(join(root, "roles/a/tasks/main.yml"), "[]\n");
@@ -61,6 +65,43 @@ async function fixture() {
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }
+test("aliased temporary directories produce canonical analysis roots and retain containment", async () => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), "saltbox-observe-alias-")),
+  );
+  const alias = join(directory, "alias");
+  await mkdir(join(directory, "actual"));
+  await symlink(join(directory, "actual"), alias, "junction");
+  const { root, record, cleanup } = await fixture(alias);
+  try {
+    assert.equal((await observeAnalysis(record)).changed.size, 0);
+    assert.equal(root, await realpath(root));
+    const external = join(directory, "private.txt");
+    const escaped = "roles/a/templates/escaped.conf";
+    await writeFile(external, "external bytes");
+    await symlink(external, join(root, escaped));
+    record.sources[0].files.push({
+      path: escaped,
+      state: "read",
+      sha256: hash("external bytes"),
+    });
+    const reads: string[] = [];
+    const observed = await observeAnalysis(
+      record,
+      new Set(),
+      async (filename) => {
+        reads.push(filename);
+        return readFile(filename);
+      },
+    );
+    assert.deepEqual([...observed.changed], [escaped]);
+    assert.equal(reads.includes(external), false);
+    assert.equal(observed.fingerprints.has(escaped), false);
+  } finally {
+    await cleanup();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 test("verified bytes coalesce late unchanged echoes while same-size restored-mtime writes invalidate", async () => {
   const { root, record, cleanup } = await fixture();
   try {

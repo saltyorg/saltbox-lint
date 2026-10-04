@@ -88,12 +88,15 @@ export async function runSafeRuleFixes(
     "- name: Preserve Cloudflare condition\n  ansible.builtin.debug: {msg: ok}\n  when: " +
     grouped +
     "\n- name: Group condition\n  ansible.builtin.debug: {msg: ok}\n  when: value is defined\n";
-  await vscode.workspace.fs.writeFile(taskURI, Buffer.from(header + "[]\n"));
   const task = await vscode.workspace.openTextDocument(taskURI);
+  assert.equal(
+    task.getText(),
+    header + "[]\n",
+    "task fixture exists before extension startup without membership events",
+  );
   try {
     await vscode.window.showTextDocument(task);
-    // Keep the fixture dirty so a delayed create watcher cannot replace the
-    // report between fetching and executing its action.
+    // The saved fixture stays unchanged; these fixes operate on its buffer.
     await replace(task, tasks);
     assert.equal(task.isDirty, true);
     const superseded = await quickFix(task);
@@ -125,7 +128,6 @@ export async function runSafeRuleFixes(
     await vscode.commands.executeCommand(
       "workbench.action.revertAndCloseActiveEditor",
     );
-    await vscode.workspace.fs.delete(taskURI);
     await vscode.window.showTextDocument(document);
   }
   console.log("PASS expression quick fix and grouped Cloudflare preservation");
