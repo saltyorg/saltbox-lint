@@ -39,6 +39,23 @@ func parseSource(filename string, data []byte, retainIndex bool) (*Source, []Dia
 	if s.Kind == Template {
 		return s, nil
 	}
+	// The lexer can accept forbidden bytes in comments. Reject literal encoding
+	// errors before lexing so malformed YAML can never authorize source edits.
+	// Escaped control characters remain ordinary valid scalar syntax.
+	for offset := 0; offset < len(data); {
+		r, size := utf8.DecodeRune(data[offset:])
+		message := ""
+		if r == utf8.RuneError && size == 1 {
+			message = "source is not valid UTF-8"
+		} else if r < 0x20 && r != '\t' && r != '\n' && r != '\r' || r >= 0x7f && r <= 0x9f && r != 0x85 || r == 0xfffe || r == 0xffff {
+			message = fmt.Sprintf("forbidden literal YAML character U+%04X", r)
+		}
+		if message != "" {
+			s.parseDiagnostics = []Diagnostic{{Path: s.Path, RuleID: "yaml-syntax", Severity: "error", Message: message, Span: Span{offset, offset + size}}}
+			return s, slices.Clone(s.parseDiagnostics)
+		}
+		offset += size
+	}
 	text := string(s.Data)
 	tokens := lexer.Tokenize(text)
 	if retainIndex {

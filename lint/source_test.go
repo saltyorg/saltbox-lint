@@ -7,7 +7,54 @@ import (
 	"testing"
 
 	"github.com/goccy/go-yaml/token"
+	"gopkg.in/yaml.v3"
 )
+
+func TestParseRejectsInvalidLiteralYAMLCharacters(t *testing.T) {
+	for _, invalid := range []string{"\x00", "\x01", "\x1f", "\x7f", "\u0080", "\u0084", "\u0086", "\u009f", "\ufffe", "\uffff", "\xff", "\xc0\xaf"} {
+		input := []byte("v: 1 # 😀" + invalid + "\n")
+		var independent yaml.Node
+		if err := yaml.Unmarshal(input, &independent); err == nil {
+			t.Fatalf("invalid fixture accepted independently: %q", invalid)
+		}
+		source, ds := Parse("vars.yml", input)
+		if len(ds) != 1 || ds[0].RuleID != "yaml-syntax" || len(source.Documents) != 0 {
+			t.Fatalf("invalid literal %q accepted: %+v", invalid, ds)
+		}
+		start := len("v: 1 # 😀")
+		if ds[0].Span.Start != start || ds[0].Span.End <= start || ds[0].Span.End > len(input) {
+			t.Fatalf("invalid character position lost: %+v", ds[0])
+		}
+		if got := source.Position(start); got != (Position{1, 9}) {
+			t.Fatalf("invalid character column lost: %+v", got)
+		}
+		if !bytes.Equal(source.Data, input) {
+			t.Fatal("invalid source bytes changed")
+		}
+		template, td := Parse("raw.j2", input)
+		if len(td) != 0 || !bytes.Equal(template.Data, input) {
+			t.Fatal("raw template bytes were rejected or changed")
+		}
+	}
+	// Escaped controls are valid scalar values; permitted literal whitespace,
+	// NEL, astral Unicode and replacement characters remain supported.
+	for _, input := range []string{"v: \"\\0\\x1f\"\n", "v: 1 #\tallowed\r\n", "v: '😀�'\n", "v: 1 # allowed\u0085\n", "v: '\u007e\u00a0\ud7ff\ue000\ufffd\U00010000\U0010ffff'\n"} {
+		var independent yaml.Node
+		if err := yaml.Unmarshal([]byte(input), &independent); err != nil {
+			t.Fatalf("valid fixture rejected independently: %q: %v", input, err)
+		}
+		if _, ds := Parse("vars.yml", []byte(input)); len(ds) != 0 {
+			t.Fatalf("valid source rejected: %q: %v", input, ds)
+		}
+	}
+	for _, newline := range []string{"\n", "\r\n"} {
+		prefix := "v: 1" + newline + "# 😀"
+		source, ds := Parse("vars.yml", []byte(prefix+"\x00\n"))
+		if len(ds) != 1 || ds[0].Span != (Span{len(prefix), len(prefix) + 1}) || source.Position(ds[0].Span.Start) != (Position{2, 4}) {
+			t.Fatalf("invalid character line/column lost for %q: %v", newline, ds)
+		}
+	}
+}
 
 // These cases catch normalized source replacing original bytes, wrong rune/byte
 // coordinates, and extracting comments as expression-bearing scalar nodes.
