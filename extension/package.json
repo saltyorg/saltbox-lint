@@ -40,6 +40,14 @@
       {
         "command": "saltboxLint.fixAll",
         "title": "Saltbox Lint: Fix All in Document"
+      },
+      {
+        "command": "saltboxLint.explainRule",
+        "title": "Saltbox Lint: Explain This Rule"
+      },
+      {
+        "command": "saltboxLint.showStatus",
+        "title": "Saltbox Lint: Show Check Status"
       }
     ],
     "configuration": {

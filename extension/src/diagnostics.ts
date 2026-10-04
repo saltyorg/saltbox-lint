@@ -1,3 +1,4 @@
+import { ruleURL } from "./help.ts";
 import * as vscode from "vscode";
 import { readFile } from "node:fs/promises";
 import { identify, resolveSource } from "./identity.ts";
@@ -20,6 +21,7 @@ export async function renderDiagnostics(
   findings: Finding[],
   index: SnapshotIndex,
   root: string,
+  documentedRules: ReadonlySet<string> = new Set(),
 ): Promise<vscode.Diagnostic[]> {
   const relatedIndexes = new Map<
     string,
@@ -61,7 +63,9 @@ export async function renderDiagnostics(
       }[finding.severity],
     );
     diagnostic.source = "saltbox-lint";
-    diagnostic.code = finding.rule_id;
+    diagnostic.code = documentedRules.has(finding.rule_id)
+      ? { value: finding.rule_id, target: ruleURL(finding.rule_id) }
+      : finding.rule_id;
     const related: vscode.DiagnosticRelatedInformation[] = [];
     for (const location of finding.related ?? []) {
       const source = await loadRelated(location.path);

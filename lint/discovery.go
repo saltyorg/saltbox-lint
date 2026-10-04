@@ -17,6 +17,10 @@ import (
 // Explicit files override Git ignores; directory selections use Git's tracked
 // and nonignored untracked files. No repository or source files are changed.
 func Load(ctx context.Context, opts Options) (*Project, error) {
+	return load(ctx, opts, false)
+}
+
+func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -34,8 +38,8 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Project{Root: root, Name: name, Sources: map[string]*Source{}, Selected: map[string]bool{}, identity: identity, directories: map[string]string{}, discovery: []DependencyFile{}}
-	l := sourceLoader{ctx: ctx, project: p}
+	p := &Project{discoverable: map[string]bool{}, Root: root, Name: name, Sources: map[string]*Source{}, Selected: map[string]bool{}, identity: identity, directories: map[string]string{}, discovery: []DependencyFile{}}
+	l := sourceLoader{ctx: ctx, project: p, explain: explain}
 	gitRoot, err := enclosingGitRoot(root)
 	if err != nil {
 		return nil, err
@@ -148,6 +152,7 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 }
 
 type sourceLoader struct {
+	explain   bool
 	ctx       context.Context
 	project   *Project
 	gitFiles  []string
@@ -163,10 +168,11 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if err != nil {
 		return err
 	}
-	if !supportedSource(relative) || (selected && isTemplate(relative)) {
+	if !supportedSource(relative) || (selected && isTemplate(relative) && !l.explain) {
 		return fmt.Errorf("unsupported source target %s", absolute)
 	}
 	if selected {
+		l.project.discoverable[relative] = l.directoryWouldSelect(absolute, relative)
 		l.project.Selected[relative] = true
 	}
 	if _, exists := l.project.Sources[relative]; exists {
@@ -561,4 +567,19 @@ func enclosingGitRoot(dir string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// directoryWouldSelect uses the loader's actual Git admission snapshot and the
+// shared source-kind predicate, without discovering or reading another project.
+func (l *sourceLoader) directoryWouldSelect(absolute, relative string) bool {
+	if !directorySource(relative, true) {
+		return false
+	}
+	if l.gitFiles != nil {
+		if _, exists := slices.BinarySearch(l.gitFiles, filepath.FromSlash(relative)); !exists {
+			return false
+		}
+	}
+	info, err := os.Stat(absolute)
+	return err == nil && info.Mode().IsRegular()
 }

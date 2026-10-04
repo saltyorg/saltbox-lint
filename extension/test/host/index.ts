@@ -1,3 +1,4 @@
+import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { EditorIntegration } from "../../src/editor.ts";
@@ -121,10 +122,15 @@ export async function run(): Promise<void> {
     "marked workspace activates without a manual command",
   );
   await waitFor(
-    () => diagnostics(document.uri).some((d) => d.code === "jinja-layout"),
+    () =>
+      diagnostics(document.uri).some(
+        (d) => diagnosticCode(d) === "jinja-layout",
+      ),
     "open should publish real CLI Jinja diagnostics",
   );
   console.log("PASS open diagnostics from bundled CLI");
+  const { runHelpStatus } = await import("./help-status.ts");
+  await runHelpStatus(document);
   const original = document.getText();
   const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
     "vscode.executeCodeActionProvider",
@@ -188,7 +194,9 @@ export async function run(): Promise<void> {
   console.log("PASS actual CRLF endpoint edits preserve terminators and undo");
   await replace(document, '---\nexample_value: "{{ dirty\n }}"\n');
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
-  assert.ok(diagnostics(document.uri).some((d) => d.code === "jinja-layout"));
+  assert.ok(
+    diagnostics(document.uri).some((d) => diagnosticCode(d) === "jinja-layout"),
+  );
   const dirtyDiagnostics = JSON.stringify(diagnostics(document.uri));
   await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
   assert.equal(JSON.stringify(diagnostics(document.uri)), dirtyDiagnostics);
@@ -197,7 +205,9 @@ export async function run(): Promise<void> {
   );
   await vscode.window.showTextDocument(second);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
-  assert.ok(diagnostics(second.uri).some((d) => d.code === "jinja-layout"));
+  assert.ok(
+    diagnostics(second.uri).some((d) => diagnosticCode(d) === "jinja-layout"),
+  );
   console.log("PASS current snapshots, saved scan isolation and multi-root");
   await vscode.commands.executeCommand("saltboxLint.fixAll");
   assert.ok(second.getText().includes("{{ value }}"));
@@ -292,11 +302,16 @@ export async function run(): Promise<void> {
   await vscode.window.showTextDocument(ignored);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
   await waitFor(
-    () => diagnostics(ignored.uri).some((d) => d.code === "jinja-layout"),
+    () =>
+      diagnostics(ignored.uri).some(
+        (d) => diagnosticCode(d) === "jinja-layout",
+      ),
     "open ignored source diagnosed after context refresh",
   );
   await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
-  assert.ok(diagnostics(ignored.uri).some((d) => d.code === "jinja-layout"));
+  assert.ok(
+    diagnostics(ignored.uri).some((d) => diagnosticCode(d) === "jinja-layout"),
+  );
   console.log(
     "PASS open ignored-file diagnostics survive saved discovery exclusions",
   );

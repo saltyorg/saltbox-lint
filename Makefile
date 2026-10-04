@@ -10,7 +10,7 @@ ACTIONLINT := $(TOOLS)/actionlint-$(ACTIONLINT_VERSION)/actionlint
 GORELEASER := $(TOOLS)/goreleaser-$(GORELEASER_VERSION)/goreleaser
 VERSION ?= dev
 
-.PHONY: tools catalog check format-check build snapshot extension-check release-artifacts docs-check docs-update
+.PHONY: tools catalog check format-check build snapshot extension-check release-artifacts docs-check docs-update rules-update
 
 tools: $(GOLANGCI) $(ACTIONLINT) $(GORELEASER)
 
@@ -43,7 +43,11 @@ extension-check:
 docs-update:
 	node tools/docs/platforms.mjs --write
 
+rules-update:
+	go run ./tools/rule-reference --write
+
 docs-check:
+	go run ./tools/rule-reference
 	node --test tools/docs/docs.test.mjs
 	node tools/docs/platforms.mjs --check
 	node tools/docs/check.mjs

@@ -92,6 +92,7 @@ type Preview struct {
 	Edits []Edit
 }
 type Diagnostic struct {
+	fixDecision                               *FixDecision
 	Path, RuleID, Severity, Message, Expected string
 	Span                                      Span
 	Related                                   []RelatedLocation
@@ -108,6 +109,7 @@ type Rule struct {
 	Check                                             func(*Project, *Source) []Diagnostic
 }
 type Project struct {
+	discoverable map[string]bool
 	identity     []DependencyFile
 	discovery    []DependencyFile
 	directories  map[string]string

@@ -91,7 +91,7 @@ remain installed.
 absolute or relative to its workspace folder. Empty uses that folder. Each root
 has independent source identities and its own marker requirement, including
 nested workspace folders. Unmarked roots provide no diagnostics, quick fixes
-or formatter, and manual commands do no work for them. Removing or renaming
+or formatter, and check/fix commands do no work for them. Help and status remain available. Removing or renaming
 the marker clears that root's diagnostics, cancels pending work and withdraws its
 providers. Re-adding it starts fresh checks once the extension is loaded. Symlink
 paths retain their originating editor buffer while the CLI receives canonical
@@ -101,6 +101,32 @@ source root are rejected.
 Operational errors and skipped-format reasons appear in the **Saltbox Lint**
 Output channel. Manual operation failures also show a notification. There are no
 runtime downloads, telemetry, Python/Ansible execution, or persistent server.
+
+## Rule help and check status
+
+Rule help and status are source-built, unreleased additions. They are not in the
+published v0.1.0 extension.
+
+**Saltbox Lint: Explain This Rule** reads the bundled CLI registry and offers
+rule explanations and expected/violation examples offline. A diagnostic quick
+fix can open its specific rule. Help opens an owned read-only document with
+rendered Markdown available on hover; Markdown commands and HTML are disabled.
+Metadata is cached for the executable and its observed version for this extension
+session. Manual help requests refresh the version observation. Diagnostic codes
+link to existing anchors in the generated public reference; parse diagnostics
+without a registry page retain plain codes.
+
+The status bar and **Saltbox Lint: Show Check Status** describe the active source
+as eligible, checking, current, stale, disabled, missing-marker, or failed. Current
+requires a buffer result matching the observed source, root and dependency
+revisions. A saved workspace scan alone does not establish a current buffer
+result. Retained findings can stay visible while the status is stale. Freshness
+uses snapshot-at-read verification and visible events, rather than guaranteeing
+an atomic filesystem snapshot through acceptance.
+
+For an active extension in an unmarked root, status explains the existing
+`.saltbox-lint` opt-in requirement and does not create the marker. Background
+check failures remain in Output; manual failures also show notifications.
 
 ## Platforms and installation
 

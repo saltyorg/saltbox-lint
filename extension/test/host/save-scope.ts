@@ -1,3 +1,4 @@
+import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
@@ -83,7 +84,7 @@ export async function runSaveScope(): Promise<void> {
         roots.every((root) =>
           findings(
             vscode.Uri.joinPath(root.uri, "roles/example/defaults/main.yml"),
-          ).some((finding) => finding.code === "jinja-layout"),
+          ).some((finding) => diagnosticCode(finding) === "jinja-layout"),
         ),
       "startup should publish saved findings for each marked root",
     );
@@ -175,7 +176,10 @@ export async function runSaveScope(): Promise<void> {
         assert.ok(invocations()[0].includes(canonicalFilename));
         assert.ok(!invocations()[0].endsWith(" ."));
         await waitFor(
-          () => !findings(document.uri).some((d) => d.code === "jinja-layout"),
+          () =>
+            !findings(document.uri).some(
+              (d) => diagnosticCode(d) === "jinja-layout",
+            ),
           "saved clean expression replaces old Jinja findings",
         );
         const beforeWorkspace = editor.actions(
@@ -221,7 +225,9 @@ export async function runSaveScope(): Promise<void> {
           await rm(gate);
           await waitFor(
             () =>
-              !findings(document.uri).some((d) => d.code === "jinja-layout"),
+              !findings(document.uri).some(
+                (d) => diagnosticCode(d) === "jinja-layout",
+              ),
             "completed save replaces findings",
           );
         } finally {
@@ -258,13 +264,18 @@ export async function runSaveScope(): Promise<void> {
         await replace(document, original);
         await editor.check(document, true);
         assert.ok(
-          findings(document.uri).some((d) => d.code === "jinja-layout"),
+          findings(document.uri).some(
+            (d) => diagnosticCode(d) === "jinja-layout",
+          ),
           "setup fixture must publish Jinja findings",
         );
         await replace(document, "value: 1\n");
         assert.equal(await document.save(), true);
         await waitFor(
-          () => !findings(document.uri).some((d) => d.code === "jinja-layout"),
+          () =>
+            !findings(document.uri).some(
+              (d) => diagnosticCode(d) === "jinja-layout",
+            ),
           "initial save must publish clean diagnostics",
         );
         await writeFile(log, "");
@@ -404,7 +415,9 @@ export async function runSaveScope(): Promise<void> {
         assert.equal(await document.save(), true);
         await waitFor(
           () =>
-            findings(document.uri).some((d) => d.code === "jinja-layout") &&
+            findings(document.uri).some(
+              (d) => diagnosticCode(d) === "jinja-layout",
+            ) &&
             editor.actions(
               document,
               new vscode.Range(0, 0, document.lineCount, 0),
@@ -478,7 +491,8 @@ export async function runSaveScope(): Promise<void> {
         try {
           await writeFile(upper.fsPath, 'value: "{{ external\n }}"\n');
           await waitFor(
-            () => findings(upper).some((d) => d.code === "jinja-layout"),
+            () =>
+              findings(upper).some((d) => diagnosticCode(d) === "jinja-layout"),
             "external uppercase YAML creation refreshes diagnostics",
           );
           assert.deepEqual(findings(other.uri), unrelated);
@@ -492,14 +506,15 @@ export async function runSaveScope(): Promise<void> {
 
           await writeFile(upper.fsPath, 'value: "{{ external\n }}"\n');
           await waitFor(
-            () => findings(upper).some((d) => d.code === "jinja-layout"),
+            () =>
+              findings(upper).some((d) => diagnosticCode(d) === "jinja-layout"),
             "external uppercase YAML change restores diagnostics",
           );
           await rename(upper.fsPath, mixed.fsPath);
           await waitFor(
             () =>
               findings(upper).length === 0 &&
-              findings(mixed).some((d) => d.code === "jinja-layout"),
+              findings(mixed).some((d) => diagnosticCode(d) === "jinja-layout"),
             "external mixed-case YAML rename moves diagnostics",
           );
           assert.deepEqual(findings(other.uri), unrelated);
@@ -566,7 +581,10 @@ export async function runSaveScope(): Promise<void> {
             Buffer.from("value: 1\n"),
           );
           await waitFor(
-            () => !findings(sibling).some((d) => d.code === "jinja-layout"),
+            () =>
+              !findings(sibling).some(
+                (d) => diagnosticCode(d) === "jinja-layout",
+              ),
             "external sibling write refreshes its diagnostics",
           );
           assert.equal(invocations().length, 1, JSON.stringify(invocations()));
@@ -579,7 +597,10 @@ export async function runSaveScope(): Promise<void> {
             Buffer.from('value: "{{ sibling\n }}"\n'),
           );
           await waitFor(
-            () => findings(sibling).some((d) => d.code === "jinja-layout"),
+            () =>
+              findings(sibling).some(
+                (d) => diagnosticCode(d) === "jinja-layout",
+              ),
             "external sibling is diagnosed again",
           );
           await vscode.workspace.fs.delete(sibling);
@@ -614,7 +635,10 @@ export async function runSaveScope(): Promise<void> {
             Buffer.from('value: "{{ alias\n }}"\n'),
           );
           await waitFor(
-            () => findings(sibling).some((d) => d.code === "jinja-layout"),
+            () =>
+              findings(sibling).some(
+                (d) => diagnosticCode(d) === "jinja-layout",
+              ),
             "recreated sibling publishes findings before alias ownership",
           );
           const aliasDirectory = vscode.Uri.joinPath(
@@ -640,7 +664,7 @@ export async function runSaveScope(): Promise<void> {
           await waitFor(
             () =>
               !findings(aliasDocument.uri).some(
-                (d) => d.code === "jinja-layout",
+                (d) => diagnosticCode(d) === "jinja-layout",
               ),
             "saved alias receives fresh diagnostics",
           );

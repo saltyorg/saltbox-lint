@@ -25,18 +25,18 @@ func layoutFindings(s *Source) ([]Diagnostic, []Edit) {
 	var edits []Edit
 	for _, e := range Expressions(s) {
 		if !e.mapped {
-			ds = append(ds, Diagnostic{Path: s.Path, RuleID: "jinja-layout", Severity: "error", Span: e.Span, Message: "Jinja source mapping is unavailable", Expected: "Reparse the source and review this scalar manually; no verified token locations are available."})
+			ds = append(ds, Diagnostic{Path: s.Path, RuleID: "jinja-layout", Severity: "error", Span: e.Span, fixDecision: &FixDecision{State: "unsupported-syntax", Reason: "Verified Jinja source mapping is unavailable."}, Message: "Jinja source mapping is unavailable", Expected: "Reparse the source and review this scalar manually; no verified token locations are available."})
 			continue
 		}
 		if !e.Complete {
-			ds = append(ds, Diagnostic{Path: s.Path, RuleID: "jinja-layout", Severity: "error", Span: e.Span, Message: "incomplete Jinja expression", Expected: "Complete the quoted strings and delimiters before formatting."})
+			ds = append(ds, Diagnostic{Path: s.Path, RuleID: "jinja-layout", Severity: "error", Span: e.Span, fixDecision: &FixDecision{State: "unsupported-syntax", Reason: "The expression is incomplete."}, Message: "incomplete Jinja expression", Expected: "Complete the quoted strings and delimiters before formatting."})
 			continue
 		}
 		if e.Kind != "output" || len(e.Tokens) == 0 {
 			continue
 		}
 		if !layoutSupported(e) {
-			ds = append(ds, Diagnostic{Path: s.Path, RuleID: "jinja-layout", Severity: "error", Span: e.Span, Message: "unsupported Jinja layout syntax", Expected: "Review the expression syntax manually; no safe formatting correction is available."})
+			ds = append(ds, Diagnostic{Path: s.Path, RuleID: "jinja-layout", Severity: "error", Span: e.Span, fixDecision: &FixDecision{State: "unsupported-syntax", Reason: "The layout checker does not support this expression syntax."}, Message: "unsupported Jinja layout syntax", Expected: "Review the expression syntax manually; no safe formatting correction is available."})
 			continue
 		}
 		a := layoutAnalysis{source: s, expression: e, newline: "\n"}

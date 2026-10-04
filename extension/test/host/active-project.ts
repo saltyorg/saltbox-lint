@@ -1,3 +1,4 @@
+import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -511,7 +512,10 @@ export async function runActiveProject(): Promise<void> {
             const count = invocations().length;
             await show(late);
             await waitFor(
-              () => findings(late.uri).some((d) => d.code === "jinja-layout"),
+              () =>
+                findings(late.uri).some(
+                  (d) => diagnosticCode(d) === "jinja-layout",
+                ),
               "late cached result restored",
             );
             await pause(150);

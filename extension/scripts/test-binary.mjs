@@ -39,6 +39,54 @@ export function smokeBinary(executable, version, target) {
         (d) => d.rule_id === "jinja-layout",
       ),
     );
+    const metadata = call(["rules", "--format", "json", "--color", "always"]);
+    assert.equal(metadata.status, 0, metadata.stderr);
+    assert.equal(metadata.stderr, "");
+    assert.ok(!metadata.stdout.includes("\x1b"));
+    const registry = JSON.parse(metadata.stdout);
+    assert.equal(registry.schema_version, 1);
+    assert.ok(
+      registry.rules.some((rule) => rule.id === "jinja-layout" && rule.fixable),
+    );
+    assert.deepEqual(
+      registry.rules.map((rule) => rule.id),
+      registry.rules.map((rule) => rule.id).toSorted(),
+    );
+    const explanation = call([
+      "explain",
+      path,
+      "--format",
+      "json",
+      "--color",
+      "always",
+    ]);
+    assert.equal(explanation.status, 0, explanation.stderr);
+    assert.equal(explanation.stderr, "");
+    assert.ok(!explanation.stdout.includes("\x1b"));
+    const observed = JSON.parse(explanation.stdout);
+    assert.equal(observed.schema_version, 1);
+    assert.equal(observed.source.source_kind, "generic");
+    assert.ok(observed.applicable_policies.includes("jinja-layout"));
+    assert.ok(
+      observed.fix_decisions.some(
+        (decision) =>
+          decision.rule_id === "jinja-layout" && decision.state === "available",
+      ),
+    );
+    const explainedBuffer = call(
+      ["explain", "-", "--stdin-filename", path, "--format", "json"],
+      "value: [\n",
+    );
+    assert.equal(explainedBuffer.status, 0, explainedBuffer.stderr);
+    assert.equal(
+      JSON.parse(explainedBuffer.stdout).source.parse_state,
+      "parse-error",
+    );
+    assert.equal(
+      readFileSync(path, "utf8"),
+      'value: "{{ value\n }}"\n',
+      "help and explanations cannot write source",
+    );
     const colored = call([
       "check",
       "--format",
@@ -128,7 +176,7 @@ export function smokeBinary(executable, version, target) {
       "fix must preserve valid bytes",
     );
     console.log(
-      `PASS native ${target}: version, Unicode path, diagnostics, WASM highlighting, Unicode/CRLF formatting, stdin, errors, diff, fixes and idempotence`,
+      `PASS native ${target}: version, registry, explanations, Unicode path, diagnostics, WASM highlighting, Unicode/CRLF formatting, stdin, errors, diff, fixes and idempotence`,
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

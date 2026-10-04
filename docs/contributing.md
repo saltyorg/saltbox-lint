@@ -17,6 +17,10 @@ Ansible wrappers; it does not execute consumer modules or roles.
 
 ## Documentation maintenance
 
+Run `make rules-update` after changing rule metadata. It writes only the
+[generated rule reference](rules.md), using the public registry projection.
+`make docs-check` verifies its freshness without rewriting it.
+
 Run `make docs-update` after changing the packaging target map. It writes only
 `docs/platforms.md`. `make docs-check` checks freshness without writing, runs
 link-checker regressions and checks maintained public links offline. CI invokes

@@ -1,3 +1,4 @@
+import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { mkdir, symlink, realpath } from "node:fs/promises";
@@ -130,7 +131,10 @@ export async function runRegressions(): Promise<void> {
       await replace(otherYaml, '---\nexample_value: "{{ other\n }}"\n');
       await otherYaml.save();
       await waitFor(
-        () => diagnostics(otherYaml.uri).some((d) => d.code === "jinja-layout"),
+        () =>
+          diagnostics(otherYaml.uri).some(
+            (d) => diagnosticCode(d) === "jinja-layout",
+          ),
         "other root saved diagnostics refreshed",
       );
       assert.ok(
@@ -321,14 +325,18 @@ export async function runRegressions(): Promise<void> {
         );
         await replace(document, "value: clean\n");
         await vscode.commands.executeCommand("saltboxLint.checkDocument");
-        assert.ok(!diagnostics(alias).some((d) => d.code === "jinja-layout"));
+        assert.ok(
+          !diagnostics(alias).some((d) => diagnosticCode(d) === "jinja-layout"),
+        );
         await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
         assert.equal(
           diagnostics(canonical).length,
           0,
           "saved diagnostics leaked through canonical URI",
         );
-        assert.ok(!diagnostics(alias).some((d) => d.code === "jinja-layout"));
+        assert.ok(
+          !diagnostics(alias).some((d) => diagnosticCode(d) === "jinja-layout"),
+        );
         await replace(document, 'value: "{{ unsaved\n }}"\n');
         await vscode.commands.executeCommand("saltboxLint.checkDocument");
         await waitFor(
@@ -392,7 +400,7 @@ export async function runRegressions(): Promise<void> {
         await editor.checkWorkspace();
         await editor.check(document);
         const before = diagnostics(document.uri);
-        assert.ok(before.some((d) => d.code === "jinja-layout"));
+        assert.ok(before.some((d) => diagnosticCode(d) === "jinja-layout"));
         editor.refresh([roots[0].uri]);
         assert.deepEqual(
           diagnostics(document.uri),
@@ -428,11 +436,14 @@ export async function runRegressions(): Promise<void> {
         await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
         await vscode.commands.executeCommand("saltboxLint.checkDocument");
         const before = diagnostics(document.uri);
-        assert.ok(before.some((d) => d.code === "jinja-layout"));
+        assert.ok(before.some((d) => diagnosticCode(d) === "jinja-layout"));
         await replace(parent, jinja + "# scoped parent refresh\n");
         await parent.save();
         await waitFor(
-          () => diagnostics(parent.uri).some((d) => d.code === "jinja-layout"),
+          () =>
+            diagnostics(parent.uri).some(
+              (d) => diagnosticCode(d) === "jinja-layout",
+            ),
           "affected parent refresh completed",
         );
         assert.deepEqual(
@@ -460,14 +471,17 @@ export async function runRegressions(): Promise<void> {
         source,
       );
       await waitFor(
-        () => diagnostics(document.uri).some((d) => d.code === "jinja-layout"),
+        () =>
+          diagnostics(document.uri).some(
+            (d) => diagnosticCode(d) === "jinja-layout",
+          ),
         "actual source snapshot diagnosed",
       );
       assert.ok(
         !diagnostics(document.uri).some(
           (d) =>
-            d.code === "ansible-when-list" ||
-            d.code === "ansible-when-parentheses",
+            diagnosticCode(d) === "ansible-when-list" ||
+            diagnosticCode(d) === "ansible-when-parentheses",
         ),
         "explicitly grouped Cloudflare condition was split or rejected",
       );
@@ -509,13 +523,17 @@ export async function runRegressions(): Promise<void> {
         );
         await waitFor(
           () =>
-            diagnostics(document.uri).some((d) => d.code === "section-spacing"),
+            diagnostics(document.uri).some(
+              (d) => diagnosticCode(d) === "section-spacing",
+            ),
           "root configuration refresh completed",
         );
         await vscode.commands.executeCommand("saltboxLint.checkDocument");
         await waitFor(
           () =>
-            diagnostics(document.uri).some((d) => d.code === "section-spacing"),
+            diagnostics(document.uri).some(
+              (d) => diagnosticCode(d) === "section-spacing",
+            ),
           "new root report has reassigned fix IDs",
         );
         const replacement = await actions(document);

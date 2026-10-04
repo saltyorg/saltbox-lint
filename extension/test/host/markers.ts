@@ -1,3 +1,4 @@
+import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -109,7 +110,10 @@ export async function runMarkers(): Promise<void> {
 
   await marker(roots[0].uri, true);
   await waitFor(
-    () => diagnostics(document.uri).some((d) => d.code === "jinja-layout"),
+    () =>
+      diagnostics(document.uri).some(
+        (d) => diagnosticCode(d) === "jinja-layout",
+      ),
     "marker creation starts fresh checks",
   );
   const original = document.getText();

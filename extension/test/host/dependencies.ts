@@ -1,3 +1,4 @@
+import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -30,7 +31,9 @@ const findings = (uri: vscode.Uri) =>
     .getDiagnostics(uri)
     .filter((item) => item.source === "saltbox-lint");
 const renderer = (uri: vscode.Uri) =>
-  findings(uri).some((item) => item.code === "traefik-renderer-contract");
+  findings(uri).some(
+    (item) => diagnosticCode(item) === "traefik-renderer-contract",
+  );
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   message: string,
@@ -208,7 +211,10 @@ export async function runDependencies(): Promise<void> {
     await writeFile(invalidUri.fsPath, unrelatedGood);
     editor.removeFile(invalidUri);
     await waitFor(
-      () => findings(invalidUri).some((item) => item.code === "jinja-layout"),
+      () =>
+        findings(invalidUri).some(
+          (item) => diagnosticCode(item) === "jinja-layout",
+        ),
       "valid UTF-8 change must recover ordinary diagnostics",
     );
     await writeFile(invalidUri.fsPath, invalidBytes);
@@ -219,7 +225,10 @@ export async function runDependencies(): Promise<void> {
     );
     await writeFile(unrelatedUri.fsPath, unrelatedGood);
     await waitFor(
-      () => findings(unrelatedUri).some((item) => item.code === "jinja-layout"),
+      () =>
+        findings(unrelatedUri).some(
+          (item) => diagnosticCode(item) === "jinja-layout",
+        ),
       "valid peer recovery",
     );
     await pause(400);
@@ -276,7 +285,9 @@ export async function runDependencies(): Promise<void> {
     await editor.check(invalidDocument, true);
     assert.equal(invalidDocument.isDirty, true);
     assert.ok(
-      findings(invalidUri).some((item) => item.code === "jinja-layout"),
+      findings(invalidUri).some(
+        (item) => diagnosticCode(item) === "jinja-layout",
+      ),
     );
     assert.ok(
       editor.actions(invalidDocument, new vscode.Range(0, 0, 100, 0)).length >
@@ -291,7 +302,9 @@ export async function runDependencies(): Promise<void> {
     await editor.check(invalidDocument, true);
     assert.equal(invalidDocument.isDirty, false);
     assert.ok(
-      findings(invalidUri).some((item) => item.code === "jinja-layout"),
+      findings(invalidUri).some(
+        (item) => diagnosticCode(item) === "jinja-layout",
+      ),
     );
     assert.equal(await readFile(invalidUri.fsPath, "utf8"), unrelatedGood);
     await pause(400);
@@ -331,7 +344,9 @@ export async function runDependencies(): Promise<void> {
       "roles/example/templates/late.conf",
     );
     assert.ok(
-      findings(unrelatedUri).some((item) => item.code === "jinja-layout"),
+      findings(unrelatedUri).some(
+        (item) => diagnosticCode(item) === "jinja-layout",
+      ),
     );
     assert.ok(
       !vscode.workspace.textDocuments.some(
@@ -381,7 +396,9 @@ export async function runDependencies(): Promise<void> {
     await rm(batchGate);
     await waitFor(
       () =>
-        findings(defaults).some((item) => item.code === "jinja-layout") &&
+        findings(defaults).some(
+          (item) => diagnosticCode(item) === "jinja-layout",
+        ) &&
         findings(unrelatedUri).length === 0 &&
         renderer(task),
       "rejected mixed batch must refresh both changed primaries and context-driven peers",
@@ -401,7 +418,9 @@ export async function runDependencies(): Promise<void> {
     await waitFor(
       () =>
         findings(defaults).length === 0 &&
-        findings(unrelatedUri).some((item) => item.code === "jinja-layout") &&
+        findings(unrelatedUri).some(
+          (item) => diagnosticCode(item) === "jinja-layout",
+        ) &&
         !renderer(task),
       "mixed-batch recovery must restore the original diagnostics",
     );
@@ -642,7 +661,9 @@ export async function runDependencies(): Promise<void> {
       );
     const policyGood = await readFile(policy.fsPath, "utf8");
     const dockerBad = () =>
-      findings(docker).some((item) => item.code === "docker-vars-policy");
+      findings(docker).some(
+        (item) => diagnosticCode(item) === "docker-vars-policy",
+      );
     assert.equal(dockerBad(), false);
     await writeFile(
       policy.fsPath,
@@ -760,7 +781,9 @@ export async function runDependencies(): Promise<void> {
     await writeFile(ignorePath, ignoreText);
     await waitFor(
       () =>
-        findings(newlyAdmitted).some((item) => item.code === "jinja-layout"),
+        findings(newlyAdmitted).some(
+          (item) => diagnosticCode(item) === "jinja-layout",
+        ),
       "ignore-control changes must discover previously excluded primaries",
     );
     await writeFile(template.fsPath, bad);

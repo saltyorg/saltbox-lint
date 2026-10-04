@@ -1,3 +1,4 @@
+import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -77,7 +78,9 @@ export async function runQueue(): Promise<void> {
         await waitFor(
           () =>
             documents.every((document) =>
-              findings(document).some((d) => d.code === "jinja-layout"),
+              findings(document).some(
+                (d) => diagnosticCode(d) === "jinja-layout",
+              ),
             ),
           `all 40 open documents must receive diagnostics`,
         );
@@ -95,7 +98,9 @@ export async function runQueue(): Promise<void> {
         await waitFor(
           () =>
             documents.every((document) =>
-              findings(document).some((d) => d.code === "jinja-layout"),
+              findings(document).some(
+                (d) => diagnosticCode(d) === "jinja-layout",
+              ),
             ),
           "root refresh must not lose open documents",
         );
@@ -216,7 +221,7 @@ export async function runQueue(): Promise<void> {
               );
               assert.ok(
                 findings(document).some(
-                  (finding) => finding.code === "jinja-layout",
+                  (finding) => diagnosticCode(finding) === "jinja-layout",
                 ),
                 "current queued check must publish",
               );

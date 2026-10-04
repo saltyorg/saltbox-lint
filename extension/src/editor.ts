@@ -1,3 +1,4 @@
+import { RuleHelp } from "./help.ts";
 import * as vscode from "vscode";
 import { isUtf8 } from "node:buffer";
 import { readFile } from "node:fs/promises";
@@ -26,6 +27,17 @@ import {
   observationFingerprint,
 } from "./observations.ts";
 
+export interface CheckStatus {
+  state:
+    | "eligible"
+    | "checking"
+    | "current"
+    | "stale"
+    | "disabled"
+    | "missing-marker"
+    | "failed";
+  reason: string;
+}
 interface Snapshot extends Identity {
   uri: vscode.Uri;
   version: number;
@@ -88,9 +100,20 @@ export class EditorIntegration implements vscode.Disposable {
   private relatedRevision = 0;
   private disposed = false;
   private refreshTimer?: ReturnType<typeof setTimeout>;
+  private readonly help: RuleHelp;
+  private readonly statusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    0,
+  );
+  private readonly failures = new Map<
+    string,
+    { token: string; message: string }
+  >();
   private readonly executable: string;
   constructor(executable: string) {
     this.executable = executable;
+    this.help = new RuleHelp(executable);
+    this.statusBar.command = "saltboxLint.showStatus";
     this.rootListener = this.roots.onDidChange((folder) => {
       for (const [uri, owner] of this.documentFolders)
         if (owner === folder) this.sourceOwners.delete(uri);
@@ -117,12 +140,124 @@ export class EditorIntegration implements vscode.Disposable {
     );
     this.roots.configure();
   }
+  private async documentedRules(): Promise<ReadonlySet<string>> {
+    try {
+      return new Set((await this.help.registry()).map((rule) => rule.id));
+    } catch (error) {
+      if (!this.disposed)
+        this.output.appendLine(
+          `Rule documentation unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      return new Set();
+    }
+  }
+  private statusToken(document: vscode.TextDocument): string {
+    const folder =
+      vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString() ?? "";
+    const identity = this.sourceOwners.get(document.uri.toString());
+    return `${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:${identity ? this.dependencies.revision(folder, identity.path) : 0}:${hash(document.getText())}`;
+  }
+  status(document = vscode.window.activeTextEditor?.document): CheckStatus {
+    if (
+      !document ||
+      !vscode.workspace.isTrusted ||
+      document.uri.scheme !== "file"
+    )
+      return {
+        state: "disabled",
+        reason: "A trusted local YAML document is required.",
+      };
+    const folder = vscode.workspace
+      .getWorkspaceFolder(document.uri)
+      ?.uri.toString();
+    if (!folder || !this.roots.get(folder))
+      return {
+        state: "missing-marker",
+        reason:
+          "Opt in by creating a regular .saltbox-lint file in the configured source root. This command does not create it.",
+      };
+    if (!this.eligible(document))
+      return {
+        state: "disabled",
+        reason: "This source is not eligible. Templates remain context-only.",
+      };
+    const key = document.uri.toString();
+    const token = this.statusToken(document);
+    const identity = this.sourceOwners.get(key);
+    const dependencyRevision = identity
+      ? this.dependencies.revision(folder, identity.path)
+      : this.dependencies.begin();
+    const requestKey = `${key}:${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:${dependencyRevision}`;
+    if (this.checking.has(requestKey))
+      return {
+        state: "checking",
+        reason: "A check for this source revision is pending.",
+      };
+    const failure = this.failures.get(key);
+    if (failure?.token === token)
+      return { state: "failed", reason: failure.message };
+    const result = this.results.document(key);
+    if (result)
+      return this.current(document, result.snapshot)
+        ? {
+            state: "current",
+            reason:
+              "The result matches the observed source, root and dependency revisions.",
+          }
+        : {
+            state: "stale",
+            reason:
+              "The source, root or dependencies changed after this result.",
+          };
+    return {
+      state: "eligible",
+      reason: "This source is eligible and has no current buffer result.",
+    };
+  }
+  private updateStatus(): void {
+    const document = vscode.window.activeTextEditor?.document;
+    if (
+      !document ||
+      document.uri.scheme !== "file" ||
+      !/\.ya?ml$/i.test(document.uri.path)
+    ) {
+      this.statusBar.hide();
+      return;
+    }
+    const status = this.status(document);
+    this.statusBar.text = `Saltbox Lint: ${status.state}`;
+    this.statusBar.tooltip = status.reason;
+    this.statusBar.show();
+  }
+  async showStatus(): Promise<CheckStatus> {
+    const document = vscode.window.activeTextEditor?.document;
+    const folder =
+      document && vscode.workspace.getWorkspaceFolder(document.uri);
+    if (folder) await this.roots.refresh(folder.uri.toString());
+    await this.roots.ready();
+    const status = this.status(document);
+    this.output.appendLine(
+      `Status ${document?.uri.fsPath ?? "no source"}: ${status.state}. ${status.reason}`,
+    );
+    this.output.show(true);
+    this.updateStatus();
+    return status;
+  }
+  async explainRule(id?: string): Promise<vscode.MarkdownString | undefined> {
+    try {
+      return await this.help.explain(id);
+    } catch (error) {
+      this.error(error, true);
+      return undefined;
+    }
+  }
   private displayActiveProjectOnly(): boolean {
     return vscode.workspace
       .getConfiguration("saltboxLint")
       .get<boolean>("activeProjectOnly", true);
   }
   private repaint(): void {
+    this.updateStatus();
     const uris = this.results.uris();
     this.collection.forEach((uri) => uris.add(uri.toString()));
     for (const uri of uris) this.publish(vscode.Uri.parse(uri));
@@ -277,6 +412,7 @@ export class EditorIntegration implements vscode.Disposable {
     );
   }
   private publish(uri: vscode.Uri): void {
+    this.updateStatus();
     const key = uri.toString();
     const folder = this.roots.folder(uri)?.uri.toString();
     const activeFolder =
@@ -354,11 +490,13 @@ export class EditorIntegration implements vscode.Disposable {
       retry?.();
     });
     this.checking.set(requestKey, work);
+    this.updateStatus();
     try {
       await work;
     } finally {
       if (this.checking.get(requestKey) === work)
         this.checking.delete(requestKey);
+      this.updateStatus();
     }
   }
   private async checkSnapshot(
@@ -389,6 +527,7 @@ export class EditorIntegration implements vscode.Disposable {
             this.queueFile(document.uri, true, version);
         };
     };
+    let failureToken = this.statusToken(document);
     try {
       const result = await this.lint.submit(
         key,
@@ -397,6 +536,7 @@ export class EditorIntegration implements vscode.Disposable {
           if (signal.aborted || !current()) return;
           const snapshot = await this.snapshot(document, version);
           if (!snapshot || signal.aborted || !current()) return;
+          failureToken = this.statusToken(document);
           const bytes = !document.isDirty
             ? await readFile(snapshot.filename)
             : undefined;
@@ -469,6 +609,7 @@ export class EditorIntegration implements vscode.Disposable {
       if (!unsupported)
         for (const fix of report.fixes.values())
           snapshot.index.edits(fix.edits);
+      const documentedRules = await this.documentedRules();
       const relatedRevision = this.relatedRevision;
       const diagnostics = unsupported
         ? []
@@ -476,6 +617,7 @@ export class EditorIntegration implements vscode.Disposable {
             report.diagnostics,
             snapshot.index,
             snapshot.root,
+            documentedRules,
           );
       if (!this.current(document, snapshot)) return retry();
       if (relatedRevision !== this.relatedRevision)
@@ -515,6 +657,7 @@ export class EditorIntegration implements vscode.Disposable {
         this.publish(canonical);
         return;
       }
+      this.failures.delete(key);
       this.results.storeDocument(key, {
         id: randomUUID(),
         snapshot,
@@ -523,7 +666,14 @@ export class EditorIntegration implements vscode.Disposable {
       });
       this.publish(document.uri);
     } catch (error) {
-      if (current()) this.error(error, manual);
+      if (current() && failureToken === this.statusToken(document)) {
+        this.failures.set(key, {
+          token: failureToken,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        this.updateStatus();
+        this.error(error, manual);
+      }
     }
   }
   async checkWorkspace(): Promise<void> {
@@ -614,6 +764,7 @@ export class EditorIntegration implements vscode.Disposable {
         grouped.set(finding.path, group);
       }
       const relatedRevision = this.relatedRevision;
+      const documentedRules = await this.documentedRules();
       const entries = new Map<string, vscode.Diagnostic[]>();
       const accepted = new Set<string>();
       const unsupported = new Set<string>();
@@ -665,7 +816,7 @@ export class EditorIntegration implements vscode.Disposable {
           if (fix.path === relative) index.edits(fix.edits);
         entries.set(
           uri.toString(),
-          await renderDiagnostics(findings, index, root),
+          await renderDiagnostics(findings, index, root, documentedRules),
         );
         accepted.add(relative);
       }
@@ -729,6 +880,33 @@ export class EditorIntegration implements vscode.Disposable {
     const result = this.results.document(document.uri.toString());
     if (!result || !this.current(document, result.snapshot)) return [];
     const actions: vscode.CodeAction[] = [];
+    const explained = new Set<string>();
+    for (const diagnostic of result.diagnostics) {
+      if (!diagnostic.range.intersection(requested)) continue;
+      const id =
+        typeof diagnostic.code === "object"
+          ? diagnostic.code.value
+          : diagnostic.code;
+      // Documentation links are assigned only for registry-backed rules.
+      if (
+        typeof diagnostic.code !== "object" ||
+        typeof id !== "string" ||
+        explained.has(id)
+      )
+        continue;
+      explained.add(id);
+      const help = new vscode.CodeAction(
+        `Saltbox Lint: Explain ${id}`,
+        vscode.CodeActionKind.QuickFix,
+      );
+      help.diagnostics = [diagnostic];
+      help.command = {
+        command: "saltboxLint.explainRule",
+        title: help.title,
+        arguments: [id],
+      };
+      actions.push(help);
+    }
     const seen = new Set<string>();
     result.report.diagnostics.forEach((finding, index) => {
       if (
@@ -918,6 +1096,7 @@ export class EditorIntegration implements vscode.Disposable {
     );
     if (!document.isClosed && stillOwned) return;
     this.closedTabs.add(key);
+    this.failures.delete(key);
     this.eligibilityChanged.fire();
     this.change(document);
     const canonical = this.sourceOwners.get(key)?.filename;
@@ -1424,6 +1603,9 @@ export class EditorIntegration implements vscode.Disposable {
     this.formatting.dispose();
     this.collection.dispose();
     this.output.dispose();
+    this.help.dispose();
+    this.statusBar.dispose();
+    this.failures.clear();
   }
 }
 

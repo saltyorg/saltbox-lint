@@ -16,9 +16,44 @@ import (
 // their YAML and Jinja preservation. Uncertain candidates are declined; the
 // caller retains the original diagnostics and hints.
 func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
+	return planFixes(project, diagnostics, nil)
+}
+
+func planFixes(project *Project, diagnostics []Diagnostic, decisions *[]FixDecision) ([]Change, error) {
 	if project == nil {
 		return nil, nil
 	}
+	states := map[string]string{}
+	defer func() {
+		if decisions == nil {
+			return
+		}
+		for _, d := range diagnostics {
+			if !project.Selected[d.Path] {
+				continue
+			}
+			decision := FixDecision{Path: d.Path, RuleID: d.RuleID, Span: DecisionSpan{Start: d.Span.Start, End: d.Span.End}, State: "manual-only", Reason: "No verified automatic fix was proposed."}
+			if d.fixDecision != nil {
+				decision.State = d.fixDecision.State
+				decision.Reason = d.fixDecision.Reason
+			}
+			if d.Fix != nil {
+				decision.State = states[d.Path]
+				if decision.State == "" {
+					decision.State = "preservation-verification-declined"
+				}
+				switch decision.State {
+				case "available":
+					decision.Reason = "The authoritative planner verified the combined source edits."
+				case "conflicting-edits":
+					decision.Reason = "The proposed source edits conflict."
+				default:
+					decision.Reason = "The candidate was declined by source preservation verification."
+				}
+			}
+			*decisions = append(*decisions, decision)
+		}
+	}()
 	grouped := map[string][]Edit{}
 	structural := map[string][]string{}
 	// Skip repeated proposal identities, then collect each distinct source edit
@@ -63,6 +98,10 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 		}
 		edits, err := orderedEdits(grouped[path])
 		if err != nil {
+			states[path] = "conflicting-edits"
+			if decisions != nil {
+				continue
+			}
 			return nil, fmt.Errorf("plan fixes for %s: %w", path, err)
 		}
 		if rules := structural[path]; len(rules) > 0 {
@@ -71,6 +110,7 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 			change, _, ok := buildStructuralChange(source, rules)
 			if ok && slices.Equal(edits, change.fixEdits) {
 				changes = append(changes, change)
+				states[path] = "available"
 			}
 			continue
 		}
@@ -95,6 +135,7 @@ func PlanFixes(project *Project, diagnostics []Diagnostic) ([]Change, error) {
 			continue
 		}
 		changes = append(changes, Change{Path: path, Before: bytes.Clone(source.Data), After: after})
+		states[path] = "available"
 	}
 	return changes, nil
 }

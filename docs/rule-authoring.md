@@ -48,3 +48,11 @@ provide manual guidance. Template layout can change generated file contents;
 Run the focused tests, then `make check`. See [contributing](contributing.md)
 for tool versions and delivery checks. Inspect exact-commit CI across all
 required targets before claiming completion.
+
+## Public metadata
+
+Register the explanation, human scope, source kinds and both examples with the
+rule. `rules --format json`, editor help and `docs/rules.md` all use the data-only
+registry projection. Run `make rules-update` explicitly after changing metadata;
+`make check` rejects stale generated content without rewriting it. Existing
+metadata-fixture tests execute the registered examples.

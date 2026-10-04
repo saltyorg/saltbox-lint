@@ -74,6 +74,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
   context.subscriptions.push(
+    vscode.commands.registerCommand("saltboxLint.explainRule", (id?: string) =>
+      editor.explainRule(id),
+    ),
+    vscode.commands.registerCommand("saltboxLint.showStatus", () =>
+      editor.showStatus(),
+    ),
     vscode.commands.registerCommand("saltboxLint.checkDocument", () => {
       const document = vscode.window.activeTextEditor?.document;
       return document && editor.check(document, true);

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -12,7 +13,22 @@ import (
 )
 
 func newRulesCommand(rootOpts *rootOptions) *cobra.Command {
-	return &cobra.Command{Use: "rules [id]", Short: "List policies or explain a rule with examples", Args: cobra.MaximumNArgs(1), RunE: func(command *cobra.Command, args []string) error {
+	var format string
+	command := &cobra.Command{Use: "rules [id]", Short: "List policies or explain a rule with examples", Args: cobra.MaximumNArgs(1), RunE: func(command *cobra.Command, args []string) error {
+		if format != "text" && format != "json" {
+			return fmt.Errorf("unknown rules format %q", format)
+		}
+		if format == "json" {
+			registry := lint.Registry()
+			if len(args) == 1 {
+				found := slices.IndexFunc(registry.Rules, func(rule lint.RuleMetadata) bool { return rule.ID == args[0] })
+				if found < 0 {
+					return fmt.Errorf("unknown rule %q", args[0])
+				}
+				registry.Rules = registry.Rules[found : found+1]
+			}
+			return json.NewEncoder(command.OutOrStdout()).Encode(registry)
+		}
 		rules := lint.Rules()
 		slices.SortFunc(rules, func(a, b lint.Rule) int { return strings.Compare(a.ID, b.ID) })
 		if len(args) == 1 {
@@ -34,4 +50,6 @@ func newRulesCommand(rootOpts *rootOptions) *cobra.Command {
 		_, err := io.WriteString(command.OutOrStdout(), b.String())
 		return err
 	}}
+	command.Flags().StringVar(&format, "format", "text", "Output format: text, json")
+	return command
 }

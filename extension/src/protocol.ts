@@ -395,3 +395,37 @@ export function parseCheck(wire: string, requireAnalysis = false): CheckReport {
       : { analysis: value.analysis as AnalysisRecord }),
   };
 }
+
+export interface RuleMetadata {
+  id: string;
+  summary: string;
+  explanation: string;
+  source_kinds: string[];
+  scope: string;
+  good_example: string;
+  bad_example: string;
+  fixable: boolean;
+}
+export function parseRegistry(wire: string): RuleMetadata[] {
+  const value = JSON.parse(wire);
+  if (value.schema_version !== 1 || !Array.isArray(value.rules))
+    throw new Error("Unsupported rule registry");
+  let previous = "";
+  for (const rule of value.rules) {
+    if (
+      !rule ||
+      !/^[a-z][a-z0-9-]*$/.test(rule.id) ||
+      rule.id <= previous ||
+      ["summary", "explanation", "scope", "good_example", "bad_example"].some(
+        (key) => typeof rule[key] !== "string" || !rule[key],
+      ) ||
+      !Array.isArray(rule.source_kinds) ||
+      !rule.source_kinds.length ||
+      rule.source_kinds.some((kind: unknown) => typeof kind !== "string") ||
+      typeof rule.fixable !== "boolean"
+    )
+      throw new Error("Invalid rule metadata");
+    previous = rule.id;
+  }
+  return value.rules;
+}

@@ -137,6 +137,57 @@ failures, cancellation, input failures, context loading failures, planner
 failures, and JSON output failures are operational errors on stderr with exit
 **2**. JSON stdout never contains ANSI styling or progress text.
 
+## Rule and source explanations
+
+These commands are available in source builds and remain unreleased. The
+published v0.1.0 CLI does not provide registry JSON or source explanations.
+
+```sh
+saltbox-lint rules --format json
+saltbox-lint rules jinja-layout --format json
+saltbox-lint explain roles/example/tasks/main.yml --root .
+saltbox-lint explain ignored.yml --root . --format json
+saltbox-lint explain - --root . --stdin-filename roles/example/tasks/main.yml --format json < editor-buffer.yml
+```
+
+`rules` retains its text default. JSON schema version 1 contains a sorted `rules`
+array with `id`, `summary`, `explanation`, `source_kinds`, human-readable `scope`,
+`good_example`, `bad_example`, and `fixable`. Supplying an ID returns a one-rule
+array. Unknown IDs and formats fail with exit 2. The
+[generated rule reference](https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md)
+uses the same registry and stable rule-ID anchors.
+
+`explain` accepts one file or stdin buffer. Its root and buffer filename resolve
+exactly as for `check`. The default `human` format describes the observed source
+kind and parse state, directory discovery admission, explicit selection, policies
+applicable to that kind, loaded context and versioned dependency observations.
+JSON schema version 1 contains the same information in `source`, `input`,
+`directory_would_select`, `explicit_selection`, `applicable_policies`,
+`loaded_context`, `dependencies`, `fix_decisions`, and `unsupported`, with the
+canonical `root`. A parse error prevents policy evaluation even when policies
+apply to that kind. Dependency completeness describes the observations, including
+negative lookups; parse errors appear separately for each loaded source.
+
+Directory admission uses the same Git snapshot and conventional source-kind
+predicate as checking. Explicit ignored files and nested generic YAML can be
+checked even when directory discovery would omit them. Unsaved stdin identities
+can describe files that do not yet exist. Templates, including conventional
+`.yaml` templates, may be explained as raw context; they remain unsupported
+primary check and formatting targets.
+
+Fix decisions come from the existing verified planner. They describe each
+selected finding as `available`, `manual-only`, `unsupported-syntax`,
+`conflicting-edits`, or `preservation-verification-declined`. Reasons remain
+generic when the provider has no specific refusal evidence. Fix decision spans
+are half-open UTF-8 byte offsets into the submitted source. They never authorize
+writes; applying corrections still requires explicit `check --fix`.
+
+A generated explanation exits 0 even with parse errors or lint findings.
+Usage, loading, cancellation, and output errors exit 2. Structured stdout contains
+one unstyled JSON object and no progress text. Neither command changes sources
+or executes Ansible, Jinja, templates, or lookups. Default check JSON remains
+schema version 2.
+
 ## Output and fixes
 
 `--format auto` is the default. It selects human output when the
