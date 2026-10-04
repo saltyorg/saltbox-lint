@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { groupHasLiveMembers } from "./owned-group.mjs";
 
 // Release probes own only the process they start and its descendants. Keep the
-// deadline active until stdio closes, since a descendant can retain its pipes.
+// deadline active until captured stdio closes. Inherited output belongs to the
+// owned child, so blocked writes and consumer errors cannot strand this owner.
 export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
   return new Promise((resolveResult, reject) => {
     const windows = process.platform === "win32";
@@ -30,9 +32,14 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
     const inherited = options.stdio === "inherit";
     const child = spawn(launcher, launchArgs, {
       ...options,
-      // Retain ownership of the output pipes even when forwarding build logs,
-      // so descendant pipes must close before this command can finish.
-      stdio: [windows ? "pipe" : "ignore", "pipe", "pipe"],
+      // Never forward inherited logs through process.stdout/stderr. Node keeps
+      // their blocked handles open even after destroy(). The owned group/Job
+      // can terminate writers and their descendants without a pending owner write.
+      stdio: [
+        windows ? "pipe" : "ignore",
+        inherited ? "inherit" : "pipe",
+        inherited ? "inherit" : "pipe",
+      ],
       shell: false,
       detached: !windows,
       windowsHide: true,
@@ -44,6 +51,12 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
     let failure;
     let cleanupTimer;
     let reapTimer;
+    let groupTimer;
+    let groupKilled = false;
+    let groupGone = windows;
+    const observation = new AbortController();
+    let activeObservation;
+    let closed;
     let settled = false;
     let cleanupStarted = false;
     const finish = (error) => {
@@ -52,12 +65,20 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
       clearTimeout(deadline);
       clearTimeout(cleanupTimer);
       clearTimeout(reapTimer);
+      clearTimeout(groupTimer);
+      observation.abort();
       child.stdin?.destroy();
-      if (error) reject(error);
-      else resolveResult(stdout);
+      const settle = () => {
+        if (error) reject(error);
+        else resolveResult(stdout);
+      };
+      // Cancellation must also join our short-lived read-only ps probe.
+      if (activeObservation) activeObservation.then(settle, settle);
+      else settle();
     };
     const killGroup = () => {
-      if (!child.pid) return;
+      if (!child.pid || groupKilled) return;
+      groupKilled = true;
       try {
         process.kill(-child.pid, "SIGKILL");
       } catch (error) {
@@ -66,6 +87,39 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
             `${identity}: owned group cleanup failed: ${error}`,
             { cause: failure ?? error },
           );
+      }
+      observeGroup();
+    };
+    const complete = () => {
+      if (!closed || !groupGone) return;
+      const { code, signal } = closed;
+      if (failure) finish(failure);
+      else if (code !== 0)
+        finish(new Error(`${identity}: exited ${code ?? signal}\n${stderr}`));
+      else finish();
+    };
+    const observeGroup = async () => {
+      // SIGKILL queues termination. Observe the owned group's disappearance
+      // before settling inherited output, which has no captured EOF to join.
+      try {
+        activeObservation = groupHasLiveMembers(child.pid, observation.signal);
+        const live = await activeObservation;
+        if (settled) return;
+        if (live) groupTimer = setTimeout(observeGroup, 10);
+        else {
+          groupGone = true;
+          complete();
+        }
+      } catch (error) {
+        if (!settled) {
+          failure = new Error(
+            `${identity}: owned group observation failed: ${error}`,
+            { cause: failure ?? error },
+          );
+          cleanup();
+        }
+      } finally {
+        activeObservation = undefined;
       }
     };
     const cleanup = () => {
@@ -81,15 +135,18 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
           child.stdout?.destroy();
           child.stderr?.destroy();
           finish(
-            new Error(`${identity}: stdio did not close after owned cleanup`, {
-              cause: failure,
-            }),
+            new Error(
+              `${identity}: ${groupGone ? "stdio did not close" : "owned group did not disappear"} after owned cleanup`,
+              {
+                cause: failure,
+              },
+            ),
           );
         }, 5000);
       }, 7000);
     };
     const deadline = setTimeout(() => {
-      failure = new Error(`${identity}: timed out after ${timeoutMs}ms`);
+      failure ??= new Error(`${identity}: timed out after ${timeoutMs}ms`);
       cleanup();
     }, timeoutMs);
     const collect = (data, stream) => {
@@ -109,10 +166,7 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
           `${identity}: owned control pipe failed: ${error}`,
         );
     });
-    if (inherited) {
-      child.stdout.pipe(process.stdout, { end: false });
-      child.stderr.pipe(process.stderr, { end: false });
-    } else {
+    if (!inherited) {
       child.stdout
         .setEncoding("utf8")
         .on("data", (data) => collect(data, "stdout"));
@@ -124,13 +178,11 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
       finish(new Error(`${identity}: ${error.message}`, { cause: error })),
     );
     child.once("exit", () => {
-      if (!windows) killGroup();
+      if (!windows) cleanup();
     });
     child.once("close", (code, signal) => {
-      if (failure) finish(failure);
-      else if (code !== 0)
-        finish(new Error(`${identity}: exited ${code ?? signal}\n${stderr}`));
-      else finish();
+      closed = { code, signal };
+      complete();
     });
   });
 }

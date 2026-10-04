@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawn, execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,9 +9,16 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { ownedCommand } from "../scripts/owned-command.mjs";
 import { stageBinary } from "../scripts/stage-binary.mjs";
+import {
+  groupHasLiveMembers,
+  liveGroupMembers,
+} from "../scripts/owned-group.mjs";
 
 const fixture = fileURLToPath(
   new URL("testdata/owned-builder.mjs", import.meta.url),
+);
+const outputFixture = fileURLToPath(
+  new URL("testdata/owned-output.mjs", import.meta.url),
 );
 
 async function record(filename) {
@@ -48,6 +56,92 @@ function running(instance) {
     });
   });
 }
+
+test("group snapshots distinguish Linux and Darwin zombies and reject malformed data", () => {
+  assert.equal(liveGroupMembers("123 Z\n123 Z+\n456 S\n", 123), false);
+  for (const state of ["R", "S", "T", "U", "I", "X", "Ss+", "U<"]) {
+    assert.equal(liveGroupMembers(`123 Z\n123 ${state}\n`, 123), true);
+  }
+  assert.equal(liveGroupMembers("456 S\n", 123), false);
+  assert.throws(() => liveGroupMembers("123\n", 123), /Unrecognized/);
+  assert.throws(() => liveGroupMembers("\n", 123), /Empty/);
+  assert.throws(() => liveGroupMembers("123 Z\n", 0), /Invalid/);
+});
+
+test("POSIX group observation rejects cancellation and distinguishes a real retained zombie", async () => {
+  if (process.platform === "win32") {
+    await assert.rejects(groupHasLiveMembers(123), /requires Linux or Darwin/);
+    return;
+  }
+  const aborted = new AbortController();
+  aborted.abort();
+  await assert.rejects(groupHasLiveMembers(process.pid, aborted.signal), {
+    code: "ABORT_ERR",
+  });
+  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-zombie-"));
+  const filename = join(directory, "child.json");
+  const binary = join(directory, "fixture");
+  let supervisor;
+  let exited;
+  let instance;
+  try {
+    await ownedCommand(
+      "go",
+      [
+        "build",
+        "-o",
+        binary,
+        fileURLToPath(new URL("testdata/owned-zombie.go", import.meta.url)),
+      ],
+      { phase: "zombie fixture build", timeoutMs: 30000 },
+    );
+    supervisor = spawn(binary, ["parent", filename], {
+      stdio: ["pipe", "ignore", "pipe"],
+      timeout: 45000,
+    });
+    exited = new Promise((resolve, reject) => {
+      supervisor.once("error", reject);
+      supervisor.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    instance = await record(filename);
+    assert.equal(await running(instance), true);
+    assert.equal(await groupHasLiveMembers(instance.pid), true);
+    writeFileSync(filename + ".exit", "");
+    const until = Date.now() + 5000;
+    let state;
+    do {
+      state = execFileSync(
+        "/bin/ps",
+        ["-p", String(instance.pid), "-o", "state="],
+        { encoding: "utf8", timeout: 1000 },
+      ).trim();
+      if (!state.startsWith("Z")) await delay(10);
+    } while (!state.startsWith("Z") && Date.now() < until);
+    assert.match(state, /^Z/, "supervisor has not reaped the actual child");
+    assert.doesNotThrow(
+      () => process.kill(-instance.pid, 0),
+      "zombie-only group still exists",
+    );
+    assert.equal(
+      await running(instance),
+      false,
+      "exact child endpoint is absent",
+    );
+    assert.equal(
+      await groupHasLiveMembers(instance.pid),
+      false,
+      "zombies do not extend cleanup",
+    );
+    supervisor.stdin.end("reap\n");
+    assert.deepEqual(await exited, { code: 0, signal: null });
+  } finally {
+    if (instance && (await running(instance)))
+      process.kill(-instance.pid, "SIGKILL");
+    supervisor?.stdin.end("reap\n");
+    if (exited) await exited;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("release probes preserve output and identify command failures", async () => {
   assert.equal(
@@ -181,4 +275,148 @@ for (const mode of ["exit", "error-exit"]) {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+}
+
+for (const output of ["stdout", "stderr"]) {
+  test(`closed ${output} consumer rejects after exact owned cleanup`, async () => {
+    await outputControl(output, "closed", "output-tree");
+  });
+  test(`blocked ${output} writes reap retained descendants after parent exit`, async () => {
+    await outputControl(output, "blocked", "output-exit");
+  });
+  test(`blocked ${output} consumer retains the live builder deadline`, async () => {
+    await outputControl(output, "blocked", "output-tree");
+  });
+}
+
+for (const mode of ["normal-output", "error-output"]) {
+  test(`inherited output preserves both streams and ${mode} semantics`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), "saltbox-output-semantics-"));
+    const filename = join(directory, "builder.json");
+    const resultFile = join(directory, "result.json");
+    const owner = spawn(
+      process.execPath,
+      [outputFixture, fixture, mode, filename, resultFile],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 45000,
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    owner.stdout.on("data", (chunk) => (stdout += chunk));
+    owner.stderr.on("data", (chunk) => (stderr += chunk));
+    const exited = new Promise((resolve, reject) => {
+      owner.once("error", reject);
+      owner.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    try {
+      assert.deepEqual(await exited, { code: 0, signal: null });
+      assert.equal(stdout, "normal stdout\n");
+      assert.equal(stderr, "normal stderr\n");
+      const result = JSON.parse(readFileSync(resultFile));
+      assert.ok(
+        Date.now() - result.settledAt < 5000,
+        "no cleanup timer retains the owner after settlement",
+      );
+      if (mode === "error-output") assert.match(result.error, /exited 7/);
+      else assert.equal(result.error, undefined);
+      assert.deepEqual(result.after, result.before);
+    } finally {
+      await exited;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+async function outputControl(output, consumer, mode) {
+  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-output-"));
+  const filename = join(directory, "builder.json");
+  const resultFile = join(directory, "result.json");
+  const owner = spawn(
+    process.execPath,
+    [outputFixture, fixture, mode, filename, resultFile],
+    { stdio: ["ignore", "pipe", "pipe"], timeout: 45000 },
+  );
+  let otherOutput = "";
+  const target = owner[output];
+  const other = owner[output === "stdout" ? "stderr" : "stdout"];
+  other.on("data", (chunk) => (otherOutput += chunk.toString()));
+  if (consumer === "closed") target.once("data", () => target.destroy());
+  else owner.once("exit", () => target.resume());
+  const exited = new Promise((resolve, reject) => {
+    owner.once("error", reject);
+    owner.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  let parent;
+  let child;
+  try {
+    parent = await record(filename);
+    child = await record(filename + ".child");
+    assert.equal(await running(parent), true);
+    assert.equal(await running(child), true);
+    const trigger = createConnection({ host: "127.0.0.1", port: parent.port });
+    trigger.on("error", () => {});
+    trigger.end(output + "\n");
+    if (consumer === "blocked") {
+      const status = await record(filename + ".pending");
+      assert.equal(status.token, parent.token);
+      assert.equal(
+        status.pending,
+        true,
+        "actual large output write is pending",
+      );
+      if (mode === "output-exit") {
+        const exitTrigger = createConnection({
+          host: "127.0.0.1",
+          port: parent.port,
+        });
+        exitTrigger.on("error", () => {});
+        exitTrigger.end("exit\n");
+      }
+    }
+    const exit = await exited;
+    trigger.destroy();
+    assert.deepEqual(exit, { code: 0, signal: null }, otherOutput);
+    const result = JSON.parse(readFileSync(resultFile));
+    assert.ok(
+      Date.now() - result.settledAt < 5000,
+      "no cleanup timer retains the owner after settlement",
+    );
+    if (consumer === "closed") assert.match(result.error, /exited 7/);
+    else if (mode === "output-tree")
+      assert.match(result.error, /timed out after 30000ms/);
+    else
+      assert.equal(
+        result.error,
+        undefined,
+        "successful parent exit remains successful",
+      );
+    assert.deepEqual(
+      result.after,
+      result.before,
+      "temporary listeners disposed",
+    );
+    assert.ok(result.elapsed < 42000, "deadline and cleanup remain bounded");
+    assert.equal(await running(parent), false, "exact owned builder is absent");
+    assert.equal(
+      await running(child),
+      false,
+      "exact owned descendant is absent",
+    );
+    assert.doesNotMatch(otherOutput, /Unhandled 'error' event/);
+  } finally {
+    await exited;
+    // A regression run against broken POSIX forwarding can exit the owner
+    // before it releases its group. Only clean our recorded, still-live tree.
+    if (process.platform !== "win32" && parent && child) {
+      const probes = await Promise.allSettled([
+        running(parent),
+        running(child),
+      ]);
+      if (probes.some((probe) => probe.status === "fulfilled" && probe.value))
+        process.kill(-parent.pid, "SIGKILL");
+    }
+    rmSync(directory, { recursive: true, force: true });
+  }
 }

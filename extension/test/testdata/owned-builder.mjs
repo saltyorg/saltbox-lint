@@ -6,7 +6,28 @@ import { fileURLToPath } from "node:url";
 
 const [mode, record] = process.argv.slice(2);
 const token = randomBytes(32).toString("hex");
+for (const name of ["stdout", "stderr"])
+  process[name].on("error", () => process.exit(7));
 const server = createServer((socket) => {
+  if (mode === "output-tree" || mode === "output-exit") {
+    socket.once("data", (data) => {
+      const output = data.toString().trim();
+      if (output === "exit") process.exit(0);
+      else {
+        const status = (pending) => {
+          writeFileSync(
+            record + ".pending.tmp",
+            JSON.stringify({ token, pending }),
+          );
+          renameSync(record + ".pending.tmp", record + ".pending");
+        };
+        process[output].write(Buffer.alloc(16 * 1024 * 1024, "x"), () =>
+          status(false),
+        );
+        status(true);
+      }
+    });
+  }
   if (mode === "exit" || mode === "error-exit") {
     socket.once("data", () => process.exit(mode === "error-exit" ? 7 : 0));
   }
@@ -18,7 +39,9 @@ server.listen(0, "127.0.0.1", () => {
     JSON.stringify({ pid: process.pid, port: server.address().port, token }),
   );
   renameSync(record + ".tmp", record);
-  if (["tree", "exit", "error-exit"].includes(mode))
+  if (
+    ["tree", "exit", "error-exit", "output-tree", "output-exit"].includes(mode)
+  )
     spawn(
       process.execPath,
       [fileURLToPath(import.meta.url), "child", record + ".child"],
