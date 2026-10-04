@@ -20,6 +20,7 @@ import { EditorIntegration } from "../../src/editor.ts";
 import { hash, parseCheck } from "../../src/protocol.ts";
 import {
   fixtureGateInstance,
+  fixtureInvocations,
   fixtureProcesses,
   fixtureRunning,
   type FixtureProcess,
@@ -81,10 +82,7 @@ export async function runDependencies(): Promise<void> {
   const instancesLog = join(temporary, "instances.log");
   process.env.SALTBOX_TEST_PROCESS_LOG = log;
   process.env.SALTBOX_TEST_PROCESS_INSTANCES = instancesLog;
-  const invocations = () =>
-    existsSync(log)
-      ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
-      : [];
+  const invocations = () => fixtureInvocations(instancesLog);
   let cleanupStatus: { pid: number; token: string; running: boolean }[] = [];
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");

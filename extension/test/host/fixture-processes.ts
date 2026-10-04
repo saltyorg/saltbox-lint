@@ -6,6 +6,7 @@ export interface FixtureProcess {
   pid: number;
   port: number;
   token: string;
+  args?: string[];
 }
 
 // Readiness carries the publisher's credential. Historical records may reuse
@@ -54,6 +55,19 @@ export function fixtureProcesses(filename: string): FixtureProcess[] {
       assert.match(instance.token, /^[a-f0-9]{64}$/);
       return instance;
     });
+}
+
+// One append owns both the actual argv and the credentialed lifetime. A
+// cancellation between separate legacy log writes cannot lose this association.
+export function fixtureInvocations(filename: string): string[] {
+  return fixtureProcesses(filename).map((instance) => {
+    assert.ok(
+      Array.isArray(instance.args),
+      "fixture instance includes actual argv",
+    );
+    assert.ok(instance.args.every((argument) => typeof argument === "string"));
+    return `${instance.pid} ${instance.args.join(" ")}`;
+  });
 }
 
 // Never probe or signal an old numeric PID. The fixture owns this endpoint

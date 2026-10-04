@@ -30,6 +30,63 @@ async function status(document: vscode.TextDocument) {
   });
   return value;
 }
+// Fresh fixture integrations schedule saved and open-document startup checks.
+// Join those complete operations before measuring a separately owned request.
+async function settleStartup(editor: EditorIntegration): Promise<void> {
+  const roots = Reflect.get(editor, "roots");
+  const pending = new Set<Promise<unknown>>();
+  const startedFolders = new Set<string>();
+  let documentStarted = false;
+  let started!: () => void;
+  const startup = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const methods = ["check", "checkSaved"] as const;
+  const originals = methods.map((method) => Reflect.get(editor, method));
+  for (const [index, method] of methods.entries())
+    Reflect.set(
+      editor,
+      method,
+      function (this: EditorIntegration, ...args: unknown[]) {
+        const work: Promise<unknown> = originals[index].apply(this, args);
+        const joined = work.finally(() => pending.delete(joined));
+        pending.add(joined);
+        if (method === "checkSaved")
+          startedFolders.add(
+            (args[0] as vscode.WorkspaceFolder).uri.toString(),
+          );
+        else documentStarted = true;
+        if (
+          documentStarted &&
+          vscode.workspace.workspaceFolders!.every((folder) =>
+            startedFolders.has(folder.uri.toString()),
+          )
+        )
+          started();
+        return joined;
+      },
+    );
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await roots.ready();
+    await Promise.race([
+      (async () => {
+        await startup;
+        while (pending.size) await Promise.all([...pending]);
+      })(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Fixture startup checks did not settle")),
+          15000,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    for (const [index, method] of methods.entries())
+      Reflect.set(editor, method, originals[index]);
+  }
+}
 export async function runHelpStatus(
   document: vscode.TextDocument,
 ): Promise<void> {
@@ -140,6 +197,7 @@ export async function runHelpStatus(
   }
   const failed = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
   try {
+    await settleStartup(failed);
     await failed.check(document);
     assert.equal(failed.status(document).state, "failed");
     assert.equal(failed.status().state, "failed");
@@ -203,6 +261,7 @@ export async function runHelpStatus(
     assert.equal(reads, count, `${state} status buffer reads`);
   };
   try {
+    await settleStartup(observed);
     await observed.check(tracked);
     expectReads("failed", 1);
     textOverride = original + "# same version, different contents\n";

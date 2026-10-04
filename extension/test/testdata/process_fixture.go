@@ -17,9 +17,10 @@ import (
 )
 
 type processInstance struct {
-	PID   int    `json:"pid"`
-	Port  int    `json:"port"`
-	Token string `json:"token"`
+	PID   int      `json:"pid"`
+	Port  int      `json:"port"`
+	Token string   `json:"token"`
+	Args  []string `json:"args"`
 }
 
 func main() {
@@ -34,7 +35,7 @@ func main() {
 			os.Exit(2)
 		}
 		token := hex.EncodeToString(nonce[:])
-		instance = &processInstance{os.Getpid(), listener.Addr().(*net.TCPAddr).Port, token}
+		instance = &processInstance{os.Getpid(), listener.Addr().(*net.TCPAddr).Port, token, os.Args[1:]}
 		file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			os.Exit(2)

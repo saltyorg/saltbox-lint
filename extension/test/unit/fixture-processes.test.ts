@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   fixtureGateInstance,
+  fixtureInvocations,
   fixtureProcesses,
   fixtureRunning,
 } from "../host/fixture-processes.ts";
@@ -147,5 +148,38 @@ test("unknown or unresponsive lifetime endpoints fail conservatively", async () 
     } finally {
       await unknown.close();
     }
+  }
+});
+
+test("a cancelled fixture keeps its exact argv and lifetime in one journal record", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-instance-argv-"));
+  const live = await endpoint("a".repeat(64) + "\n");
+  try {
+    const filename = join(directory, "instances.jsonl");
+    const args = [
+      "check",
+      "--root",
+      "root with spaces",
+      "--",
+      "roles/main.yml",
+    ];
+    await writeFile(
+      filename,
+      JSON.stringify({ ...live.instance, args }) + "\n",
+    );
+    // Cancellation may prevent a subsequent legacy process-log append. The
+    // completed identity record still accounts for the exact invocation.
+    assert.deepEqual(fixtureInvocations(filename), [
+      `${live.instance.pid} ${args.join(" ")}`,
+    ]);
+    assert.deepEqual(fixtureProcesses(filename), [{ ...live.instance, args }]);
+    assert.equal(await fixtureRunning(fixtureProcesses(filename)[0]), true);
+    await live.close();
+    assert.equal(await fixtureRunning(fixtureProcesses(filename)[0]), false);
+    await writeFile(filename, JSON.stringify(live.instance) + "\n");
+    assert.throws(() => fixtureInvocations(filename), /includes actual argv/);
+  } finally {
+    await live.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
