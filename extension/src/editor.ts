@@ -1055,10 +1055,11 @@ export class EditorIntegration implements vscode.Disposable {
             folderKey,
             this.dependencies.admissionRevision(folderKey),
           );
-        const revision = this.rootRevision(folderKey);
+        if (!affected.has(folderKey))
+          affected.set(folderKey, this.rootRevision(folderKey));
+        const revision = affected.get(folderKey)!;
         const root = await this.root(folder);
         if (!root || revision !== this.rootRevision(folderKey)) continue;
-        affected.set(folderKey, revision);
         const key = uri.toString();
         let filename: string | undefined;
         try {
@@ -1111,16 +1112,24 @@ export class EditorIntegration implements vscode.Disposable {
         }
       }
       for (const [key, files] of selected) {
-        if (admissions.get(key) !== this.dependencies.admissionRevision(key))
-          continue;
+        const current = () =>
+          !this.disposed &&
+          !!this.roots.get(key) &&
+          affected.get(key) === this.rootRevision(key) &&
+          admissions.get(key) === this.dependencies.admissionRevision(key);
+        if (!current()) continue;
         const folder = vscode.workspace.workspaceFolders?.find(
           (folder) => folder.uri.toString() === key,
         );
         if (!folder) continue;
         const entries = [...files];
         for (let offset = 0; offset < entries.length; offset += 64) {
+          // Closed selections retain the authority that admitted this flush.
+          // A later chunk must not adopt a new root or ignore decision.
+          if (!current()) break;
           const batch = new Map(entries.slice(offset, offset + 64));
           const accepted = await this.checkSaved(folder, false, batch);
+          if (!current()) break;
           for (const relative of accepted ?? []) {
             const source = batch.get(relative)!;
             this.fileFingerprints.set(

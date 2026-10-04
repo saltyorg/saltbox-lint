@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
+  mkdir,
   mkdtemp,
   readFile,
   rename,
@@ -172,6 +173,84 @@ export async function runDependencies(): Promise<void> {
     success(
       "late context events retain every rejected selected source after full coverage",
     );
+    const admissionDirectory = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/admission/defaults",
+    );
+    const admissionFiles = Array.from({ length: 65 }, (_, index) =>
+      vscode.Uri.joinPath(
+        admissionDirectory,
+        `file${String(index).padStart(3, "0")}.yml`,
+      ),
+    );
+    const admissionIgnore = vscode.Uri.joinPath(roots[0].uri, ".gitignore");
+    const admissionIgnoreText = await readFile(admissionIgnore.fsPath, "utf8");
+    await mkdir(admissionDirectory.fsPath, { recursive: true });
+    await Promise.all(
+      admissionFiles.map((uri) =>
+        writeFile(
+          uri.fsPath,
+          unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+        ),
+      ),
+    );
+    await editor.checkWorkspace();
+    await pause(400);
+    assert.ok(admissionFiles.every((uri) => findings(uri).length === 0));
+    const admissionGate = join(temporary, "admission-gate");
+    await writeFile(admissionGate, "");
+    process.env.SALTBOX_TEST_PROCESS_GATE = admissionGate;
+    count = invocations().length;
+    await Promise.all(
+      admissionFiles.map((uri) => writeFile(uri.fsPath, unrelatedGood)),
+    );
+    for (const uri of admissionFiles) editor.removeFile(uri);
+    await waitFor(
+      () => existsSync(admissionGate + ".ready"),
+      "first selected chunk must hold output after complete coverage",
+    );
+    const firstAdmissionBatch = invocations().slice(count);
+    assert.ok(
+      firstAdmissionBatch.some(
+        (line) => line.split("roles/admission/defaults/").length - 1 === 64,
+      ),
+      "queued admission regression must exceed the 64-source chunk limit",
+    );
+    delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    await writeFile(
+      admissionIgnore.fsPath,
+      admissionIgnoreText + "roles/admission/\n",
+    );
+    const revokedCount = invocations().length;
+    editor.removeFile(admissionIgnore);
+    await rm(admissionGate);
+    await waitFor(
+      () =>
+        invocations()
+          .slice(revokedCount)
+          .some((line) => line.endsWith(" .")),
+      "revoked admission must schedule a fresh membership scan",
+    );
+    await pause(700);
+    assert.ok(
+      invocations()
+        .slice(revokedCount)
+        .every((line) => !line.includes("roles/admission/defaults/")),
+      "remaining closed chunks must retain the revoked original admission",
+    );
+    assert.ok(
+      admissionFiles.every((uri) => findings(uri).length === 0),
+      "excluded closed findings must stay absent after fresh membership coverage",
+    );
+    await rm(vscode.Uri.joinPath(roots[0].uri, "roles/admission").fsPath, {
+      recursive: true,
+      force: true,
+    });
+    await writeFile(admissionIgnore.fsPath, admissionIgnoreText);
+    await editor.checkWorkspace();
+    await pause(400);
+    success("admission changes revoke every remaining closed selected chunk");
+
     const unrelated = await vscode.workspace.openTextDocument(unrelatedUri);
     await vscode.window.showTextDocument(unrelated, { preview: false });
     await editor.check(unrelated, true);
