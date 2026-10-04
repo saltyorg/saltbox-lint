@@ -107,6 +107,17 @@ export async function runDependencies(): Promise<void> {
       return joined;
     },
   );
+  const savedWorkSettled = () => {
+    const lane = Reflect.get(editor, "lint");
+    return (
+      !Reflect.get(lane, "active") &&
+      Reflect.get(lane, "pending").size === 0 &&
+      Reflect.get(editor, "pendingFiles").size === 0 &&
+      Reflect.get(editor, "pendingRefresh").size === 0 &&
+      !Reflect.get(editor, "flushingFiles") &&
+      savedChecks.size === 0
+    );
+  };
   const subscriptions = [
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length) editor.change(event.document);
@@ -178,15 +189,8 @@ export async function runDependencies(): Promise<void> {
       "initial coverage must quiesce with invalid UTF-8",
     );
     const invalidChanged = Buffer.from([0xfe, 0x0a]);
-    const initialLane = Reflect.get(editor, "lint");
     await waitFor(
-      () =>
-        !Reflect.get(initialLane, "active") &&
-        Reflect.get(initialLane, "pending").size === 0 &&
-        Reflect.get(editor, "pendingFiles").size === 0 &&
-        Reflect.get(editor, "pendingRefresh").size === 0 &&
-        !Reflect.get(editor, "flushingFiles") &&
-        savedChecks.size === 0,
+      savedWorkSettled,
       "initial saved work settles before the selected-batch mutation cohort",
     );
     // Both writes belong to this selected-batch control. Keep real watcher
@@ -487,8 +491,34 @@ export async function runDependencies(): Promise<void> {
         ),
       ),
     );
+    for (const uri of admissionFiles) editor.removeFile(uri);
+    await waitFor(
+      savedWorkSettled,
+      "created admission source work settles before full scan",
+    );
     await editor.checkWorkspace();
-    await pause(400);
+    const admissionSourceHash = hash(
+      unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+    );
+    await waitFor(() => {
+      const folder = roots[0].uri.toString();
+      const results = Reflect.get(editor, "results");
+      const sources = Reflect.get(
+        Reflect.get(editor, "dependencies"),
+        "states",
+      ).get(folder)?.sources;
+      return (
+        savedWorkSettled() &&
+        results.hasCompleteScan(folder) &&
+        admissionFiles.every(
+          (uri) =>
+            results.saved(folder, uri.toString()) !== undefined &&
+            sources?.get(
+              "roles/admission/defaults/" + uri.path.split("/").at(-1),
+            )?.record.source_sha256 === admissionSourceHash,
+        )
+      );
+    }, "complete coverage accepts every intended admission source before the gate");
     assert.ok(admissionFiles.every((uri) => findings(uri).length === 0));
     const admissionGate = join(temporary, "admission-gate");
     const admissionNonce = randomBytes(32).toString("hex");
