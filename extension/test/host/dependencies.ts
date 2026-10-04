@@ -15,7 +15,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
 import { hash, parseCheck } from "../../src/protocol.ts";
 import {
@@ -843,7 +843,17 @@ export async function runDependencies(): Promise<void> {
 
     const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
     await vscode.window.showTextDocument(firstDocument, { preview: false });
+    assert.equal(
+      Reflect.get(editor, "sourceOwners").has(firstOpen.toString()),
+      false,
+      "first check starts before canonical ownership admission",
+    );
+    assert.ok(
+      Reflect.get(editor, "dependencies").begin() > 0,
+      "unrelated preceding context events have advanced the global token",
+    );
     const firstFilename = await realpath(firstOpen.fsPath);
+    const firstVersion = firstDocument.version;
     const firstGate = join(temporary, "first-open-gate");
     await writeFile(firstGate, "");
     process.env.SALTBOX_TEST_PROCESS_GATE = firstGate;
@@ -861,11 +871,31 @@ export async function runDependencies(): Promise<void> {
         ),
       "held output must belong to the first document check",
     );
+    const firstInstance = fixtureGateInstance(
+      JSON.parse(await readFile(firstGate + ".ready", "utf8")),
+      instancesLog,
+    );
+    assert.equal(await fixtureRunning(firstInstance), true);
+    assert.equal(firstDocument.version, firstVersion);
+    const firstBar: vscode.StatusBarItem = Reflect.get(editor, "statusBar");
+    const firstPendingStatus = editor.status(firstDocument);
+    const firstManualStatus = await editor.showStatus();
+    console.log(
+      `MEASURE first pending status=${firstPendingStatus.state} manual=${firstManualStatus.state} bar=${firstBar.text} canonical_admitted=${Reflect.get(editor, "sourceOwners").has(firstOpen.toString())}`,
+    );
+    assert.equal(firstPendingStatus.state, "checking");
+    assert.equal(firstManualStatus.state, "checking");
+    assert.equal(firstBar.text, "Saltbox Lint: checking");
+    const duplicateCount = invocations().length;
+    const duplicateCheck = editor.check(firstDocument);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(invocations().length, duplicateCount);
+    assert.equal(await fixtureRunning(firstInstance), true);
     await writeFile(template.fsPath, bad);
     editor.removeFile(template);
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
     await rm(firstGate);
-    await firstCheck;
+    await Promise.all([firstCheck, duplicateCheck]);
     await waitFor(
       () => renderer(firstOpen),
       "first clean open primary must recover after unknown context rejects its result",
@@ -882,7 +912,116 @@ export async function runDependencies(): Promise<void> {
     success(
       "first open primary retries rejected context before graph acceptance",
     );
+    success(
+      "first check after prior context events retains pending ownership through canonical admission, manual status and deduplication",
+    );
     await pause(400);
+
+    const aliasDirectory = vscode.Uri.joinPath(
+      roots[0].uri,
+      "pending-status-alias",
+    );
+    const pendingAlias = vscode.Uri.joinPath(aliasDirectory, "ignored.yml");
+    await symlink(
+      dirname(firstOpen.fsPath),
+      aliasDirectory.fsPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const aliasDocument = await vscode.workspace.openTextDocument(pendingAlias);
+    await vscode.window.showTextDocument(aliasDocument, { preview: false });
+    assert.equal(
+      Reflect.get(editor, "sourceOwners").has(pendingAlias.toString()),
+      false,
+    );
+    const aliasText = aliasDocument.getText();
+    let statusReads = 0;
+    let readingStatus = false;
+    const tracked: vscode.TextDocument = Object.create(aliasDocument, {
+      version: { get: () => aliasDocument.version },
+      isDirty: { get: () => aliasDocument.isDirty },
+      getText: {
+        value: () => {
+          if (readingStatus) statusReads++;
+          return aliasDocument.getText();
+        },
+      },
+    });
+    const originalStatus = editor.status;
+    editor.status = function (
+      source = vscode.window.activeTextEditor?.document,
+    ) {
+      if (source === aliasDocument) source = tracked;
+      readingStatus = true;
+      try {
+        return originalStatus.call(this, source);
+      } finally {
+        readingStatus = false;
+      }
+    };
+    const aliasGate = join(temporary, "pending-alias-gate");
+    try {
+      await writeFile(aliasGate, "");
+      process.env.SALTBOX_TEST_PROCESS_GATE = aliasGate;
+      const aliasCheck = editor.check(tracked);
+      await waitFor(
+        () => existsSync(aliasGate + ".ready"),
+        "alias check admits canonical ownership and holds its actual child",
+      );
+      const aliasReady = JSON.parse(
+        await readFile(aliasGate + ".ready", "utf8"),
+      );
+      assert.ok(aliasReady.args.includes(firstFilename));
+      assert.ok(aliasReady.args.includes("--stdin-filename"));
+      const aliasInstance = fixtureGateInstance(aliasReady, instancesLog);
+      assert.equal(await fixtureRunning(aliasInstance), true);
+      // Alias publication itself updates this item before manual status runs.
+      assert.equal(firstBar.text, "Saltbox Lint: checking");
+      assert.equal(editor.status().state, "checking");
+      assert.equal((await editor.showStatus()).state, "checking");
+      assert.equal(firstBar.text, "Saltbox Lint: checking");
+      assert.equal(statusReads, 0, "pending status never copies source text");
+      await rm(aliasGate + ".ready");
+      await replace(aliasDocument, aliasText + "# superseded pending source\n");
+      editor.change(tracked);
+      assert.equal(editor.status().state, "eligible");
+      const replacement = editor.check(tracked);
+      await aliasCheck;
+      assert.equal(await fixtureRunning(aliasInstance), false);
+      await waitFor(
+        () => existsSync(aliasGate + ".ready"),
+        "replacement source revision reaches the held gate",
+      );
+      const replacementInstance = fixtureGateInstance(
+        JSON.parse(await readFile(aliasGate + ".ready", "utf8")),
+        instancesLog,
+      );
+      assert.notEqual(replacementInstance.token, aliasInstance.token);
+      assert.equal(await fixtureRunning(replacementInstance), true);
+      console.log(
+        `MEASURE alias replacement status=${editor.status().state} version=${aliasDocument.version}/${tracked.version} active=${vscode.window.activeTextEditor?.document.uri.toString()} keys=${JSON.stringify([...Reflect.get(editor, "checking").keys()])}`,
+      );
+      assert.equal(editor.status().state, "checking");
+      assert.equal((await editor.showStatus()).state, "checking");
+      assert.equal(firstBar.text, "Saltbox Lint: checking");
+      assert.equal(statusReads, 0);
+      editor.dispose();
+      await replacement;
+      assert.equal(await fixtureRunning(replacementInstance), false);
+      assert.equal(editor.status().state, "missing-marker");
+      assert.equal(Reflect.get(editor, "checking").size, 0);
+    } finally {
+      editor.status = originalStatus;
+      delete process.env.SALTBOX_TEST_PROCESS_GATE;
+      await rm(aliasGate, { force: true });
+      await replace(aliasDocument, aliasText);
+      await vscode.commands.executeCommand(
+        "workbench.action.closeActiveEditor",
+      );
+      await rm(aliasDirectory.fsPath, { recursive: true, force: true });
+    }
+    success(
+      "alias admission displays pending status without source reads and supersession, cancellation and disposal release exact child ownership",
+    );
 
     // Hold an already-computed full scan, then change unknown context before its
     // first result is accepted. Cancellation must preserve eventual full coverage.
@@ -940,7 +1079,7 @@ export async function runDependencies(): Promise<void> {
     // Read the actual VS Code item without invoking showStatus/updateStatus.
     const statusBar: vscode.StatusBarItem = Reflect.get(editor, "statusBar");
     const results = Reflect.get(editor, "results");
-    const checking: ReadonlyMap<string, Promise<void>> = Reflect.get(
+    const checking: ReadonlyMap<string, unknown> = Reflect.get(
       editor,
       "checking",
     );

@@ -55,6 +55,12 @@ interface DocumentResult {
   report: CheckReport;
   diagnostics: vscode.Diagnostic[];
 }
+interface PendingCheck {
+  key: string;
+  prefix: string;
+  source?: string;
+  work: Promise<void>;
+}
 function textEdits(edits: EditorEdit[]): vscode.TextEdit[] {
   return edits.map((edit) => vscode.TextEdit.replace(range(edit), edit.text));
 }
@@ -75,7 +81,7 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel("Saltbox Lint");
   private readonly results = new Results<DocumentResult>();
   private readonly dependencies = new Dependencies();
-  private readonly checking = new Map<string, Promise<void>>();
+  private readonly checking = new Map<string, PendingCheck>();
   private readonly rootRevisions = new Map<string, number>();
   private readonly documentRevisions = new WeakMap<
     vscode.TextDocument,
@@ -320,6 +326,23 @@ export class EditorIntegration implements vscode.Disposable {
     document: vscode.TextDocument,
     identity: Identity,
   ): void {
+    const folder = vscode.workspace
+      .getWorkspaceFolder(document.uri)!
+      .uri.toString();
+    const prefix = `${document.uri}:${document.version}:${this.documentRevision(document)}:${this.rootRevision(folder)}:`;
+    for (const pending of this.checking.values()) {
+      if (pending.prefix !== prefix || pending.source !== undefined) continue;
+      const key = `${prefix}${this.dependencies.revision(folder, identity.path)}`;
+      if (key !== pending.key) {
+        // Canonical admission refines the request's dependency identity. Keep
+        // its ownership before alias publication can refresh the status bar.
+        if (this.checking.has(key)) continue;
+        this.checking.delete(pending.key);
+        pending.key = key;
+        this.checking.set(key, pending);
+      }
+      pending.source = identity.path;
+    }
     this.sourceOwners.set(document.uri.toString(), identity);
     this.eligibilityChanged.fire();
     const canonical = vscode.Uri.file(identity.filename);
@@ -487,22 +510,29 @@ export class EditorIntegration implements vscode.Disposable {
     const contextRevision = identity
       ? this.dependencies.revision(folder, identity.path)
       : this.dependencies.begin();
-    const requestKey = `${document.uri}:${version}:${revision}:${this.rootRevision(folder)}:${contextRevision}`;
+    const prefix = `${document.uri}:${version}:${revision}:${this.rootRevision(folder)}:`;
+    const requestKey = `${prefix}${contextRevision}`;
     const existing = this.checking.get(requestKey);
-    if (existing) return existing;
+    if (existing) return existing.work;
     const work = this.checkSnapshot(document, manual, version).then((retry) => {
       // Release deduplication before a rejected request queues its replacement.
-      if (this.checking.get(requestKey) === work)
-        this.checking.delete(requestKey);
+      if (this.checking.get(pending.key) === pending)
+        this.checking.delete(pending.key);
       retry?.();
     });
-    this.checking.set(requestKey, work);
+    const pending: PendingCheck = {
+      key: requestKey,
+      prefix,
+      source: identity?.path,
+      work,
+    };
+    this.checking.set(requestKey, pending);
     this.updateStatus();
     try {
       await work;
     } finally {
-      if (this.checking.get(requestKey) === work)
-        this.checking.delete(requestKey);
+      if (this.checking.get(pending.key) === pending)
+        this.checking.delete(pending.key);
       this.updateStatus();
     }
   }
