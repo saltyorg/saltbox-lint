@@ -909,6 +909,83 @@ export async function runDependencies(): Promise<void> {
       "late context events reject in-flight scans and retain startup full coverage",
     );
 
+    // This isolated role has exactly one primary dependent on its template.
+    const statusTask = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/status-event/tasks/main.yml",
+    );
+    const statusTemplate = vscode.Uri.joinPath(
+      roots[0].uri,
+      "roles/status-event/templates/router.conf",
+    );
+    await mkdir(join(roots[0].uri.fsPath, "roles/status-event/tasks"), {
+      recursive: true,
+    });
+    await mkdir(join(roots[0].uri.fsPath, "roles/status-event/templates"), {
+      recursive: true,
+    });
+    const statusSource = await readFile(task.fsPath, "utf8");
+    await writeFile(statusTask.fsPath, statusSource);
+    await writeFile(statusTemplate.fsPath, good);
+    await editor.checkWorkspace();
+    await pause(400);
+    const statusDocument = await vscode.workspace.openTextDocument(statusTask);
+    await vscode.window.showTextDocument(statusDocument, { preview: false });
+    await replace(
+      statusDocument,
+      statusSource +
+        '- name: Show value\n  ansible.builtin.debug:\n    msg: "{{ value\n }}"\n',
+    );
+    await editor.check(statusDocument, true);
+    // Read the actual VS Code item without invoking showStatus/updateStatus.
+    const statusBar: vscode.StatusBarItem = Reflect.get(editor, "statusBar");
+    const results = Reflect.get(editor, "results");
+    const checking: ReadonlyMap<string, Promise<void>> = Reflect.get(
+      editor,
+      "checking",
+    );
+    const pendingFiles: ReadonlyMap<string, unknown> = Reflect.get(
+      editor,
+      "pendingFiles",
+    );
+    assert.equal(results.hasCompleteScan(roots[0].uri.toString()), true);
+    assert.equal(statusDocument.isDirty, true);
+    assert.equal(statusBar.text, "Saltbox Lint: current");
+    const statusFindings = findings(statusTask);
+    assert.ok(
+      statusFindings.length > 0,
+      "retain existing dirty-source findings",
+    );
+    const statusQuiet = invocations().length;
+    await writeFile(statusTemplate.fsPath, bad);
+    editor.removeFile(statusTemplate);
+    await waitFor(
+      () => statusBar.text === "Saltbox Lint: stale",
+      "dependency event must update the actual status bar for a dirty source",
+    );
+    assert.deepEqual(findings(statusTask), statusFindings);
+    assert.equal(results.hasCompleteScan(roots[0].uri.toString()), true);
+    assert.equal(
+      [...checking.keys()].some((key) => key.startsWith(`${statusTask}:`)),
+      false,
+    );
+    assert.equal(pendingFiles.has(statusTask.toString()), false);
+    await pause(600);
+    assert.equal(
+      invocations().length,
+      statusQuiet,
+      "dirty dependency event must schedule no automatic check",
+    );
+    assert.equal(statusBar.text, "Saltbox Lint: stale");
+    await writeFile(statusTemplate.fsPath, good);
+    await replace(statusDocument, statusSource);
+    await statusDocument.save();
+    await editor.check(statusDocument, true);
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+    success(
+      "dirty referenced-template event updates actual status bar with complete coverage and no queued check",
+    );
+
     await rm(join(roots[0].uri.fsPath, ".saltbox-lint"));
     await waitFor(
       () => findings(task).length === 0 && findings(unrelatedUri).length === 0,

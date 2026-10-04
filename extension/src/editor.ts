@@ -1211,6 +1211,7 @@ export class EditorIntegration implements vscode.Disposable {
     }
     const affected = this.dependencies.event(key, root, relative, fingerprint);
     if (!affected) return;
+    this.updateStatus();
     const discoveryControl =
       relative === ".gitignore" ||
       relative === ".git/info/exclude" ||

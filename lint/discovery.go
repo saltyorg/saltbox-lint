@@ -171,19 +171,19 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if !supportedSource(relative) || (selected && isTemplate(relative) && !l.explain) {
 		return fmt.Errorf("unsupported source target %s", absolute)
 	}
+	s := l.project.Sources[relative]
+	if s == nil {
+		s, err = l.readSource(absolute, relative)
+		if err != nil {
+			return err
+		}
+		l.project.Sources[relative] = s
+		l.project.Diagnostics = append(l.project.Diagnostics, s.parseDiagnostics...)
+	}
 	if selected {
-		l.project.discoverable[relative] = l.directoryWouldSelect(absolute, relative)
+		l.project.discoverable[relative] = l.directoryWouldSelect(absolute, s)
 		l.project.Selected[relative] = true
 	}
-	if _, exists := l.project.Sources[relative]; exists {
-		return nil
-	}
-	s, err := l.readSource(absolute, relative)
-	if err != nil {
-		return err
-	}
-	l.project.Sources[relative] = s
-	l.project.Diagnostics = append(l.project.Diagnostics, s.parseDiagnostics...)
 	return nil
 }
 
@@ -297,8 +297,7 @@ func (l *sourceLoader) directorySources(paths []string, selected bool) error {
 		if err != nil {
 			return nil, err
 		}
-		// Arbitrarily named root playbooks are admitted by parsed structure.
-		if selected && kind == Generic && source.Kind != Playbook {
+		if !directoryAdmitsSource(source, selected) {
 			return nil, nil
 		}
 		return source, nil
@@ -569,14 +568,25 @@ func enclosingGitRoot(dir string) (string, error) {
 	}
 }
 
-// directoryWouldSelect uses the loader's actual Git admission snapshot and the
-// shared source-kind predicate, without discovering or reading another project.
-func (l *sourceLoader) directoryWouldSelect(absolute, relative string) bool {
-	if !directorySource(relative, true) {
+// directoryAdmitsSource completes candidate admission using parsed structure.
+// Arbitrarily named root playbooks are admitted only when parsing identifies
+// them as playbooks. Explicit selection does not apply this directory policy.
+func directoryAdmitsSource(source *Source, selected bool) bool {
+	if !directorySource(source.Path, selected) {
+		return false
+	}
+	kind, _, _ := classify(source.Path)
+	return !selected || kind != Generic || source.Kind == Playbook
+}
+
+// directoryWouldSelect combines shared parsed admission with the loader's Git
+// snapshot and the file's existence, without reading another source/project.
+func (l *sourceLoader) directoryWouldSelect(absolute string, source *Source) bool {
+	if !directoryAdmitsSource(source, true) {
 		return false
 	}
 	if l.gitFiles != nil {
-		if _, exists := slices.BinarySearch(l.gitFiles, filepath.FromSlash(relative)); !exists {
+		if _, exists := slices.BinarySearch(l.gitFiles, filepath.FromSlash(source.Path)); !exists {
 			return false
 		}
 	}

@@ -72,6 +72,59 @@ func TestExplainSelectionAndContext(t *testing.T) {
 		t.Fatal("directory accepted as single source")
 	}
 }
+func TestExplainParsedDirectoryAdmission(t *testing.T) {
+	for _, git := range []bool{false, true} {
+		t.Run(map[bool]string{false: "walk", true: "git"}[git], func(t *testing.T) {
+			root := t.TempDir()
+			if git {
+				if wire, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+					t.Fatalf("git: %s: %v", wire, err)
+				}
+			}
+			inputs := []struct {
+				name, text string
+				selected   bool
+			}{
+				{"main.yml", "value: fine\n", false},
+				{"arbitrary.yaml", "- hosts: all\n  tasks: []\n", true},
+				{"malformed.yml", "value: [\n", false},
+				{"nested/generic.yml", "value: fine\n", false},
+			}
+			for _, input := range inputs {
+				filename := filepath.Join(root, filepath.FromSlash(input.name))
+				if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filename, []byte(input.text), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			project, err := Load(t.Context(), Options{Root: root, Paths: []string{root}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, input := range inputs {
+				filename := filepath.Join(root, filepath.FromSlash(input.name))
+				for _, stdin := range []bool{false, true} {
+					opts := Options{Root: root, Paths: []string{filename}}
+					if stdin {
+						opts.Paths = nil
+						opts.StdinFilename = filename
+						opts.Stdin = []byte(input.text)
+					}
+					result, err := Explain(t.Context(), opts)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if project.Selected[input.name] != input.selected || result.DirectoryWouldSelect != project.Selected[input.name] {
+						t.Errorf("%s stdin=%v: explanation selected=%v directory selected=%v want=%v", input.name, stdin, result.DirectoryWouldSelect, project.Selected[input.name], input.selected)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestFixDecisionAuthority(t *testing.T) {
 	source, _ := Parse("main.yml", []byte("value: \"{{ a\n | f }}\"\n"))
 	project := &Project{Sources: map[string]*Source{source.Path: source}, Selected: map[string]bool{source.Path: true}}
