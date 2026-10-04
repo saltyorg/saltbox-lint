@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
 import { hash, parseCheck } from "../../src/protocol.ts";
+import { fixtureProcesses, fixtureRunning } from "./fixture-processes.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const findings = (uri: vscode.Uri) =>
@@ -24,10 +25,13 @@ const findings = (uri: vscode.Uri) =>
     .filter((item) => item.source === "saltbox-lint");
 const renderer = (uri: vscode.Uri) =>
   findings(uri).some((item) => item.code === "traefik-renderer-contract");
-async function waitFor(predicate: () => boolean, message: string) {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  message: string,
+) {
   const deadline = Date.now() + 15000;
-  while (!predicate() && Date.now() < deadline) await pause(25);
-  assert.ok(predicate(), message);
+  while (!(await predicate()) && Date.now() < deadline) await pause(25);
+  assert.ok(await predicate(), message);
 }
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
@@ -65,11 +69,14 @@ export async function runDependencies(): Promise<void> {
   );
   const temporary = await mkdtemp(join(tmpdir(), "saltbox-dependencies-"));
   const log = join(temporary, "process.log");
+  const instancesLog = join(temporary, "instances.log");
   process.env.SALTBOX_TEST_PROCESS_LOG = log;
+  process.env.SALTBOX_TEST_PROCESS_INSTANCES = instancesLog;
   const invocations = () =>
     existsSync(log)
       ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
       : [];
+  let cleanupStatus: { pid: number; token: string; running: boolean }[] = [];
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");
   const bad = "http:\n  routers: {}\n";
@@ -842,31 +849,46 @@ export async function runDependencies(): Promise<void> {
     );
     editor.dispose();
     await pause(150);
-    const pids = new Set(
-      invocations().map((line) => Number(line.split(" ")[0])),
-    );
-    await waitFor(
-      () =>
-        [...pids].every((pid) => {
-          try {
-            process.kill(pid, 0);
-            return false;
-          } catch {
-            return true;
-          }
-        }),
-      "completed dependency checks must leave no fixture processes running",
-    );
+    await waitFor(async () => {
+      const instances = fixtureProcesses(instancesLog);
+      const pids = invocations().map((line) => Number(line.split(" ")[0]));
+      if (instances.length !== pids.length) return false;
+      assert.deepEqual(
+        instances.map((instance) => instance.pid).sort((a, b) => a - b),
+        pids.sort((a, b) => a - b),
+        "every invocation must have a process lifetime identity",
+      );
+      const live = await Promise.all(instances.map(fixtureRunning));
+      assert.equal(
+        new Set(instances.map((instance) => instance.token)).size,
+        instances.length,
+      );
+      cleanupStatus = instances.map((instance, index) => ({
+        pid: instance.pid,
+        token: instance.token,
+        running: live[index],
+      }));
+      return !live.some(Boolean);
+    }, "completed dependency checks must leave no fixture processes running");
     console.log(
-      `MEASURE dependency cleanup observed_processes=${pids.size} surviving=0`,
+      `MEASURE dependency cleanup observed_processes=${fixtureProcesses(instancesLog).length} surviving=0`,
     );
   } catch (error) {
     console.error("Dependency host process log:", invocations());
+    console.error(
+      "Dependency host process instances:",
+      JSON.stringify(fixtureProcesses(instancesLog)),
+    );
+    console.error(
+      "Dependency host cleanup status:",
+      JSON.stringify(cleanupStatus),
+    );
     throw error;
   } finally {
     editor.dispose();
     for (const subscription of subscriptions) subscription.dispose();
     delete process.env.SALTBOX_TEST_PROCESS_LOG;
+    delete process.env.SALTBOX_TEST_PROCESS_INSTANCES;
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
     await rm(temporary, { recursive: true, force: true });
   }

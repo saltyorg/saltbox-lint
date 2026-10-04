@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, mkdir, symlink } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -396,6 +396,7 @@ export async function runMarkers(): Promise<void> {
     );
     assert.equal(languageSource.languageId, "plaintext");
     assert.equal(languageSource.uri.toString(), special.uri.toString());
+    const sourceIdentity = await realpath(languageSource.uri.fsPath);
     const fsPromises =
       require("node:fs/promises") as typeof import("node:fs/promises");
     const originalRealpath = fsPromises.realpath;
@@ -417,13 +418,15 @@ export async function runMarkers(): Promise<void> {
     let pendingFormat: Promise<vscode.TextEdit[]> | undefined;
     Object.defineProperty(fsPromises, "realpath", {
       ...realpathDescriptor,
-      value: (...args: Parameters<typeof originalRealpath>) => {
+      value: async (...args: Parameters<typeof originalRealpath>) => {
         if (identityPaths.length < 32) identityPaths.push(String(args[0]));
-        if (String(args[0]) !== languageSource.uri.fsPath)
-          return originalRealpath(...args);
+        const resolved = await originalRealpath(...args);
+        // The source can arrive through its editor alias or canonical spelling.
+        // Gate only successful validation of this exact actual source.
+        if (resolved !== sourceIdentity) return resolved;
         entries++;
         if (entries === 2) enterFormatter();
-        const call = gate.then(() => originalRealpath(...args));
+        const call = gate.then(() => resolved);
         gatedCalls.push(call);
         return call;
       },
@@ -442,7 +445,7 @@ export async function runMarkers(): Promise<void> {
         );
       } catch (error) {
         throw new Error(
-          `Ansible identity gate failed: ${JSON.stringify({ uri: changed.uri.toString(), language: changed.languageId, closed: changed.isClosed, entries, identityPaths })}`,
+          `Ansible identity gate failed: ${JSON.stringify({ uri: changed.uri.toString(), sourceIdentity, language: changed.languageId, closed: changed.isClosed, entries, identityPaths })}`,
           { cause: error },
         );
       }

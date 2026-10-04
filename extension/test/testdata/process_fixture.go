@@ -3,8 +3,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -12,6 +16,44 @@ import (
 )
 
 func main() {
+	if filename := os.Getenv("SALTBOX_TEST_PROCESS_INSTANCES"); filename != "" {
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			os.Exit(2)
+		}
+		var nonce [32]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			os.Exit(2)
+		}
+		token := hex.EncodeToString(nonce[:])
+		instance := struct {
+			PID   int    `json:"pid"`
+			Port  int    `json:"port"`
+			Token string `json:"token"`
+		}{os.Getpid(), listener.Addr().(*net.TCPAddr).Port, token}
+		file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			os.Exit(2)
+		}
+		writeErr := json.NewEncoder(file).Encode(instance)
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			os.Exit(2)
+		}
+		// The OS owns this endpoint for this process's lifetime. An exited
+		// process, zombie, or reused PID cannot answer with this instance token.
+		go func() {
+			for {
+				connection, err := listener.Accept()
+				if err != nil {
+					os.Exit(2)
+				}
+				_ = connection.SetWriteDeadline(time.Now().Add(time.Second))
+				_, _ = io.WriteString(connection, token+"\n")
+				_ = connection.Close()
+			}
+		}()
+	}
 	if filename := os.Getenv("SALTBOX_TEST_PROCESS_LOG"); filename != "" {
 		file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
