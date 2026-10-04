@@ -31,6 +31,13 @@ for (const name of ["one", "two"]) {
   writeFileSync(resolve(root, name, ".gitignore"), "ignored.yml\n");
   writeFileSync(resolve(root, name, "ignored.yml"), 'value: "{{ value\n }}"\n');
 }
+if (
+  process.env.SALTBOX_TEST_SAVE_SCOPE === "1" &&
+  process.env.SALTBOX_TEST_QUEUE !== "1" &&
+  process.env.SALTBOX_TEST_ACTIVE_PROJECT !== "1"
+) {
+  writeFileSync(resolve(root, "one/other.yml"), 'value: "{{ other\n }}"\n');
+}
 if (process.env.SALTBOX_TEST_ACTIVE_PROJECT === "1") {
   for (const name of ["one", "two"]) {
     writeFileSync(resolve(root, name, "README.md"), "Project context\n");

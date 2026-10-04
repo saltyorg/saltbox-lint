@@ -39,11 +39,12 @@ async function replace(document: vscode.TextDocument, text: string) {
 export async function runSaveScope(): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
   const otherUri = vscode.Uri.joinPath(roots[0].uri, "other.yml");
-  // Create setup sources before the integration registers filesystem watchers.
-  // A delayed create notification must not count as a check caused by typing.
-  await vscode.workspace.fs.writeFile(
-    otherUri,
-    Buffer.from('value: "{{ other\n }}"\n'),
+  // Fixture creation belongs to the launcher, before VS Code starts watching.
+  // A completed workspace.fs write can still deliver a delayed create event.
+  assert.equal(
+    Buffer.from(await vscode.workspace.fs.readFile(otherUri)).toString("utf8"),
+    'value: "{{ other\n }}"\n',
+    "save-scope fixture must exist before the extension host starts",
   );
   const temporary = await mkdtemp(join(tmpdir(), "saltbox-save-scope-"));
   const log = join(temporary, "process.log");
