@@ -517,3 +517,51 @@ func TestLoadRejectsEscapedNestedContext(t *testing.T) {
 		}
 	}
 }
+
+func TestNestedSourceRootRetainsOpaqueGitPolicy(t *testing.T) {
+	for _, alias := range []string{"regular", "leaf", "parent"} {
+		t.Run(alias, func(t *testing.T) {
+			repo := t.TempDir()
+			gitTest(t, repo, "init", "-q")
+			root := filepath.Join(repo, "subdir")
+			source := putFile(t, root, "main.yml", "---\n- hosts: all\n  tasks: []\n")
+			putFile(t, root, "visible.yml", "---\n- hosts: all\n  tasks: []\n")
+			const policy = "subdir/main.yml\n"
+			exclude := filepath.Join(repo, ".git/info/exclude")
+			if alias == "regular" {
+				putFile(t, repo, ".git/info/exclude", policy)
+			} else {
+				owned := putFile(t, repo, "owned/exclude", policy)
+				link, target := exclude, owned
+				if alias == "parent" {
+					link, target = filepath.Dir(exclude), filepath.Dir(owned)
+				}
+				if err := os.RemoveAll(link); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p, err := Load(t.Context(), Options{Root: root, Paths: []string{source}, IncludeAnalysis: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !p.Selected["main.yml"] || p.discoverable["main.yml"] {
+				t.Fatalf("explicit ignored source: %#v", p.Selected)
+			}
+			for _, observed := range p.Dependencies.Sources[0].Discovery {
+				if observed.State != "missing" || observed.SHA256 != "" {
+					t.Fatalf("opaque ancestor policy became a source fact: %#v", observed)
+				}
+			}
+			p, err = Load(t.Context(), Options{Root: root, Paths: []string{root}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Selected["main.yml"] || !p.Selected["visible.yml"] {
+				t.Fatalf("ancestor ignore selection changed: %#v", p.Selected)
+			}
+		})
+	}
+}

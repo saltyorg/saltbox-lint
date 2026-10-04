@@ -69,6 +69,11 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 				p.discovery = append(p.discovery, observation)
 			}
 		}
+		// Nested source roots still inherit repository discovery policy. Its
+		// administrative controls are opaque Git inputs, not source facts.
+		if err := preflightGitControls(ctx, root, gitRoot); err != nil {
+			return nil, err
+		}
 		// Git handles nested ignores, tracked-but-ignored files, and worktree metadata.
 		cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 		output, err := cmd.Output()
@@ -160,6 +165,38 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 		p.Dependencies = dependencyRecord(p, rules)
 	}
 	return p, nil
+}
+
+// preflightGitControls checks the actual common administrative directory, which
+// may belong to the enclosing repository or a linked worktree's main repository.
+// No administrative content or hash is exported as a SourceRoot dependency.
+func preflightGitControls(ctx context.Context, root, gitRoot string) error {
+	if _, err := ownedSourcePath(gitRoot, filepath.Join(gitRoot, ".git")); errors.Is(err, errOutsideRoot) {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	output, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("locate Git discovery controls in %s: %w", root, err)
+	}
+	common, err := filepath.EvalSymlinks(strings.TrimSuffix(string(output), "\n"))
+	if err != nil {
+		return fmt.Errorf("resolve Git administrative directory: %w", err)
+	}
+	owner := gitRoot
+	if _, err := relativeSource(owner, common); err != nil {
+		owner = common
+		if filepath.Base(common) == ".git" {
+			owner = filepath.Dir(common)
+		}
+	}
+	if _, err := ownedSourcePath(owner, filepath.Join(common, "info", "exclude")); errors.Is(err, errOutsideRoot) {
+		return err
+	}
+	return nil
 }
 
 type sourceLoader struct {

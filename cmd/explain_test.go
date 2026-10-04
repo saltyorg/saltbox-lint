@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,5 +99,61 @@ func TestDiscoveryControlsRejectExternalSymlinks(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNestedRootRejectsEscapedGitAdminControls(t *testing.T) {
+	for _, parent := range []bool{false, true} {
+		for _, linked := range []bool{false, true} {
+			t.Run(fmt.Sprintf("parent=%v/linked=%v", parent, linked), func(t *testing.T) {
+				repo := t.TempDir()
+				git := func(args ...string) {
+					t.Helper()
+					if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+						t.Fatalf("git %v: %v: %s", args, err, output)
+					}
+				}
+				git("init", "-q")
+				worktree := repo
+				if linked {
+					git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: initialize fixture")
+					worktree = filepath.Join(t.TempDir(), "worktree")
+					git("worktree", "add", "-q", "-b", "fixture", worktree)
+				}
+				root := filepath.Join(worktree, "subdir")
+				if err := os.Mkdir(root, 0755); err != nil {
+					t.Fatal(err)
+				}
+				filename := filepath.Join(root, "source.yml")
+				if err := os.WriteFile(filename, []byte("value: ok\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				external := t.TempDir()
+				target := filepath.Join(external, "exclude")
+				if err := os.WriteFile(target, []byte("source.yml\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				link := filepath.Join(repo, ".git/info/exclude")
+				if parent {
+					link, target = filepath.Dir(link), external
+				}
+				if err := os.RemoveAll(link); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+				for _, args := range [][]string{
+					{"explain", filename, "--root", root, "--format", "json"},
+					{"check", filename, "--root", root, "--format", "json", "--include-analysis"},
+					{"check", filename, "--root", root, "--format", "json"},
+				} {
+					var out, stderr bytes.Buffer
+					if code := Run(t.Context(), args, Streams{Out: &out, Err: &stderr}, "test"); code != 2 || out.Len() != 0 || !strings.Contains(stderr.String(), "outside root") {
+						t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, out.String(), stderr.String())
+					}
+				}
+			})
+		}
 	}
 }
