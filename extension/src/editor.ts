@@ -346,7 +346,12 @@ export class EditorIntegration implements vscode.Disposable {
     const requestKey = `${document.uri}:${version}:${revision}:${this.rootRevision(folder)}:${contextRevision}`;
     const existing = this.checking.get(requestKey);
     if (existing) return existing;
-    const work = this.checkSnapshot(document, manual, version);
+    const work = this.checkSnapshot(document, manual, version).then((retry) => {
+      // Release deduplication before a rejected request queues its replacement.
+      if (this.checking.get(requestKey) === work)
+        this.checking.delete(requestKey);
+      retry?.();
+    });
     this.checking.set(requestKey, work);
     try {
       await work;
@@ -359,7 +364,7 @@ export class EditorIntegration implements vscode.Disposable {
     document: vscode.TextDocument,
     manual: boolean,
     version: number,
-  ): Promise<void> {
+  ): Promise<(() => void) | undefined> {
     const key = document.uri.toString();
     const revision = this.documentRevision(document);
     const folder = vscode.workspace
@@ -367,13 +372,22 @@ export class EditorIntegration implements vscode.Disposable {
       .uri.toString();
     const rootRevision = this.rootRevision(folder);
     const dependencyToken = this.dependencies.begin();
+    const admissionRevision = this.dependencies.admissionRevision(folder);
     // Ownership must exist while the request is queued, before any source copy.
     this.documentFolders.set(key, folder);
     const current = () =>
       this.eligible(document) &&
       document.version === version &&
       revision === this.documentRevision(document) &&
-      rootRevision === this.rootRevision(folder);
+      rootRevision === this.rootRevision(folder) &&
+      admissionRevision === this.dependencies.admissionRevision(folder);
+    const retry = () => {
+      if (current() && !document.isDirty)
+        return () => {
+          if (current() && !document.isDirty)
+            this.queueFile(document.uri, true, version);
+        };
+    };
     try {
       const result = await this.lint.submit(
         key,
@@ -405,9 +419,13 @@ export class EditorIntegration implements vscode.Disposable {
           return { wire, snapshot };
         },
       );
-      if (!result || !current()) return;
+      if (!current()) return;
+      if (!result) {
+        if (dependencyToken !== this.dependencies.begin()) return retry();
+        return;
+      }
       const { wire, snapshot } = result;
-      if (!this.current(document, snapshot)) return;
+      if (!this.current(document, snapshot)) return retry();
       const report = parseCheck(wire, true);
       if (
         report.analysis!.root !== snapshot.root ||
@@ -428,7 +446,7 @@ export class EditorIntegration implements vscode.Disposable {
         snapshot.index,
         snapshot.root,
       );
-      if (!this.current(document, snapshot)) return;
+      if (!this.current(document, snapshot)) return retry();
       if (relatedRevision !== this.relatedRevision)
         for (const diagnostic of diagnostics)
           diagnostic.relatedInformation = undefined;
@@ -440,7 +458,8 @@ export class EditorIntegration implements vscode.Disposable {
         this.contextEvent(
           vscode.Uri.file(path.join(snapshot.root, ...file.split("/"))),
         );
-      if (!this.current(document, snapshot) || observed.changed.size) return;
+      if (!this.current(document, snapshot) || observed.changed.size)
+        return retry();
       if (
         !this.dependencies.accept(
           folder,
@@ -451,7 +470,7 @@ export class EditorIntegration implements vscode.Disposable {
           observed.fingerprints,
         )
       )
-        return;
+        return retry();
       this.results.storeDocument(key, {
         id: randomUUID(),
         snapshot,

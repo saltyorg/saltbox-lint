@@ -109,6 +109,13 @@ if (process.env.SALTBOX_TEST_DEPENDENCIES === "1") {
       header +
         '- name: Render configuration\n  ansible.builtin.template:\n    src: router.conf\n    dest: /traefik/router.yml\n    mode: "0644"\n',
     );
+    mkdirSync(resolve(root, name, "roles/example/tasks/first-open"), {
+      recursive: true,
+    });
+    writeFileSync(
+      resolve(root, name, "roles/example/tasks/first-open/ignored.yml"),
+      readFileSync(resolve(root, name, "roles/example/tasks/main.yml")),
+    );
     writeFileSync(
       resolve(root, name, "roles/example/templates/router.conf"),
       template,

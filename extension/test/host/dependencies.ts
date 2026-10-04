@@ -70,6 +70,11 @@ export async function runDependencies(): Promise<void> {
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");
   const bad = "http:\n  routers: {}\n";
+  const firstOpen = vscode.Uri.joinPath(
+    roots[0].uri,
+    "roles/example/tasks/first-open/ignored.yml",
+  );
+  // This primary is excluded from full coverage and has no accepted graph yet.
   let editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
   const subscriptions = [
     vscode.workspace.onDidChangeTextDocument((event) => {
@@ -529,6 +534,46 @@ export async function runDependencies(): Promise<void> {
       `MEASURE dependency burst writes=30 processes=${burst.length} elapsed_ms=${Date.now() - start}`,
     );
     success("watcher bursts coalesce without full-root rescans");
+
+    const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
+    await vscode.window.showTextDocument(firstDocument, { preview: false });
+    const firstGate = join(temporary, "first-open-gate");
+    await writeFile(firstGate, "");
+    process.env.SALTBOX_TEST_PROCESS_GATE = firstGate;
+    const firstCount = invocations().length;
+    const firstCheck = editor.check(firstDocument);
+    await waitFor(
+      () => existsSync(firstGate + ".ready"),
+      "first open primary check must hold its old context output",
+    );
+    assert.ok(
+      invocations()
+        .slice(firstCount)
+        .some((line) => line.includes("--stdin-filename " + firstOpen.fsPath)),
+      "held output must belong to the first document check",
+    );
+    await writeFile(template.fsPath, bad);
+    editor.removeFile(template);
+    delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    await rm(firstGate);
+    await firstCheck;
+    await waitFor(
+      () => renderer(firstOpen),
+      "first clean open primary must recover after unknown context rejects its result",
+    );
+    assert.ok(
+      invocations()
+        .slice(firstCount)
+        .every((line) => !line.endsWith(" .")),
+      "first document recovery must retain complete saved coverage",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(() => !renderer(firstOpen), "first open primary recovery");
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+    success(
+      "first open primary retries rejected context before graph acceptance",
+    );
+    await pause(400);
 
     // Hold an already-computed full scan, then change unknown context before its
     // first result is accepted. Cancellation must preserve eventual full coverage.
