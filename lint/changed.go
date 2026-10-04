@@ -18,6 +18,7 @@ type SelectionRecord struct {
 	SchemaVersion int              `json:"schema_version"`
 	Commit        string           `json:"commit"`
 	Changed       []string         `json:"changed"`
+	Uncertain     []string         `json:"uncertain,omitempty"`
 	Fallback      string           `json:"fallback,omitempty"`
 	Sources       []SelectedSource `json:"sources"`
 }
@@ -91,6 +92,11 @@ func loadChanged(ctx context.Context, opts Options) (*Project, error) {
 	changed = append(changed, nulNames(output)...)
 	slices.Sort(changed)
 	changed = slices.Compact(changed)
+	output, err = changedGit(ctx, root, "ls-files", "-v", "-z", "--cached", "--", ".")
+	if err != nil {
+		return nil, err
+	}
+	uncertain := flaggedGitNames(output)
 	// Read current bytes and the full current graph once. Deleted names are only
 	// impact inputs; directory discovery never tries to load them as primaries.
 	fullOpts := Options{Root: root, Paths: []string{root}, IncludeAnalysis: true, allowEmpty: true}
@@ -98,7 +104,7 @@ func loadChanged(ctx context.Context, opts Options) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	selection := affectedSelection(project, commit, changed)
+	selection := affectedSelection(project, commit, changed, uncertain)
 	project.Selected = map[string]bool{}
 	for _, source := range selection.Sources {
 		project.Selected[source.Path] = true
@@ -134,21 +140,42 @@ func nulNames(output []byte) []string {
 	return names
 }
 
-func affectedSelection(project *Project, commit string, changed []string) *SelectionRecord {
-	result := &SelectionRecord{SchemaVersion: 1, Commit: commit, Changed: changed, Sources: []SelectedSource{}}
+// flaggedGitNames observes flags without clearing them or refreshing the index.
+// Lowercase status letters mean assume-unchanged; S means skip-worktree. Diff
+// cannot prove that these paths still have their committed worktree bytes.
+func flaggedGitNames(output []byte) []string {
+	names := []string{}
+	for item := range strings.SplitSeq(string(output), "\x00") {
+		if len(item) < 3 || item[1] != ' ' {
+			continue
+		}
+		status := item[0]
+		if status == 'S' || (status >= 'a' && status <= 'z') {
+			names = append(names, filepath.ToSlash(filepath.Clean(filepath.FromSlash(item[2:]))))
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+func affectedSelection(project *Project, commit string, changed, uncertain []string) *SelectionRecord {
+	result := &SelectionRecord{SchemaVersion: 1, Commit: commit, Changed: changed, Uncertain: uncertain, Sources: []SelectedSource{}}
+	candidates := append(slices.Clone(changed), uncertain...)
+	slices.Sort(candidates)
+	candidates = slices.Compact(candidates)
 	// A disappeared context can have erased its earlier edges. A full current
 	// selection is conservative without reading historical source bytes.
-	for _, name := range changed {
+	for _, name := range candidates {
 		if !directorySource(name, false) && !discoveryControl(name) && !projectMarker(name) {
 			continue
 		}
 		if _, err := ownedSourcePath(project.Root, filepath.Join(project.Root, filepath.FromSlash(name))); errors.Is(err, fs.ErrNotExist) {
-			result.Fallback = "removed context may have erased earlier dependencies; select all current primary sources"
+			result.Fallback = "missing context may have erased earlier dependencies; select all current primary sources"
 		}
 	}
 	for _, source := range project.Dependencies.Sources {
 		selected := SelectedSource{Path: source.Path, Reasons: []SelectionReason{}}
-		for _, name := range changed {
+		for _, name := range candidates {
 			kind := ""
 			switch {
 			case source.Path == name:
@@ -163,6 +190,9 @@ func affectedSelection(project *Project, commit string, changed []string) *Selec
 				kind = "dependency-scope"
 			}
 			if kind != "" {
+				if !slices.Contains(changed, name) {
+					kind = "git-index-flag"
+				}
 				selected.Reasons = append(selected.Reasons, SelectionReason{Kind: kind, Path: name})
 			}
 		}

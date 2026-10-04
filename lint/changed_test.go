@@ -351,3 +351,88 @@ func TestChangedRelatedLocationsAndVerifiedFixParity(t *testing.T) {
 		t.Fatalf("explanation differs: %+v %v", explanation, err)
 	}
 }
+
+func TestChangedFlaggedWorktreeInputs(t *testing.T) {
+	for _, flag := range []string{"--assume-unchanged", "--skip-worktree"} {
+		for _, name := range []string{"roles/demo/defaults/main.yml", "roles/demo/templates/config.conf", "notes.txt", ".gitignore"} {
+			t.Run(flag+"/"+name, func(t *testing.T) {
+				root := changedFixture(t)
+				if name == "notes.txt" {
+					putFile(t, root, name, "original\n")
+					commitChangedFixture(t, root)
+				}
+				gitTest(t, root, "update-index", flag, "--", name)
+				putFile(t, root, name, "value: '{{ a\n | combine(b) }}'\n")
+				// Establish that ordinary Git diff actually hides this physical edit.
+				diff := nulNames(gitReadTest(t, root, "diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "HEAD", "--", "."))
+				if slices.Contains(diff, name) {
+					t.Fatalf("fixture did not hide flagged worktree edit: %q", diff)
+				}
+				before := snapshotChangedFiles(t, root)
+				index, err := os.ReadFile(filepath.Join(root, ".git/index"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				refs := gitReadTest(t, root, "show-ref")
+				p := loadChangedTest(t, root, "HEAD")
+				want := []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml"}
+				if name == "notes.txt" {
+					want = nil
+				}
+				if name == ".gitignore" {
+					want = []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml"}
+				}
+				assertSelection(t, p, want...)
+				if !slices.Equal(p.Selection.Uncertain, []string{name}) || slices.Contains(p.Selection.Changed, name) {
+					t.Fatalf("uncertainty invented a changed path: %+v", p.Selection)
+				}
+				for _, selected := range p.Selection.Sources {
+					if !slices.ContainsFunc(selected.Reasons, func(reason SelectionReason) bool { return reason.Kind == "git-index-flag" && reason.Path == name }) {
+						t.Fatalf("missing honest reason: %+v", selected)
+					}
+				}
+				if source := p.Sources[name]; source != nil && !bytes.Equal(source.Data, before[name]) {
+					t.Fatal("hidden source did not use current bytes")
+				}
+				afterIndex, err := os.ReadFile(filepath.Join(root, ".git/index"))
+				if err != nil || !bytes.Equal(index, afterIndex) || !bytes.Equal(refs, gitReadTest(t, root, "show-ref")) || !reflect.DeepEqual(before, snapshotChangedFiles(t, root)) {
+					t.Fatal("flag inspection mutated index, refs or sources")
+				}
+			})
+		}
+	}
+}
+func TestChangedFlaggedMissingContextAndSubroot(t *testing.T) {
+	root := changedFixture(t)
+	name := "roles/demo/templates/config.conf"
+	gitTest(t, root, "update-index", "--skip-worktree", "--", name)
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(name))); err != nil {
+		t.Fatal(err)
+	}
+	p := loadChangedTest(t, root, "HEAD")
+	if p.Selection.Fallback == "" || p.Selected[name] || p.Sources[name] != nil {
+		t.Fatalf("missing flagged context underselected or loaded: %+v", p.Selection)
+	}
+	assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml")
+
+	root = changedFixture(t)
+	putFile(t, root, "sub/tasks/main.yml", "[]\n")
+	putFile(t, root, "sub/roles/unrelated/defaults/main.yml", "value: [broken\n")
+	commitChangedFixture(t, root)
+	gitTest(t, root, "update-index", "--assume-unchanged", "--", "roles/demo/defaults/main.yml", "sub/tasks/main.yml")
+	putFile(t, root, "roles/demo/defaults/main.yml", "changed: true\n")
+	putFile(t, root, "sub/tasks/main.yml", "- debug: msg=hidden\n")
+	p = loadChangedTest(t, filepath.Join(root, "sub"), "HEAD")
+	assertSelection(t, p, "tasks/main.yml")
+	if !slices.Equal(p.Selection.Uncertain, []string{"tasks/main.yml"}) {
+		t.Fatalf("flagged name crossed source root: %+v", p.Selection)
+	}
+}
+func TestFlaggedGitNamesKeepNULIdentities(t *testing.T) {
+	output := []byte("S tasks/a\tb.yml\x00h tasks/a\nb.yml\x00H tasks/normal.yml\x00s tasks/-leading.yml\x00H broken\x00")
+	want := []string{"tasks/-leading.yml", "tasks/a\tb.yml", "tasks/a\nb.yml"}
+	slices.Sort(want)
+	if got := flaggedGitNames(output); !slices.Equal(got, want) {
+		t.Fatalf("flagged names=%q want=%q", got, want)
+	}
+}

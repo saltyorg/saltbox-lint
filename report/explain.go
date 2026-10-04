@@ -51,6 +51,9 @@ func RenderChangedExplanation(out io.Writer, explanation lint.ChangedExplanation
 	for _, name := range explanation.Selection.Changed {
 		fmt.Fprintf(&b, "Changed: %q\n", name)
 	}
+	for _, name := range explanation.Selection.Uncertain {
+		fmt.Fprintf(&b, "Uncertain: %q (Git index flags can hide worktree edits)\n", name)
+	}
 	if explanation.Selection.Fallback != "" {
 		fmt.Fprintf(&b, "Fallback: %s\n", explanation.Selection.Fallback)
 	}

@@ -128,3 +128,15 @@ func TestChangedCommandUsageAndExplanation(t *testing.T) {
 		t.Fatal("read-only commands changed source bytes")
 	}
 }
+
+func TestChangedFlagExplanation(t *testing.T) {
+	root := changedCommandFixture(t)
+	changedCommandGit(t, root, "update-index", "--assume-unchanged", "--", "tasks/main.yml")
+	if err := os.WriteFile(filepath.Join(root, "tasks/main.yml"), []byte("- debug: msg=hidden\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, stderr := invoke(t, "", "explain", "--root", root, "--changed-since", "HEAD")
+	if code != 0 || stderr != "" || !strings.Contains(out, "Uncertain: \"tasks/main.yml\" (Git index flags can hide worktree edits)") || !strings.Contains(out, "git-index-flag") {
+		t.Fatalf("hidden edit explanation: %d %q %q", code, out, stderr)
+	}
+}

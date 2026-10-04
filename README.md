@@ -163,7 +163,11 @@ primaries. Removed context can erase earlier dependencies, so the command
 conservatively selects all current in-root primaries and explains that fallback.
 Changes to in-root `.gitignore` policy select all current primaries. A configured
 `--root` inside a larger checkout limits both source selection and changed names
-to that root. Git administration remains opaque discovery policy.
+to that root. Git administration remains opaque discovery policy. Tracked paths marked
+`assume-unchanged` or `skip-worktree` can hide edits from Git diff. The linter
+conservatively selects their current primaries and dependents, with an explicit
+uncertainty reason, without clearing those flags. Unrelated sources stay outside
+that selection when their dependency observations establish independence.
 
 The command reads the full current dependency graph before narrowing primary
 selection. This does not promise faster parsing. Findings, related locations and
@@ -175,11 +179,14 @@ preview with its normal output restrictions. No fetch, checkout, index update or
 source write occurs.
 
 `--format json --include-analysis` adds `analysis.selection`, with its own
-`schema_version: 1`, resolved `commit`, ordered `changed` names, optional
+`schema_version: 1`, resolved `commit`, ordered `changed` names, optional `uncertain` flagged names, optional
 `fallback`, and ordered selected `sources`. Each source has `path` and `reasons`
 with a `kind` and contributing `path`. Reasons distinguish changed primaries,
 dependency files/scopes, project identity, discovery policy and conservative
-fallback. A fallback reason has an empty path. Default schema-2 check JSON stays
+fallback. `git-index-flag` identifies a primary or dependency whose current bytes
+Git diff cannot prove unchanged. Such a path can be selected even when its bytes
+have not changed; it appears in `uncertain` rather than being invented as a
+`changed` path. A fallback reason has an empty path. Default schema-2 check JSON stays
 unchanged. `explain --changed-since REF` accepts no path and reports `root`,
 `selection`, `dependencies` and authoritative `fix_decisions` in a separate
 schema-version-1 JSON object, or the corresponding human explanation. Both
