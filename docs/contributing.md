@@ -27,7 +27,10 @@ canonical formatting. Shared source examples live in
 `make fuzz-check` is an opt-in qualification campaign. It runs those six targets
 sequentially, with 10 seconds per target, two workers, `GOMAXPROCS=2`, and a
 one-minute test timeout per invocation. Source targets limit inputs to 2 KiB and
-64 combined lines/opening delimiters as a conservative nesting bound. The
+a conservative lexical budget of 64 units, starting at one unit. Each newline,
+opening delimiter, `-`, `:` and ASCII word start consumes a unit, including in
+quotes and comments. This limits potential recursion in compact collections and
+unary expressions without asserting a parser-specific semantic depth. The
 structural target limits payloads to 16 bytes and generates bounded conditions
 with independently specified expected bytes, including unsupported conditions.
 The command executes no Ansible or Jinja code and reads no consumer repositories.

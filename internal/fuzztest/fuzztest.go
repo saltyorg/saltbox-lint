@@ -12,18 +12,25 @@ import (
 
 const MaxBytes = 2048
 
-// Bounded conservatively caps nesting at 64: every line and opening delimiter
-// consumes one unit, even inside quoted text. Block nesting consumes lines;
-// flow/expression nesting consumes delimiters. Size also bounds unary recursion.
+// Bounded restricts potential recursion with a conservative lexical budget.
+// Lines, opening delimiters, compact collection markers and ASCII word starts
+// consume units even in quotes/comments. This includes compact sequences and
+// unary/conditional chains without promising a parser-specific semantic depth.
 func Bounded(data []byte) bool {
 	if len(data) > MaxBytes {
 		return false
 	}
 	depth := 1
+	word := false
 	for _, b := range data {
-		if b == '\n' || b == '[' || b == '{' || b == '(' {
+		if b == '\n' || b == '[' || b == '{' || b == '(' || b == '-' || b == ':' {
 			depth++
 		}
+		nextWord := b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_'
+		if nextWord && !word {
+			depth++
+		}
+		word = nextWord
 	}
 	return depth <= 64
 }
@@ -64,9 +71,16 @@ func Span(t *testing.T, data []byte, start, end int) {
 
 // Boundary matches the editor's supported UTF-8 and CRLF edit boundaries.
 func Boundary(data []byte, offset int) bool {
-	return offset >= 0 && offset <= len(data) &&
-		(offset == len(data) || utf8.RuneStart(data[offset])) &&
-		!(offset > 0 && offset < len(data) && data[offset] == '\n' && data[offset-1] == '\r')
+	if offset < 0 || offset > len(data) {
+		return false
+	}
+	if offset < len(data) && !utf8.RuneStart(data[offset]) {
+		return false
+	}
+	if offset > 0 && offset < len(data) && data[offset] == '\n' && data[offset-1] == '\r' {
+		return false
+	}
+	return true
 }
 
 func Unchanged(t *testing.T, before, after []byte) {
