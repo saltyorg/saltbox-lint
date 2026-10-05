@@ -443,6 +443,15 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
   const failures: Error[] = [];
   let replacement = "initial";
   let step = "initial admission";
+  let contextPhase:
+    | {
+        childCount: number;
+        responseClosed: boolean;
+        delivered: boolean;
+        canonicalTargetMatchesURI: boolean;
+        assertion: string;
+      }
+    | undefined;
   const failure = (error: unknown): Error => {
     let kind: string;
     try {
@@ -459,7 +468,10 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
       kind = code === "ENOENT" ? "missing" : `unavailable(${code})`;
     }
     return new Error(
-      `manual marker ${step}: replacement=${replacement} marker=${kind}`,
+      `manual marker ${step}: replacement=${replacement} marker=${kind}` +
+        (step === "context event during response validation"
+          ? ` phases=${JSON.stringify(contextPhase)}`
+          : ""),
       { cause: error },
     );
   };
@@ -509,7 +521,10 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
       vscode.workspace.getWorkspaceFolder(document.uri)!.uri,
       "roles/navtarget/defaults/main.yml",
     );
-    const contextBytes = await contextPromises.readFile(context.fsPath);
+    // Match the identity used by resolveSource. VS Code fsPath lowercases a
+    // Windows drive letter, while native realpath can retain its casing.
+    const contextFilename = await contextPromises.realpath(context.fsPath);
+    const contextBytes = await contextPromises.readFile(contextFilename);
     const sourceFilename = realpathSync.native(document.uri.fsPath);
     const childProcess = createRequire(__filename)(
       "node:child_process",
@@ -520,8 +535,14 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
     )!;
     const originalSpawn = childProcess.spawn;
     const contextJoins: Promise<void>[] = [];
-    let responseClosed = false;
-    let delivered = false;
+    const phase = {
+      childCount: 0,
+      responseClosed: false,
+      delivered: false,
+      canonicalTargetMatchesURI: contextFilename === context.fsPath,
+      assertion: "impact rejection",
+    };
+    contextPhase = phase;
     step = "context event during response validation";
     Object.defineProperty(childProcess, "spawn", {
       ...spawnDescriptor,
@@ -534,15 +555,17 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
           argv[0] === "query" &&
           argv.includes("references") &&
           argv.includes(sourceFilename)
-        )
+        ) {
+          phase.childCount++;
           contextJoins.push(
             new Promise<void>((resolve) => {
               child.once("close", () => {
-                responseClosed = true;
+                phase.responseClosed = true;
                 resolve();
               });
             }),
           );
+        }
         return child;
       },
     });
@@ -550,10 +573,14 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
       ...readDescriptor,
       value: async (...args: Parameters<typeof originalRead>) => {
         const bytes = await Reflect.apply(originalRead, contextPromises, args);
-        if (responseClosed && !delivered && args[0] === context.fsPath) {
-          delivered = true;
+        if (
+          phase.responseClosed &&
+          !phase.delivered &&
+          args[0] === contextFilename
+        ) {
+          phase.delivered = true;
           await contextPromises.writeFile(
-            context.fsPath,
+            contextFilename,
             Buffer.concat([
               contextBytes,
               Buffer.from("# changed query context\n"),
@@ -566,12 +593,19 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
     });
     try {
       assert.equal(await impact(), undefined);
+      phase.assertion = "exact query ownership";
       assert.equal(
         contextJoins.length,
         1,
         "the exact query owns the response gate",
       );
-      assert.equal(delivered, true, "real target validation reaches the event");
+      phase.assertion = "target event delivery";
+      assert.equal(
+        phase.delivered,
+        true,
+        "real target validation reaches the event",
+      );
+      phase.assertion = "no impact view opens";
       assert.equal(
         vscode.window.activeTextEditor?.document.uri.toString(),
         document.uri.toString(),
@@ -580,8 +614,8 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
       Object.defineProperty(contextPromises, "readFile", readDescriptor);
       Object.defineProperty(childProcess, "spawn", spawnDescriptor);
       try {
-        if (delivered)
-          await contextPromises.writeFile(context.fsPath, contextBytes);
+        if (phase.delivered)
+          await contextPromises.writeFile(contextFilename, contextBytes);
       } finally {
         await Promise.all(contextJoins);
       }
