@@ -7,6 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EditorIntegration, tabDocumentUris } from "../../src/editor.ts";
+import {
+  reportStartupFailure,
+  startupFailureReport,
+} from "./startup-failure.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const findings = (uri: vscode.Uri) =>
@@ -174,10 +178,23 @@ export async function runActiveProject(): Promise<void> {
       ]);
       await rm(startupGate);
     }
-    await waitFor(
-      () => uris.every((uri) => findings(uri).length > 0),
-      "startup without file context shows both cached projects",
-    );
+    try {
+      await waitFor(
+        () => uris.every((uri) => findings(uri).length > 0),
+        "startup without file context shows both cached projects",
+      );
+    } catch (error) {
+      reportStartupFailure(error, () =>
+        startupFailureReport(
+          vscode,
+          roots,
+          uris,
+          tabDocumentUris,
+          __filename,
+          component ? process.env.SALTBOX_TEST_FIXTURE_PATH : undefined,
+        ),
+      );
+    }
     assert.equal(
       config.inspect<boolean>("activeProjectOnly")?.defaultValue,
       true,
