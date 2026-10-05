@@ -84,20 +84,6 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 	if source == nil || !p.Selected[identity.Path] {
 		return result, fmt.Errorf("query requires a selected source")
 	}
-	if source.Kind == Template && request.Operation == "completion" {
-		result.State = "unavailable"
-		result.Reasons = append(result.Reasons, "templates-are-read-only")
-		return result, ctx.Err()
-	}
-	if source.Kind == Template {
-		scan := scanTemplate(source)
-		result.Coverage.Reasons = append(result.Coverage.Reasons, scan.reasons...)
-		if len(scan.diagnostics) > 0 {
-			result.State = "unavailable"
-			result.Reasons = append(result.Reasons, "invalid-primary-template")
-			return result, ctx.Err()
-		}
-	}
 	// Collapse full discovery observations to the primary owner. Every read byte
 	// remains a dependency, including negative context and discovery decisions.
 	dirs := map[string]bool{}
@@ -117,6 +103,20 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 	p.referenceDirectories = map[string][]string{identity.Path: sortedKeys(dirs)}
 	p.referenceFiles = sortedKeys(files)
 	result.Dependencies = dependencyRecord(p, Rules())
+	if source.Kind == Template && request.Operation == "completion" {
+		result.State = "unavailable"
+		result.Reasons = append(result.Reasons, "templates-are-read-only")
+		return result, ctx.Err()
+	}
+	if source.Kind == Template {
+		scan := scanTemplate(source)
+		result.Coverage.Reasons = append(result.Coverage.Reasons, scan.reasons...)
+		if len(scan.diagnostics) > 0 {
+			result.State = "unavailable"
+			result.Reasons = append(result.Reasons, "invalid-primary-template")
+			return result, ctx.Err()
+		}
+	}
 	index := newRoleSymbolIndex(p)
 	if len(source.parseDiagnostics) > 0 {
 		result.State = "unavailable"

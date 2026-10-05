@@ -38,7 +38,7 @@ an unsupported header. `None` line prefixes keep ordinary tag scanning.
 Expression and statement argument validation uses a bounded static subset.
 Unsupported collections, arithmetic, imports, extension tags and other grammar
 receive partial coverage rather than fabricated syntax errors. Unknown extension
-nesting disables block and reference claims. Limits are 16 MiB per source, 512
+grammar stops further scanning and disables block and reference claims. Limits are 16 MiB per source, 512
 tokens per tag and 128 bracket/block levels. These checks are not a full Jinja
 parser and do not establish rendered output or runtime validity.
 

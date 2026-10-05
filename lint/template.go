@@ -97,6 +97,16 @@ func scanTemplate(s *Source) templateScan {
 			expression.Tokens[i].Span.End += bodyStart - 2
 		}
 		tokens := expression.Tokens
+		if slices.ContainsFunc(tokens, func(token Token) bool {
+			return token.Span.Start < len(s.Data) && !utf8.RuneStart(s.Data[token.Span.Start]) || token.Span.End < len(s.Data) && !utf8.RuneStart(s.Data[token.Span.End])
+		}) {
+			partial("template token grammar cannot preserve Unicode source boundaries")
+			if kind == 1 {
+				reliable = false
+				blocks = nil
+			}
+			continue
+		}
 		if len(tokens) > 512 {
 			partial("template tag exceeds the 512 token static grammar limit")
 			reliable = false
@@ -208,6 +218,7 @@ func scanTemplate(s *Source) templateScan {
 			// missing/unexpected built-in ending once its grammar is unknown.
 			reliable = false
 			blocks = nil
+			offset = len(text)
 		}
 	}
 	if reliable {
@@ -379,7 +390,7 @@ func templateConfiguration(text string) (templateDelimiters, int, string) {
 			return d, 0, "unsupported #jinja2 configuration: malformed or repeated option"
 		}
 		seen[key] = true
-		index := -1
+		var index int
 		opening := false
 		switch key {
 		case "variable_start_string":

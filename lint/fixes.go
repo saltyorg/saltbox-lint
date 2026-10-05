@@ -433,6 +433,9 @@ func RequireWritableSelection(project *Project) error {
 		return nil
 	}
 	for _, name := range sortedKeys(project.Selected) {
+		if !project.Selected[name] {
+			continue
+		}
 		if source := project.Sources[name]; source != nil && source.Kind == Template {
 			return fmt.Errorf("refuse source writes: selected template %s is read-only", name)
 		}

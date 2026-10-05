@@ -38,6 +38,8 @@ func TestTemplateScanner(t *testing.T) {
 		{"with", "{% with %}literal{% endwith %}", "", ""},
 		{"capture filter keyword", "{% set value | default(x=1) %}literal{% endset %}", "", "statement argument grammar"},
 		{"extension", "{% custom thing %}{% endif %}{{ value }}", "", "unsupported template statement"},
+		{"extension literal grammar", "{% custom_raw %}{{ unterminated{% endcustom_raw %}", "", "unsupported template statement"},
+		{"unsupported Unicode identifier", "{{ lookup\u0301('role_var', '_port', role='beta') }}", "", "Unicode source boundaries"},
 		{"unsupported expression", "{{ [x for x in values] }}", "", "expression grammar"},
 		{"unknown config", "#jinja2:unknown:True\n{{ value", "", "option: unknown"},
 		{"overlapping config", "#jinja2:variable_start_string:'{'\n{{ value", "", "overlapping"},
@@ -205,5 +207,25 @@ func TestTemplateCommittedFixtures(t *testing.T) {
 				t.Fatal("fixture bytes changed")
 			}
 		})
+	}
+}
+
+func TestTemplateUnavailableQueriesKeepPrimaryDependencies(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "value.j2")
+	for _, tc := range []struct{ operation, source string }{{"completion", "{{ value }}"}, {"definition", "{% if value %}"}} {
+		result, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Operation: tc.operation, Source: []byte(tc.source), Offset: 0})
+		if err != nil || result.State != "unavailable" || result.Dependencies == nil || len(result.Dependencies.Sources) != 1 || result.Dependencies.Sources[0].Path != "value.j2" {
+			t.Fatalf("unavailable protocol %s: %+v %v", tc.operation, result, err)
+		}
+	}
+	source, _ := Parse("value.j2", []byte("{{ value }}"))
+	project := &Project{Sources: map[string]*Source{"value.j2": source}, Selected: map[string]bool{"value.j2": false}}
+	if err := RequireWritableSelection(project); err != nil {
+		t.Fatalf("unselected template blocked write preflight: %v", err)
+	}
+	project.Selected["value.j2"] = true
+	if err := RequireWritableSelection(project); err == nil {
+		t.Fatal("selected template entered writable selection")
 	}
 }
