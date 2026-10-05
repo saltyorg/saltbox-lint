@@ -90,6 +90,11 @@ if (
     resolve(root, "one/readonly-alias"),
     "junction",
   );
+  writeFileSync(resolve(root, "one/standalone.j2"), "{{ value");
+  writeFileSync(
+    resolve(root, "one/roles/readonly/templates/watch-config"),
+    "{{ value",
+  );
   // Normal mode edits this buffer without changing role membership mid-test.
   // The runner owns the saved fixture for the entire host session.
   mkdirSync(resolve(root, "one/roles/example/tasks"), { recursive: true });

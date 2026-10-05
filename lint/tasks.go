@@ -1,6 +1,9 @@
 package lint
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Task is an actual task/block/handler in an Ansible-owned sequence. Module
 // names normalize only ansible.builtin; arbitrary payload mappings never enter
@@ -12,6 +15,7 @@ type Task struct {
 	FreeForm              string
 	projectedArguments    map[string]*Node
 	unknownArguments      bool
+	moduleDefaults        []*Node
 }
 
 // TasksIn follows only task-list roots and play task lists, then block/rescue/
@@ -21,8 +25,8 @@ func TasksIn(s *Source) []Task {
 		return nil
 	}
 	var result []Task
-	var list func(*Node)
-	list = func(n *Node) {
+	var list func(*Node, []*Node)
+	list = func(n *Node, inherited []*Node) {
 		if n == nil || n.Kind != "sequence" {
 			return
 		}
@@ -30,21 +34,26 @@ func TasksIn(s *Source) []Task {
 			if item.Kind != "mapping" {
 				continue
 			}
-			result = append(result, normalizeTask(s, item))
+			task := normalizeTask(s, item)
+			task.moduleDefaults = slices.Clone(inherited)
+			if defaults := item.Get("module_defaults"); defaults != nil {
+				task.moduleDefaults = append(task.moduleDefaults, defaults)
+			}
+			result = append(result, task)
 			for _, key := range []string{"block", "rescue", "always"} {
-				list(item.Get(key))
+				list(item.Get(key), task.moduleDefaults)
 			}
 		}
 	}
 	for _, doc := range s.Documents {
 		switch s.Kind {
 		case Tasks, Handlers:
-			list(doc)
+			list(doc, nil)
 		case Playbook:
 			if doc.Kind == "sequence" {
 				for _, play := range doc.Items {
 					for _, key := range []string{"pre_tasks", "tasks", "post_tasks", "handlers"} {
-						list(play.Get(key))
+						list(play.Get(key), []*Node{play.Get("module_defaults")})
 					}
 				}
 			}

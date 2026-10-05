@@ -37,7 +37,9 @@ enablement. Saving or changing a YAML file rechecks that file and any selected
 primaries whose analysis depends on it. Changes to owning-role defaults, tasks,
 handlers, vars and templates, and shared Docker resources, refresh affected
 findings. Template directories are observed regardless of file extension;
-templates are read only. Creation, deletion, rename and atomic replacement also
+templates are read only. Standalone `.j2` files and admitted template primaries
+inside narrowed roots are also observed, including their originating aliases.
+Creation, deletion, rename and atomic replacement also
 refresh dependencies, including previously clean results and missing templates.
 Unrelated roles and source roots retain their findings and actions. Watcher echoes
 are coalesced. In-root Git ignore controls trigger a fresh membership scan;

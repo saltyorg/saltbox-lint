@@ -45,7 +45,11 @@ task YAML also prevent delimiter, reference and renderer-consumption claims.
 These reasons appear in `explain`, reference-source records and navigation
 coverage. Task configuration is read before template tags can select cross-role
 reference context. Unrelated tasks and ordinary task variables do not supply
-delimiter arguments.
+delimiter arguments. Applicable task or block `module_defaults` with delimiter
+options also prevent these claims. Dynamic defaults and action groups have
+unknown applicability and receive partial coverage. Literal defaults for a known
+unrelated module, and template defaults without delimiter options, retain the
+ordinary scanner. No default values or group memberships are evaluated.
 
 Expression and statement argument validation uses a bounded static subset.
 Unsupported collections, arithmetic, imports, extension tags and other grammar

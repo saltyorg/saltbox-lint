@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, unlink } from "node:fs/promises";
 import { runProcess } from "../../src/process.ts";
 import { EditorIntegration, type CheckStatus } from "../../src/editor.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
@@ -35,11 +35,19 @@ async function waitFor(predicate: () => Promise<boolean>, reason: string) {
 export async function runTemplates(): Promise<void> {
   const root = vscode.workspace.workspaceFolders![0].uri;
   const executable = process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!;
-  for (const basename of ["config", "config.yaml", "config.j2"]) {
-    const uri = vscode.Uri.joinPath(root, "roles/readonly/templates", basename);
+  // Exercise the first extensionless alias before any conventional template
+  // has established an owner for the same physical file.
+  for (const uri of [
+    vscode.Uri.joinPath(root, "readonly-alias/config"),
+    ...["config", "config.yaml", "config.j2"].map((basename) =>
+      vscode.Uri.joinPath(root, "roles/readonly/templates", basename),
+    ),
+  ]) {
     const original = await readFile(uri.fsPath, "utf8");
     const document = await vscode.workspace.openTextDocument(uri);
     const editor = await vscode.window.showTextDocument(document);
+    if (uri.path.endsWith("readonly-alias/config"))
+      assert.equal(document.languageId, "plaintext");
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
     assert.deepEqual(findings(document), []);
     const position = document.positionAt(original.indexOf("_port") + 2);
@@ -218,6 +226,15 @@ export async function runTemplates(): Promise<void> {
     assert.equal(await readFile(uri.fsPath, "utf8"), original);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
   }
+  const fullRootAdapter = new EditorIntegration(executable);
+  try {
+    await runExternalTemplateDeletion(
+      vscode.Uri.joinPath(root, "standalone.j2"),
+      fullRootAdapter,
+    );
+  } finally {
+    fullRootAdapter.dispose();
+  }
   const configuration = vscode.workspace.getConfiguration("saltboxLint", root);
   const previous = configuration.inspect<string>("root")?.workspaceFolderValue;
   let adapter: EditorIntegration | undefined;
@@ -259,6 +276,10 @@ export async function runTemplates(): Promise<void> {
         "workbench.action.closeActiveEditor",
       );
     }
+    await runExternalTemplateDeletion(
+      vscode.Uri.joinPath(root, "readonly-alias/watch-config"),
+      adapter,
+    );
   } finally {
     adapter?.dispose();
     await configuration.update(
@@ -291,4 +312,42 @@ export async function runTemplates(): Promise<void> {
   console.log(
     "PASS installed templates check syntax/partial coverage and static navigation without formatter/FixAll/completion edits; direct CLI modes and mixed fix preflight preserve bytes",
   );
+}
+
+async function runExternalTemplateDeletion(
+  uri: vscode.Uri,
+  adapter: EditorIntegration,
+): Promise<void> {
+  const original = await readFile(uri.fsPath, "utf8");
+  const document = await vscode.workspace.openTextDocument(uri);
+  await vscode.window.showTextDocument(document);
+  try {
+    await adapter.check(document, true);
+    await waitFor(
+      async () =>
+        adapter.status(document).state === "current" &&
+        findings(document).some(
+          (item) => diagnosticCode(item) === "template-syntax",
+        ),
+      "template deletion control begins with a current saved syntax finding",
+    );
+    assert.equal(adapter.writable(document), false);
+    // This disk deletion must arrive through the registered filesystem watcher.
+    // Do not call removeFile/refresh/check or fabricate an editor event.
+    await unlink(uri.fsPath);
+    await waitFor(
+      async () =>
+        adapter.status(document).state !== "current" &&
+        findings(document).length === 0,
+      "external deletion invalidates the open template and clears saved diagnostics",
+    );
+    assert.equal(
+      document.isClosed,
+      false,
+      "the deletion control keeps its tab open",
+    );
+  } finally {
+    await writeFile(uri.fsPath, original);
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  }
 }

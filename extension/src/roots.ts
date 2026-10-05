@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
 import { lstat } from "node:fs/promises";
 import * as path from "node:path";
-import { canonicalRoot } from "./identity.ts";
+import { canonicalRoot, type Identity } from "./identity.ts";
 
 export const rootMarker = ".saltbox-lint";
 interface Root {
@@ -45,6 +45,60 @@ export class MarkedRoots implements vscode.Disposable {
   readonly onDidChangeFile = this.fileChanged.event;
   private readonly fileWatchers = new Map<string, vscode.Disposable>();
 
+  private readonly sourceWatchers = new Map<
+    string,
+    { root: string; filename: string; watcher: vscode.Disposable }
+  >();
+
+  watchSource(uri: vscode.Uri, identity: Identity): void {
+    if (
+      ![...this.roots.values()].some((root) => root.canonical === identity.root)
+    )
+      return;
+    const relative = path.relative(identity.root, identity.filename);
+    if (
+      !relative ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    )
+      return;
+    const key = uri.toString();
+    const old = this.sourceWatchers.get(key);
+    if (old?.root === identity.root && old.filename === identity.filename)
+      return;
+    this.forgetSource(key);
+    const watchers = [...new Set([uri.fsPath, identity.filename])].map(
+      (filename) => {
+        const literal = path
+          .basename(filename)
+          .replace(/[\[\]*?{}]/g, (character) => `[${character}]`);
+        const watcher = vscode.workspace.createFileSystemWatcher(
+          new vscode.RelativePattern(
+            vscode.Uri.file(path.dirname(filename)),
+            literal,
+          ),
+        );
+        const changed = (changed: vscode.Uri) => this.fileChanged.fire(changed);
+        return vscode.Disposable.from(
+          watcher,
+          watcher.onDidCreate(changed),
+          watcher.onDidChange(changed),
+          watcher.onDidDelete(changed),
+        );
+      },
+    );
+    this.sourceWatchers.set(key, {
+      root: identity.root,
+      filename: identity.filename,
+      watcher: vscode.Disposable.from(...watchers),
+    });
+  }
+  forgetSource(key: string): void {
+    this.sourceWatchers.get(key)?.watcher.dispose();
+    this.sourceWatchers.delete(key);
+  }
+
   // Known workspace owners (including unmarked folders) take precedence.
   // Ownerless canonical files belong to the most specific active source root.
   folder(uri: vscode.Uri): vscode.WorkspaceFolder | undefined {
@@ -73,6 +127,9 @@ export class MarkedRoots implements vscode.Disposable {
         root.canonical ? [root.canonical] : [],
       ),
     );
+    for (const [key, source] of this.sourceWatchers) {
+      if (!active.has(source.root)) this.forgetSource(key);
+    }
     for (const [root, watcher] of this.fileWatchers) {
       if (active.has(root)) continue;
       watcher.dispose();
@@ -84,6 +141,7 @@ export class MarkedRoots implements vscode.Disposable {
       const watchers = [
         "**/*.{[yY][mM][lL],[yY][aA][mM][lL]}",
         "**/templates/**",
+        "**/*.j2",
         "**/.gitignore",
         ".git/info/exclude",
       ].map((pattern) =>

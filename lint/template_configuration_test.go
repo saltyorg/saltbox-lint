@@ -25,6 +25,24 @@ func TestTemplateOwningTaskConfiguration(t *testing.T) {
 		{"unknown arguments", "- template: \"src='unfinished\"\n", "{{ value }}", "unknown template task arguments"},
 		{"dynamic args override", "- template: {src: config.j2}\n  args: '{{ args }}'\n", "{{ value }}", "unknown template task arguments"},
 		{"dynamic argument mapping", "- template: '{{ args }}'\n", "{{ value }}", "dynamic template task source"},
+		{"module defaults variable_start_string", "- template: {src: config.j2}\n  module_defaults: {ansible.legacy.template: {variable_start_string: custom}}\n", "literal {{", "module defaults"},
+		{"module defaults variable_end_string", "- template: {src: config.j2}\n  module_defaults: {ansible.legacy.template: {variable_end_string: custom}}\n", "literal {{", "module defaults"},
+		{"module defaults block_start_string", "- template: {src: config.j2}\n  module_defaults: {ansible.legacy.template: {block_start_string: custom}}\n", "literal {{", "module defaults"},
+		{"module defaults block_end_string", "- template: {src: config.j2}\n  module_defaults: {ansible.legacy.template: {block_end_string: custom}}\n", "literal {{", "module defaults"},
+		{"module defaults comment_start_string", "- template: {src: config.j2}\n  module_defaults: {ansible.legacy.template: {comment_start_string: custom}}\n", "literal {{", "module defaults"},
+		{"module defaults comment_end_string", "- template: {src: config.j2}\n  module_defaults: {ansible.legacy.template: {comment_end_string: custom}}\n", "literal {{", "module defaults"},
+		{"sequence module defaults", "- template: {src: config.j2}\n  module_defaults:\n    - template: {variable_start_string: '[['}\n", "literal {{", "module defaults"},
+		{"dynamic template defaults", "- template: {src: config.j2}\n  module_defaults: {template: '{{ args }}'}\n", "literal {{", "module defaults"},
+		{"rescue inherited defaults", "- module_defaults: {template: {variable_end_string: ']]'}}\n  block: []\n  rescue:\n    - block: []\n      always:\n        - template: {src: config.j2}\n", "literal {{", "module defaults"},
+		{"unrelated sibling block defaults", "- module_defaults: {template: {variable_start_string: '[['}}\n  block:\n    - template: {src: other.j2}\n- template: {src: config.j2}\n", "{{ value }}", ""},
+		{"task module defaults", "- template: {src: config.j2}\n  module_defaults: {ansible.builtin.template: {variable_start_string: '[['}}\n", "literal {{", "module defaults"},
+		{"block module defaults", "- module_defaults: {template: {variable_end_string: ']]'}}\n  block:\n    - template: {src: config.j2}\n", "literal {{", "module defaults"},
+		{"dynamic module defaults", "- template: {src: config.j2}\n  module_defaults: '{{ defaults }}'\n", "literal {{", "module defaults"},
+		{"unknown default group", "- template: {src: config.j2}\n  module_defaults: {group/custom: {variable_start_string: '[['}}\n", "literal {{", "module defaults"},
+		{"unrelated module defaults", "- template: {src: config.j2}\n  module_defaults: {ansible.builtin.copy: {variable_start_string: '[['}}\n", "{{ value }}", ""},
+		{"unrelated template defaults", "- template: {src: other.j2}\n  module_defaults: {template: {variable_start_string: '[['}}\n", "{{ value }}", ""},
+		{"null defaults", "- template: {src: config.j2}\n  module_defaults: null\n", "{{ value }}", ""},
+		{"non delimiter defaults", "- template: {src: config.j2}\n  module_defaults: {template: {mode: '0644'}}\n", "{{ value }}", ""},
 		{"default", "- template: {src: config.j2}\n", "{{ value }}", ""},
 		{"header", "- template: {src: config.j2}\n", "#jinja2:variable_start_string:'[[',variable_end_string:']]'\n[[ value ]]", ""},
 		{"unrelated override", "- template: {src: other.j2, variable_start_string: '[['}\n", "{{ value }}", ""},
@@ -106,40 +124,48 @@ func TestTemplateTaskOverridesCannotSelectReferenceContext(t *testing.T) {
 }
 
 func TestTemplateTaskConfigurationConsumers(t *testing.T) {
-	root := t.TempDir()
-	putFile(t, root, traefikDefaultsPath, traefikFixture(t, "api.good.yml"))
-	putFile(t, root, traefikTasksPath, "- template: {src: router.yml.j2, variable_start_string: '[[', variable_end_string: ']]'}\n")
-	text := "{{ lookup('role_var', '_traefik_api_endpoint', role='example') }}\n"
-	filename := putFile(t, root, traefikTemplatePath, text)
-	for _, selection := range [][]string{{traefikTasksPath}, {traefikTemplatePath}, {traefikTasksPath, traefikTemplatePath}} {
-		paths := make([]string, len(selection))
-		for i, name := range selection {
-			paths[i] = filepath.Join(root, name)
-		}
-		p, err := Load(t.Context(), Options{Root: root, Paths: paths})
-		if err != nil {
-			t.Fatal(err)
-		}
-		facts := analyzeTraefikRole(p, p.Sources[traefikTemplatePath])
-		if len(facts.renderers) != 1 || len(facts.renderers[0].Unavailable) == 0 || facts.complete {
-			t.Fatalf("unknown renderer treated as known: %+v", facts)
-		}
-		for _, d := range Analyze(p, append(traefikRules("traefik-renderer-contract"), traefikRules("template-syntax")...)) {
-			t.Fatalf("unknown configuration proved violation: %+v", d)
-		}
-	}
-	refs, err := References(t.Context(), Options{Root: root, Paths: []string{filename}})
-	if err != nil || len(refs.References) != 0 || len(refs.Sources) != 1 || refs.Sources[0].ParseState != "partial-template" {
-		t.Fatalf("reference facts=%+v err=%v", refs, err)
-	}
-	for _, operation := range []string{"definition", "hover", "references"} {
-		q, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: operation, Offset: strings.Index(text, "_traefik_api_endpoint")})
-		if err != nil || q.State != "unavailable" || len(q.Declarations) != 0 || len(q.Locations) != 0 || !strings.Contains(strings.Join(q.Coverage.Reasons, "; "), "task delimiter overrides") {
-			t.Fatalf("query=%+v err=%v", q, err)
-		}
-	}
-	e, err := Explain(t.Context(), Options{Root: root, Paths: []string{filename}})
-	if err != nil || e.Source.ParseState != "partial-template" || !strings.Contains(strings.Join(e.Unsupported, "; "), "task delimiter overrides") {
-		t.Fatalf("explain=%+v err=%v", e, err)
+	for _, tc := range []struct{ name, task, reason string }{
+		{"direct", "- template: {src: router.yml.j2, variable_start_string: '[[', variable_end_string: ']]'}\n", "task delimiter overrides"},
+		{"task defaults", "- template: {src: router.yml.j2}\n  module_defaults: {ansible.builtin.template: {variable_start_string: '[['}}\n", "module defaults"},
+		{"block defaults", "- module_defaults: {template: {block_start_string: '<%'}}\n  block:\n    - template: {src: router.yml.j2}\n", "module defaults"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			putFile(t, root, traefikDefaultsPath, traefikFixture(t, "api.good.yml"))
+			putFile(t, root, traefikTasksPath, tc.task)
+			text := "{{ lookup('role_var', '_traefik_api_endpoint', role='example') }}\n"
+			filename := putFile(t, root, traefikTemplatePath, text)
+			for _, selection := range [][]string{{traefikTasksPath}, {traefikTemplatePath}, {traefikTasksPath, traefikTemplatePath}} {
+				paths := make([]string, len(selection))
+				for i, name := range selection {
+					paths[i] = filepath.Join(root, name)
+				}
+				p, err := Load(t.Context(), Options{Root: root, Paths: paths})
+				if err != nil {
+					t.Fatal(err)
+				}
+				facts := analyzeTraefikRole(p, p.Sources[traefikTemplatePath])
+				if len(facts.renderers) != 1 || len(facts.renderers[0].Unavailable) == 0 || facts.complete {
+					t.Fatalf("unknown renderer treated as known: %+v", facts)
+				}
+				for _, d := range Analyze(p, append(traefikRules("traefik-renderer-contract"), traefikRules("template-syntax")...)) {
+					t.Fatalf("unknown configuration proved violation: %+v", d)
+				}
+			}
+			refs, err := References(t.Context(), Options{Root: root, Paths: []string{filename}})
+			if err != nil || len(refs.References) != 0 || len(refs.Sources) != 1 || refs.Sources[0].ParseState != "partial-template" {
+				t.Fatalf("reference facts=%+v err=%v", refs, err)
+			}
+			for _, operation := range []string{"definition", "hover", "references"} {
+				q, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: operation, Offset: strings.Index(text, "_traefik_api_endpoint")})
+				if err != nil || q.State != "unavailable" || len(q.Declarations) != 0 || len(q.Locations) != 0 || !strings.Contains(strings.Join(q.Coverage.Reasons, "; "), tc.reason) {
+					t.Fatalf("query=%+v err=%v", q, err)
+				}
+			}
+			e, err := Explain(t.Context(), Options{Root: root, Paths: []string{filename}})
+			if err != nil || e.Source.ParseState != "partial-template" || !strings.Contains(strings.Join(e.Unsupported, "; "), tc.reason) {
+				t.Fatalf("explain=%+v err=%v", e, err)
+			}
+		})
 	}
 }

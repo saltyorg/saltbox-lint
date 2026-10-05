@@ -386,10 +386,77 @@ export class EditorIntegration implements vscode.Disposable {
       );
     }
     this.sourceOwners.set(document.uri.toString(), identity);
+    this.roots.watchSource(document.uri, identity);
     this.eligibilityChanged.fire();
     const canonical = vscode.Uri.file(identity.filename);
     if (canonical.toString() !== document.uri.toString())
       this.publish(canonical);
+  }
+  // A local alias can hide both the template directory and the file extension.
+  // Resolve its bounded identity before granting checking capabilities. Ordinary
+  // plaintext files still receive no checker, provider or writable capability.
+  private async admit(
+    document: vscode.TextDocument,
+    expectedVersion = document.version,
+  ): Promise<boolean> {
+    if (
+      this.disposed ||
+      !vscode.workspace.isTrusted ||
+      document.isClosed ||
+      this.closedTabs.has(document.uri.toString()) ||
+      document.uri.scheme !== "file"
+    )
+      return false;
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (!folder) return false;
+    const key = folder.uri.toString();
+    const rootRevision = this.rootRevision(key);
+    const documentRevision = this.documentRevision(document);
+    const root = await this.root(folder);
+    if (!root) return false;
+    let identity: Identity;
+    try {
+      identity = await identify(root, document.uri.fsPath);
+    } catch (error) {
+      // Unknown plaintext candidates outside the configured root or with no
+      // accessible identity are declined quietly, like ordinary plaintext.
+      if (
+        !this.isTemplate(document) &&
+        !(
+          ["yaml", "ansible"].includes(document.languageId) &&
+          /\.ya?ml$/i.test(document.uri.path)
+        )
+      )
+        return false;
+      throw error;
+    }
+    if (
+      this.disposed ||
+      !vscode.workspace.isTrusted ||
+      document.isClosed ||
+      this.closedTabs.has(document.uri.toString()) ||
+      document.version !== expectedVersion ||
+      documentRevision !== this.documentRevision(document) ||
+      rootRevision !== this.rootRevision(key) ||
+      this.roots.get(key) !== root
+    )
+      return false;
+    if (
+      !templatePath(identity.filename) &&
+      !templatePath(identity.path) &&
+      !templatePath(document.uri.path) &&
+      !(
+        ["yaml", "ansible"].includes(document.languageId) &&
+        /\.ya?ml$/i.test(document.uri.path)
+      )
+    ) {
+      this.sourceOwners.delete(document.uri.toString());
+      this.roots.forgetSource(document.uri.toString());
+      return false;
+    }
+    this.documentFolders.set(document.uri.toString(), key);
+    this.rememberSource(document, identity);
+    return true;
   }
   private async synchronizeSources(): Promise<void> {
     const live = new Set(
@@ -402,41 +469,30 @@ export class EditorIntegration implements vscode.Disposable {
         .map((document) => document.uri.toString()),
     );
     for (const uri of this.sourceOwners.keys())
-      if (!live.has(uri)) this.sourceOwners.delete(uri);
+      if (!live.has(uri)) {
+        this.sourceOwners.delete(uri);
+        this.roots.forgetSource(uri);
+      }
     for (const document of vscode.workspace.textDocuments) {
-      if (
-        document.isClosed ||
-        document.uri.scheme !== "file" ||
-        !(
-          this.isTemplate(document) ||
-          (["yaml", "ansible"].includes(document.languageId) &&
-            /\.ya?ml$/i.test(document.uri.path))
-        )
-      )
-        continue;
       const folder = vscode.workspace.getWorkspaceFolder(document.uri);
       if (!folder) continue;
-      const revision = this.rootRevision(folder.uri.toString());
+      const key = folder.uri.toString();
+      const revision = this.rootRevision(key);
+      const version = document.version;
       try {
-        const root = await this.root(folder);
-        if (!root) continue;
-        const identity = await identify(root, document.uri.fsPath);
-        if (
-          revision === this.rootRevision(folder.uri.toString()) &&
-          !document.isClosed
-        ) {
-          this.documentFolders.set(
-            document.uri.toString(),
-            folder.uri.toString(),
-          );
-          this.rememberSource(document, identity);
-        }
+        await this.admit(document, version);
       } catch {
-        if (revision === this.rootRevision(folder.uri.toString()))
+        if (
+          revision === this.rootRevision(key) &&
+          document.version === version
+        ) {
           this.sourceOwners.delete(document.uri.toString());
+          this.roots.forgetSource(document.uri.toString());
+        }
       }
     }
   }
+
   private async snapshot(
     document: vscode.TextDocument,
     expectedVersion?: number,
@@ -444,6 +500,7 @@ export class EditorIntegration implements vscode.Disposable {
     await this.roots.ready();
     if (expectedVersion !== undefined && document.version !== expectedVersion)
       return;
+    if (!(await this.admit(document, expectedVersion))) return;
     if (!this.eligible(document)) return;
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
@@ -557,6 +614,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.documentRevision(document) !== revision
     )
       return;
+    if (!(await this.admit(document, version))) return;
     if (!this.eligible(document)) return;
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
@@ -1346,6 +1404,7 @@ export class EditorIntegration implements vscode.Disposable {
     );
     if (!document.isClosed && stillOwned) return;
     this.closedTabs.add(key);
+    this.roots.forgetSource(key);
     this.failures.delete(key);
     this.eligibilityChanged.fire();
     this.change(document);
