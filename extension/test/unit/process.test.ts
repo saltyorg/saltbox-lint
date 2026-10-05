@@ -39,6 +39,7 @@ test("a no-input request succeeds when its child closes stdin before returning o
   });
   const module = { exports: {} as { runProcess: typeof runProcess } };
   const joins: Promise<void>[] = [];
+  const gateErrors: Error[] = [];
   const observations: {
     stdin: string;
     error?: string;
@@ -66,11 +67,14 @@ test("a no-input request succeeds when its child closes stdin before returning o
         });
         const observation: (typeof observations)[number] = { stdin: stdio[0] };
         observations.push(observation);
-        const finish = () => child.send("finish", () => {});
+        const finish = () =>
+          child.send("finish", (error) => {
+            if (error) gateErrors.push(error);
+          });
         if (child.stdin) {
           const input = child.stdin;
           const end = input.end;
-          // The child's ready output proves fd 0 is closed. Delay only the
+          // The child's ready output follows its stdin close. Delay only the
           // public stream operation until this exact state, without a sleep.
           Object.defineProperty(input, "end", {
             value: (...args: unknown[]) => {
@@ -82,7 +86,6 @@ test("a no-input request succeeds when its child closes stdin before returning o
           });
           input.on("error", (error: NodeJS.ErrnoException) => {
             observation.error = error.code;
-            finish();
           });
         } else child.stdout!.once("data", finish);
         joins.push(
@@ -103,7 +106,9 @@ test("a no-input request succeeds when its child closes stdin before returning o
     cwd: process.cwd(),
     args: [
       "-e",
-      'require("node:fs").closeSync(0);process.on("message",()=>process.exit(0));process.stdout.write("v1\\n");',
+      // Initialize output and the gate before closing input so Node never
+      // initializes a new stream with a vacant standard descriptor.
+      'const output=process.stdout;process.on("message",()=>process.exit(0));require("node:fs").closeSync(0);output.write("v1\\n");',
     ],
   };
   try {
@@ -115,6 +120,7 @@ test("a no-input request succeeds when its child closes stdin before returning o
     assert.equal(observations.length, 1);
     assert.equal(observations[0].stdin, "ignore");
     assert.equal(observations[0].code, 0);
+    assert.deepEqual(gateErrors, []);
     await assert.rejects(
       module.exports.runProcess(
         { ...request, input: "source snapshot" },
