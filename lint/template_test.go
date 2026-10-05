@@ -539,6 +539,7 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 	narrow := filepath.Join(root, "roles/demo/templates")
 	filename := putFile(t, root, "roles/demo/templates/config.yaml", "---\nv: [1,2]\n")
 	putFile(t, root, "roles/demo/defaults/main.yml", "demo_role_value: true\n")
+	canonicalNarrow := canonicalTestPath(t, narrow)
 	for _, name := range []string{"config.yaml", "extensionless"} {
 		if name == "extensionless" {
 			putFile(t, root, "roles/demo/templates/extensionless", "{{ value }}")
@@ -547,8 +548,11 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
+		if p.Root != canonicalNarrow {
+			t.Fatalf("physical template root = %q, want %q", p.Root, canonicalNarrow)
+		}
 		source := p.Sources[name]
-		if p.Root != narrow || source.Kind != Template || source.Role != "" || source.RolePath != "" || len(p.Sources) != 1 {
+		if source == nil || source.Path != name || source.Kind != Template || source.Role != "" || source.RolePath != "" || len(p.Sources) != 1 {
 			t.Fatalf("physical classification invented outside-root context: %+v %+v", source, p)
 		}
 		if err := RequireWritableSelection(p); err == nil {
@@ -565,17 +569,25 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filename, alias); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
+		t.Fatal(err)
 	}
+	canonicalRoot := canonicalTestPath(t, root)
 	p, err := Load(t.Context(), Options{Root: root, Paths: []string{alias}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Sources["unrelated.yml"].Kind != Template || p.Sources["unrelated.yml"].Path != "unrelated.yml" {
+	if p.Root != canonicalRoot {
+		t.Fatalf("alias template root = %q, want %q", p.Root, canonicalRoot)
+	}
+	source := p.Sources["unrelated.yml"]
+	if source == nil || source.Kind != Template || source.Path != "unrelated.yml" || source.Role != "" || source.RolePath != "" || len(p.Sources) != 1 {
 		t.Fatal("alias template identity changed or writability expanded")
 	}
+	if err := RequireWritableSelection(p); err == nil {
+		t.Fatal("alias template became writable")
+	}
 	identity, err := ResolveSourceIdentity(root, alias)
-	if err != nil || !identity.IsTemplate() || identity.Path != "unrelated.yml" {
+	if err != nil || !identity.IsTemplate() || identity.Root != canonicalRoot || identity.Path != "unrelated.yml" {
 		t.Fatalf("alias identity: %+v %v", identity, err)
 	}
 }
