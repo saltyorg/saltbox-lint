@@ -277,6 +277,14 @@ export function fixtureRunning(instance: FixtureProcess): Promise<boolean> {
   });
 }
 
+// Exit polls require confirmed endpoint absence. A reset, mismatched credential
+// or other unavailable response remains inconclusive within the caller's bound.
+export async function fixtureAbsent(
+  instance: FixtureProcess,
+): Promise<boolean> {
+  return (await fixtureProbe(instance)).state === "endpoint-absent";
+}
+
 export interface FixtureJournalSnapshot {
   capturedAt: string;
   state: "complete" | "partial" | "unavailable";

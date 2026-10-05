@@ -201,12 +201,18 @@ test("admission cleanup cancels its owner and joins the complete check before re
   let removed = false;
   let disposed = false;
   let observerDisposed = false;
+  let aliasRefreshDisposed = false;
   const operation = (async () => {
     await gate;
     await joined;
     completed = true;
   })();
   const result = runInNewContext(`(async () => ${cleanup.getText(source)})()`, {
+    aliasRefresh: {
+      dispose: () => {
+        aliasRefreshDisposed = true;
+      },
+    },
     aliasTemplateEvents: {
       dispose: () => {
         observerDisposed = true;
@@ -214,6 +220,7 @@ test("admission cleanup cancels its owner and joins the complete check before re
     },
     editor: {
       dispose: () => {
+        assert.equal(aliasRefreshDisposed, true);
         disposed = true;
         release();
       },
@@ -249,4 +256,5 @@ test("admission cleanup cancels its owner and joins the complete check before re
   assert.equal(completed, true);
   assert.equal(removed, true);
   assert.equal(observerDisposed, true);
+  assert.equal(aliasRefreshDisposed, true);
 });

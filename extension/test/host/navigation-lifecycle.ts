@@ -11,6 +11,7 @@ import {
   FixtureJournal,
   fixtureGateInstance,
   fixtureRunning,
+  fixtureAbsent,
 } from "./fixture-processes.ts";
 
 async function waitFor(
@@ -86,7 +87,7 @@ export async function runNavigationLifecycle(
     cancellation.cancel();
     assert.deepEqual(await cancelled, []);
     await waitFor(
-      async () => !(await fixtureRunning(firstInstance)),
+      () => fixtureAbsent(firstInstance),
       "cancelled query process is joined",
     );
     await rm(gate + ".ready", { force: true });
@@ -109,7 +110,7 @@ export async function runNavigationLifecycle(
     );
     assert.deepEqual(await closed, []);
     await waitFor(
-      async () => !(await fixtureRunning(secondInstance)),
+      () => fixtureAbsent(secondInstance),
       "document close joins installed provider query",
     );
     const observations = journal.processes(true);
@@ -133,8 +134,8 @@ export async function runNavigationLifecycle(
     for (const token of tokens) token.dispose();
     await waitFor(
       async () =>
-        (await Promise.all(journal.processes().map(fixtureRunning))).every(
-          (alive) => !alive,
+        (await Promise.all(journal.processes().map(fixtureAbsent))).every(
+          Boolean,
         ),
       "all owned query processes exit before fixture cleanup",
     );

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -7,7 +8,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import net from "node:net";
+import { syncBuiltinESMExports } from "node:module";
 import {
+  fixtureAbsent,
   fixtureGateInstance,
   fixtureRunning,
 } from "./host/fixture-processes.ts";
@@ -121,6 +125,76 @@ test("only the exact selected chunk can publish or replace gate readiness", asyn
     await rm(gate);
     assert.deepEqual(await publisher.closed, [0, null]);
     assert.equal(await fixtureRunning(instance), false);
+
+    await rm(gate + ".ready");
+    await writeFile(gate, "held");
+    env.SALTBOX_TEST_PROCESS_GATE_NONCE = randomBytes(32).toString("hex");
+    const exiting = launch(expected);
+    let exitReady;
+    await until(async () => {
+      exitReady = await readiness();
+      return exitReady !== undefined;
+    });
+    assert.equal(exitReady.pid, exiting.child.pid);
+    assert.equal(exitReady.nonce, env.SALTBOX_TEST_PROCESS_GATE_NONCE);
+    assert.deepEqual(exitReady.args, ["--version", "--", ...expected]);
+    const exitInstance = fixtureGateInstance(
+      exitReady,
+      env.SALTBOX_TEST_PROCESS_INSTANCES,
+    );
+    assert.equal(await fixtureRunning(exitInstance), true);
+    assert.equal(await fixtureAbsent(exitInstance), false);
+    const mismatch = {
+      ...exitInstance,
+      token: randomBytes(32).toString("hex"),
+    };
+    assert.equal(await fixtureAbsent(mismatch), false);
+    await assert.rejects(async () =>
+      assert.equal(await fixtureRunning(mismatch), true),
+    );
+
+    const originalConnection = net.createConnection;
+    let connected = false;
+    const transitions = [];
+    const sockets = [];
+    net.createConnection = function (...args) {
+      const socket = Reflect.apply(originalConnection, this, args);
+      if (args[0]?.port === exitInstance.port) {
+        sockets.push(socket);
+        socket.once("connect", () => {
+          connected = true;
+          transitions.push("connect");
+        });
+        socket.once("error", (error) => transitions.push(error.code));
+        socket.once("end", () => transitions.push("end"));
+      }
+      return socket;
+    };
+    syncBuiltinESMExports();
+    let absence;
+    try {
+      absence = until(() => fixtureAbsent(exitInstance));
+      // Keep rejection handled while the connect assertion runs; the original
+      // observation is still awaited below and during owned cleanup.
+      void absence.catch(() => undefined);
+      // The observer opens the actual recorded endpoint before scoped exit.
+      await until(() => connected);
+      assert.equal(exiting.child.kill("SIGKILL"), true);
+      await exiting.closed;
+      await absence;
+      assert.equal(await fixtureAbsent(exitInstance), true);
+      console.log(
+        `MEASURE real fixture connected exit observed=${JSON.stringify(transitions)} joined=true endpoint_absent=true`,
+      );
+    } finally {
+      net.createConnection = originalConnection;
+      syncBuiltinESMExports();
+      for (const socket of sockets) socket.destroy();
+      if (exiting.child.exitCode === null && exiting.child.signalCode === null)
+        exiting.child.kill("SIGKILL");
+      await exiting.closed;
+      await absence;
+    }
   } finally {
     await rm(gate, { force: true });
     for (const { child, closed } of children) {

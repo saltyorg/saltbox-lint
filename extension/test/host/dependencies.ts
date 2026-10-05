@@ -1,4 +1,5 @@
 import { aliasFailureFacts, watchAliasTemplate } from "./alias-failure.ts";
+import { observeAliasRefresh } from "./alias-refresh-observer.ts";
 import {
   failureReason,
   journalFailureEvidence,
@@ -31,6 +32,7 @@ import {
   fixtureGateInstance,
   FixtureJournal,
   fixtureRunning,
+  fixtureAbsent,
   type FixtureProcess,
 } from "./fixture-processes.ts";
 
@@ -96,7 +98,12 @@ export async function runDependencies(): Promise<void> {
   let capturedFailure = false;
   let retainedFailureDirectory: string | undefined;
   let aliasTemplateEvents: ReturnType<typeof watchAliasTemplate> | undefined;
-  let cleanupStatus: { pid: number; token: string; running: boolean }[] = [];
+  let aliasRefresh: ReturnType<typeof observeAliasRefresh> | undefined;
+  let cleanupStatus: {
+    pid: number;
+    token: string;
+    absenceConfirmed: boolean;
+  }[] = [];
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");
   const bad = "http:\n  routers: {}\n";
@@ -482,7 +489,7 @@ export async function runDependencies(): Promise<void> {
     delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
     await rm(batchGate);
     await waitFor(
-      async () => !(await fixtureRunning(batchInstance)),
+      () => fixtureAbsent(batchInstance),
       "mixed selected batch releases its exact held child",
     );
     await waitFor(
@@ -928,6 +935,7 @@ export async function runDependencies(): Promise<void> {
       await vscode.window.showTextDocument(aliasDocument, { preview: false });
       await editor.check(aliasDocument, true);
       aliasTemplateEvents = watchAliasTemplate(template);
+      aliasRefresh = observeAliasRefresh(editor, aliasDocument, template);
       logFailureEvidence("SALTBOX_INITIAL_ALIAS_FACTS", {
         schemaVersion: 1,
         phase: "initial alias admission before template mutation",
@@ -966,6 +974,7 @@ export async function runDependencies(): Promise<void> {
             phase: "initial alias assertion rejected before disposal",
             originalError: failureReason(error),
             canonicalTemplateEvents: aliasTemplateEvents!.snapshot(),
+            actualAliasRefresh: aliasRefresh!.snapshot(),
             aliasFacts,
             processFacts,
             cleanup: "not yet observed",
@@ -979,6 +988,11 @@ export async function runDependencies(): Promise<void> {
         (evidence) =>
           logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", evidence),
       );
+      logFailureEvidence("SALTBOX_ALIAS_REFRESH_OBSERVATION", {
+        phase: "ordinary initial alias assertion passed",
+        actualAliasRefresh: aliasRefresh.snapshot(),
+      });
+      aliasRefresh.dispose();
       await writeFile(template.fsPath, good);
       await withFailureEvidence(
         () => waitFor(() => !renderer(alias), "alias recovery"),
@@ -1666,7 +1680,7 @@ export async function runDependencies(): Promise<void> {
         pids.sort((a, b) => a - b),
         "every invocation must have a process lifetime identity",
       );
-      const live = await Promise.all(instances.map(fixtureRunning));
+      const absent = await Promise.all(instances.map(fixtureAbsent));
       assert.equal(
         new Set(instances.map((instance) => instance.token)).size,
         instances.length,
@@ -1674,9 +1688,9 @@ export async function runDependencies(): Promise<void> {
       cleanupStatus = instances.map((instance, index) => ({
         pid: instance.pid,
         token: instance.token,
-        running: live[index],
+        absenceConfirmed: absent[index],
       }));
-      return !live.some(Boolean);
+      return absent.every(Boolean);
     }, "completed dependency checks must leave no fixture processes running");
     console.log(
       `MEASURE dependency cleanup observed_processes=${journal.processes().length} surviving=0`,
@@ -1706,6 +1720,7 @@ export async function runDependencies(): Promise<void> {
     }
     throw error;
   } finally {
+    aliasRefresh?.dispose();
     aliasTemplateEvents?.dispose();
     editor.dispose();
     if (failed) {

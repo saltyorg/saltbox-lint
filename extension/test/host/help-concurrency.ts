@@ -11,6 +11,7 @@ import {
   fixtureGateInstance,
   fixtureProcesses,
   fixtureRunning,
+  fixtureAbsent,
 } from "./fixture-processes.ts";
 
 async function waitFor(
@@ -175,8 +176,8 @@ export async function runHelpConcurrency(document: vscode.TextDocument) {
       await waitFor(
         async () =>
           (
-            await Promise.all(fixtureProcesses(instances).map(fixtureRunning))
-          ).every((live) => !live),
+            await Promise.all(fixtureProcesses(instances).map(fixtureAbsent))
+          ).every(Boolean),
         "all observed help child lifetimes terminate",
       );
       console.log(
