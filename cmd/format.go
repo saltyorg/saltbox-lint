@@ -101,8 +101,14 @@ func runFormat(command *cobra.Command, selection string, opts formatOptions) err
 }
 
 func planFormat(ctx context.Context, mode string, identity lint.SourceIdentity, data []byte) (plannedFormat, error) {
-	source, _ := lint.Parse(identity.Path, data)
-	if source.Kind == lint.Template {
+	readOnly := identity.IsTemplate()
+	parseName := identity.Path
+	if readOnly {
+		parseName = "source.j2"
+	}
+	source, _ := lint.Parse(parseName, data)
+	source.Path = identity.Path
+	if readOnly {
 		return plannedFormat{status: "skipped", reason: "templates are read-only and cannot be formatted or fixed", source: source}, nil
 	}
 	if mode == "canonical" {

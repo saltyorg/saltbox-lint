@@ -3,6 +3,7 @@ package lint
 import (
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -22,8 +23,16 @@ type templateBlock struct {
 
 func scanTemplate(s *Source) templateScan {
 	result := templateScan{}
+	diagnosticLimit := false
 	partial := func(reason string) { result.reasons = append(result.reasons, reason) }
 	failure := func(span Span, message string) {
+		if len(result.diagnostics) == 128 {
+			if !diagnosticLimit {
+				partial("template diagnostics exceed the 128 finding static limit")
+			}
+			diagnosticLimit = true
+			return
+		}
 		result.diagnostics = append(result.diagnostics, Diagnostic{Path: s.Path, RuleID: "template-syntax", Severity: "error", Span: span, Message: message, Expected: "Correct the indicated Jinja delimiter or block. Template bytes and layout are never changed automatically."})
 	}
 	if len(s.Data) > 16*1024*1024 {
@@ -43,7 +52,8 @@ func scanTemplate(s *Source) templateScan {
 	node := &Node{Kind: "string", Value: text, Span: Span{0, len(text)}}
 	var blocks []templateBlock
 	reliable := true
-	for offset < len(text) {
+	tags, totalTokens := 0, 0
+	for offset < len(text) && !diagnosticLimit {
 		start, kind := -1, 0
 		for k, opening := range delimiters.starts {
 			if n := strings.Index(text[offset:], opening); n >= 0 && (start < 0 || offset+n < start) {
@@ -52,6 +62,13 @@ func scanTemplate(s *Source) templateScan {
 			}
 		}
 		if start < 0 {
+			break
+		}
+		tags++
+		if tags > 4096 {
+			partial("template exceeds the 4096 tag static limit")
+			reliable = false
+			blocks = nil
 			break
 		}
 		bodyStart := start + len(delimiters.starts[kind])
@@ -71,6 +88,15 @@ func scanTemplate(s *Source) templateScan {
 		}
 		offset = end
 		if kind == 2 {
+			continue
+		}
+		if closeStart-bodyStart > 64*1024 {
+			partial("template tag exceeds the 64 KiB static lexing limit")
+			if kind == 1 {
+				reliable = false
+				blocks = nil
+				break
+			}
 			continue
 		}
 		body := text[bodyStart:closeStart]
@@ -97,6 +123,13 @@ func scanTemplate(s *Source) templateScan {
 			expression.Tokens[i].Span.End += bodyStart - 2
 		}
 		tokens := expression.Tokens
+		totalTokens += len(tokens)
+		if totalTokens > 32768 {
+			partial("template exceeds the 32768 token aggregate static limit")
+			reliable = false
+			blocks = nil
+			break
+		}
 		if slices.ContainsFunc(tokens, func(token Token) bool {
 			return token.Span.Start < len(s.Data) && !utf8.RuneStart(s.Data[token.Span.Start]) || token.Span.End < len(s.Data) && !utf8.RuneStart(s.Data[token.Span.End])
 		}) {
@@ -104,6 +137,7 @@ func scanTemplate(s *Source) templateScan {
 			if kind == 1 {
 				reliable = false
 				blocks = nil
+				offset = len(text)
 			}
 			continue
 		}
@@ -213,7 +247,13 @@ func scanTemplate(s *Source) templateScan {
 		case "include", "import", "from", "extends":
 			partial("template loading and import statement grammar is not validated: " + name)
 		default:
-			partial("unsupported template statement: " + name)
+			if tokens[0].Kind != "name" {
+				partial("unsupported template statement syntax")
+			} else if len(name) > 64 {
+				partial("unsupported template statement identifier exceeds 64 bytes")
+			} else {
+				partial("unsupported template statement: " + name)
+			}
 			// An extension tag may introduce its own nesting. Do not fabricate a
 			// missing/unexpected built-in ending once its grammar is unknown.
 			reliable = false
@@ -221,12 +261,12 @@ func scanTemplate(s *Source) templateScan {
 			offset = len(text)
 		}
 	}
-	if reliable {
+	if reliable && !diagnosticLimit {
 		for _, block := range blocks {
 			failure(block.span, block.name+" block is missing end"+block.name)
 		}
 	}
-	if !reliable {
+	if !reliable || diagnosticLimit {
 		result.expressions = nil
 	}
 	slices.Sort(result.reasons)
@@ -289,6 +329,9 @@ func templateTagEnd(text string, start int, ending string, kind int) (closeStart
 	return 0, len(text), "unterminated Jinja tag or bracket"
 }
 
+// Raw content may contain millions of incomplete statement-like fragments.
+// Inspect only each candidate's endraw spelling, never search the remainder
+// for an arbitrary closing tag. Whitespace runs cannot contain an opening tag.
 func templateRawEnd(text string, start int, d templateDelimiters) (int, bool) {
 	for start < len(text) {
 		n := strings.Index(text[start:], d.starts[1])
@@ -297,19 +340,38 @@ func templateRawEnd(text string, start int, d templateDelimiters) (int, bool) {
 		}
 		candidate := start + n
 		bodyStart := candidate + len(d.starts[1])
-		n = strings.Index(text[bodyStart:], d.ends[1])
-		if n < 0 {
-			return 0, false
+		next := bodyStart
+		if next < len(text) && (text[next] == '-' || text[next] == '+') {
+			next++
 		}
-		body := strings.TrimSpace(text[bodyStart : bodyStart+n])
-		body = strings.Trim(body, "+-")
-		body = strings.TrimSpace(body)
-		if body == "endraw" {
-			return bodyStart + n + len(d.ends[1]), true
+		next = templateSpaceEnd(text, next)
+		if strings.HasPrefix(text[next:], "endraw") {
+			next = templateSpaceEnd(text, next+len("endraw"))
+			if strings.HasPrefix(text[next:], d.ends[1]) {
+				return next + len(d.ends[1]), true
+			}
+			if next < len(text) && (text[next] == '-' || text[next] == '+') {
+				next++
+			}
+			if strings.HasPrefix(text[next:], d.ends[1]) {
+				return next + len(d.ends[1]), true
+			}
 		}
 		start = candidate + 1
 	}
 	return 0, false
+}
+func templateSpaceEnd(text string, start int) int {
+	for start < len(text) {
+		r, size := utf8.DecodeRuneInString(text[start:])
+		// Python's regular-expression whitespace additionally admits these four
+		// separators, used by Jinja's raw-end lexer.
+		if !unicode.IsSpace(r) && (r < 0x1c || r > 0x1f) {
+			break
+		}
+		start += size
+	}
+	return start
 }
 
 func supportedTemplateStatement(e Expression) bool {
@@ -378,6 +440,9 @@ func templateConfiguration(text string) (templateDelimiters, int, string) {
 		return d, 0, ""
 	}
 	end := strings.IndexByte(text, '\n')
+	if end > 4096 {
+		return d, 0, "unsupported #jinja2 configuration: header exceeds the 4 KiB static limit"
+	}
 	if end < 0 {
 		return d, 0, "unsupported #jinja2 configuration: missing header newline"
 	}

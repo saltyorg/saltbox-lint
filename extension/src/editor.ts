@@ -328,10 +328,14 @@ export class EditorIntegration implements vscode.Disposable {
     );
   }
   isTemplate(document: vscode.TextDocument): boolean {
-    return templatePath(
-      this.sourceOwners.get(document.uri.toString())?.path ?? document.uri.path,
+    const identity = this.sourceOwners.get(document.uri.toString());
+    return (
+      templatePath(document.uri.path) ||
+      (identity !== undefined &&
+        (templatePath(identity.path) || templatePath(identity.filename)))
     );
   }
+
   writable(document: vscode.TextDocument): boolean {
     return this.eligible(document) && !this.isTemplate(document);
   }
@@ -1256,13 +1260,16 @@ export class EditorIntegration implements vscode.Disposable {
       if (
         wire === undefined ||
         abort.signal.aborted ||
-        !this.current(document, snapshot)
+        !this.current(document, snapshot) ||
+        !this.writable(document)
       )
         return [];
       const plan = parseFormat(wire, snapshot.path, snapshot.text);
       if (plan.status === "skipped")
         this.output.appendLine(`Skipped ${snapshot.path}: ${plan.reason}`);
-      return this.current(document, snapshot) ? textEdits(plan.edits) : [];
+      return this.current(document, snapshot) && this.writable(document)
+        ? textEdits(plan.edits)
+        : [];
     } catch (error) {
       if (!abort.signal.aborted) this.error(error, true);
       return [];

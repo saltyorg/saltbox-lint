@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runProcess } from "../../src/process.ts";
+import { EditorIntegration } from "../../src/editor.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 
 async function replace(document: vscode.TextDocument, text: string) {
@@ -167,6 +168,56 @@ export async function runTemplates(): Promise<void> {
     assert.equal(document.getText(), original);
     assert.equal(await readFile(uri.fsPath, "utf8"), original);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  }
+  const configuration = vscode.workspace.getConfiguration("saltboxLint", root);
+  const previous = configuration.inspect<string>("root")?.workspaceFolderValue;
+  let adapter: EditorIntegration | undefined;
+  try {
+    await configuration.update(
+      "root",
+      "roles/readonly/templates",
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    adapter = new EditorIntegration(executable);
+    for (const uri of [
+      vscode.Uri.joinPath(root, "roles/readonly/templates/config.yaml"),
+      vscode.Uri.joinPath(root, "readonly-alias/config.yaml"),
+    ]) {
+      const original = await readFile(uri.fsPath, "utf8");
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await vscode.commands.executeCommand("saltboxLint.checkDocument");
+      await adapter.check(document, true);
+      assert.equal(adapter.providerDocuments().includes(document), true);
+      assert.equal(
+        adapter.writable(document),
+        false,
+        "narrow roots and canonical aliases never grant template writes",
+      );
+      for (const mode of ["canonical", "lint-fixes"] as const)
+        assert.deepEqual(await adapter.format(document, mode), []);
+      await adapter.fixAll(uri);
+      assert.equal(document.getText(), original);
+      assert.deepEqual(
+        await vscode.commands.executeCommand<vscode.TextEdit[]>(
+          "vscode.executeFormatDocumentProvider",
+          uri,
+          { tabSize: 2, insertSpaces: true },
+        ),
+        [],
+      );
+      assert.equal(await readFile(uri.fsPath, "utf8"), original);
+      await vscode.commands.executeCommand(
+        "workbench.action.closeActiveEditor",
+      );
+    }
+  } finally {
+    adapter?.dispose();
+    await configuration.update(
+      "root",
+      previous,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
   }
   const yaml = vscode.Uri.joinPath(root, "roles/example/defaults/main.yml");
   const before = await readFile(yaml.fsPath, "utf8");

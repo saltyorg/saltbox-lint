@@ -309,7 +309,7 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if err != nil {
 		return err
 	}
-	if !supportedSource(relative) {
+	if !supportedSource(relative) && !isTemplateFile(absolute) {
 		return fmt.Errorf("unsupported source target %s", absolute)
 	}
 	s := l.project.Sources[relative]
@@ -332,20 +332,39 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	if err := l.ctx.Err(); err != nil {
 		return nil, err
 	}
-	var data []byte
-	if absolute == l.stdinPath {
-		data = l.stdin
-		s, _ := Parse(relative, data)
-		return s, nil
-	} else {
-		var err error
-		data, err = l.readFile(absolute)
-		if err != nil {
-			return nil, err
-		}
+	parseName := relative
+	if !isTemplate(relative) && isTemplateFile(absolute) {
+		// Preserve the admitted path, but decline role ownership inferred from
+		// outside the root. This also keeps template bytes out of YAML parsing.
+		parseName = "source.j2"
 	}
-	s, _ := parseOwnedSource(relative, data)
-	return s, nil
+	if absolute == l.stdinPath {
+		source, _ := Parse(parseName, l.stdin)
+		source.Path = relative
+		return source, nil
+	}
+	data, err := l.readFile(absolute)
+	if err != nil {
+		return nil, err
+	}
+	source, _ := parseOwnedSource(parseName, data)
+	source.Path = relative
+	return source, nil
+}
+
+func isTemplateFile(filename string) bool {
+	if isTemplate(filename) {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(filename)
+	return err == nil && isTemplate(resolved)
+}
+
+// IsTemplate retains read-only classification when the root is narrowed or
+// an existing leaf aliases a conventional template. It never reads contents
+// or widens the root and cannot establish outside-root role context.
+func (identity SourceIdentity) IsTemplate() bool {
+	return isTemplate(identity.Path) || isTemplateFile(filepath.Join(identity.Root, filepath.FromSlash(identity.Path)))
 }
 
 var errOutsideRoot = errors.New("outside root")
@@ -472,6 +491,9 @@ func (l *sourceLoader) directorySources(paths []string, selected bool) error {
 		}
 		kind, _, _ := classify(relative)
 		if source := l.project.Sources[relative]; source != nil && (!selected || kind != Generic) {
+			if selected && source.Kind == Template {
+				return nil, nil
+			}
 			return source, nil
 		}
 		source, err := l.readSource(absolute, relative)
@@ -558,7 +580,7 @@ func ResolveSourceIdentity(root, filename string) (SourceIdentity, error) {
 	if err != nil {
 		return SourceIdentity{}, err
 	}
-	if !supportedSource(relative) {
+	if !supportedSource(relative) && !isTemplateFile(absolute) {
 		return SourceIdentity{}, fmt.Errorf("unsupported source target %s", absolute)
 	}
 	return SourceIdentity{Root: resolvedRoot, Path: relative}, nil
@@ -753,6 +775,9 @@ func enclosingGitRoot(dir string) (string, error) {
 // Arbitrarily named root playbooks are admitted only when parsing identifies
 // them as playbooks. Explicit selection does not apply this directory policy.
 func directoryAdmitsSource(source *Source, selected bool) bool {
+	if selected && source.Kind == Template {
+		return false
+	}
 	if !directorySource(source.Path, selected) {
 		return false
 	}

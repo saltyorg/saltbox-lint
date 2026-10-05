@@ -3,7 +3,9 @@
 Explicit paths and opened editor documents can check templates without changing
 any source bytes. Conventional `roles/<role>/templates/`,
 `resources/roles/<role>/templates/`, `resources/templates/` and `.j2` paths are
-recognized, including files with no extension. Default directory and
+recognized, including files with no extension. Narrowing the source root inside
+a template directory or opening a canonical alias never grants write eligibility.
+Role context outside a narrowed root remains unavailable. Default directory and
 `--changed-since` selection retain their existing YAML primary discovery.
 
 ```sh
@@ -39,7 +41,8 @@ Expression and statement argument validation uses a bounded static subset.
 Unsupported collections, arithmetic, imports, extension tags and other grammar
 receive partial coverage rather than fabricated syntax errors. Unknown extension
 grammar stops further scanning and disables block and reference claims. Limits are 16 MiB per source, 512
-tokens per tag and 128 bracket/block levels. These checks are not a full Jinja
+tokens per tag, 32,768 total tokens, 4,096 tags, 64 KiB of lexed tag content,
+128 findings, a 4 KiB configuration header and 128 bracket/block levels. These checks are not a full Jinja
 parser and do not establish rendered output or runtime validity.
 
 Static `role_var` and `role_web` inspection reuses the YAML declaration resolver.

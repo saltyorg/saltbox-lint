@@ -7,6 +7,7 @@ import {
 } from "@vscode/test-electron";
 import {
   cpSync,
+  symlinkSync,
   existsSync,
   readdirSync,
   readFileSync,
@@ -80,6 +81,15 @@ if (
       resolve(root, "one/roles/readonly/templates", basename),
       " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  ",
     );
+  writeFileSync(
+    resolve(root, "one/roles/readonly/templates/.saltbox-lint"),
+    "",
+  );
+  symlinkSync(
+    resolve(root, "one/roles/readonly/templates"),
+    resolve(root, "one/readonly-alias"),
+    "junction",
+  );
   // Normal mode edits this buffer without changing role membership mid-test.
   // The runner owns the saved fixture for the entire host session.
   mkdirSync(resolve(root, "one/roles/example/tasks"), { recursive: true });

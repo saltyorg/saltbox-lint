@@ -194,3 +194,16 @@ func TestCanonicalCommittedFixtures(t *testing.T) {
 		t.Fatalf("unsupported fixture: %+v %v", result, err)
 	}
 }
+
+func TestCanonicalTemplateLocationIsReadOnly(t *testing.T) {
+	for _, filename := range []string{"/workspace/roles/demo/templates/config.yaml", "roles/demo/tasks/input.j2", "roles/demo/files/input.j2"} {
+		input := []byte("value: [1,2]\n")
+		result, err := Plan(t.Context(), filename, input)
+		if err != nil || result.Status != "skipped" || len(result.Edits) != 0 {
+			t.Fatalf("template canonical edits %s: %+v %v", filename, result, err)
+		}
+		if string(input) != "value: [1,2]\n" {
+			t.Fatal("template bytes changed")
+		}
+	}
+}

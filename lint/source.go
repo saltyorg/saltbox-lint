@@ -144,9 +144,12 @@ func classify(filename string) (Kind, string, string) {
 		case "templates":
 			kind = Template
 		}
+		if strings.HasSuffix(filename, ".j2") {
+			kind = Template
+		}
 		return kind, parts[roleStart+1], strings.Join(parts[:roleStart+2], "/")
 	}
-	if strings.HasSuffix(filename, ".j2") {
+	if templateLocation(filename) {
 		return Template, "", ""
 	}
 	if len(parts) >= 3 && parts[0] == "resources" {
@@ -350,4 +353,23 @@ func (s *sourceAdapter) adapt(input ast.Node) (*Node, error) {
 		return nil, fmt.Errorf("unsupported YAML syntax %T", input)
 	}
 	return n, nil
+}
+
+// Template location is independent of the chosen source root. An absolute or
+// narrowed-root path can prove read-only eligibility without proving a role
+// owner whose context would be outside that root.
+func templateLocation(filename string) bool {
+	if strings.HasSuffix(filename, ".j2") {
+		return true
+	}
+	parts := strings.Split(filename, "/")
+	for i, part := range parts {
+		if part == "roles" && i+3 < len(parts) && parts[i+2] == "templates" {
+			return true
+		}
+		if part == "resources" && i+2 < len(parts) && parts[i+1] == "templates" {
+			return true
+		}
+	}
+	return false
 }

@@ -16,6 +16,9 @@ func TestTemplateScanner(t *testing.T) {
 		{"quoted delimiters", `{{ '}} {{ {% #}' }}{% if value == '%}' %}yes{% endif %}`, "", ""},
 		{"comments", "{# {{ {% unmatched \" #}\n{{ value }}", "", ""},
 		{"raw", "{% raw -%}{{ {# {% nonsense %}\n{% if \" {{\n{%- endraw %}{{ value }}", "", ""},
+		{"overlapping raw start occurrences", "#jinja2:block_start_string:'aaa'\naaaraw%}aaaaendraw%}", "", ""},
+		{"trim-like custom ending", "#jinja2:block_end_string:'-}}'\n{% raw-}}{{ literal{% endraw-}}", "", ""},
+		{"Unicode raw ending", "{% raw %}{{ literal{%\u00a0endraw\u00a0%}", "", ""},
 		{"trim", "{%- if a +%}\t{{- value -}}{#- ignore -#}{%+ endif -%}", "", ""},
 		{"custom", "#jinja2:variable_start_string:'[[',variable_end_string:']]',block_start_string:'<%',block_end_string:'%>',comment_start_string:'<#',comment_end_string:'#>',trim_blocks:False\r\n<% if yes %>[[ ']]' ]]<# ignored <% #><% endif %>", "", ""},
 		{"missing end", "{% if a %}literal", "missing endif", ""},
@@ -42,6 +45,7 @@ func TestTemplateScanner(t *testing.T) {
 		{"unsupported Unicode identifier", "{{ lookup\u0301('role_var', '_port', role='beta') }}", "", "Unicode source boundaries"},
 		{"unsupported expression", "{{ [x for x in values] }}", "", "expression grammar"},
 		{"unknown config", "#jinja2:unknown:True\n{{ value", "", "option: unknown"},
+		{"long delimiter", "#jinja2:variable_start_string:'" + strings.Repeat("a", 33) + "'\n{{ unclosed", "", "size or whitespace"},
 		{"overlapping config", "#jinja2:variable_start_string:'{'\n{{ value", "", "overlapping"},
 		{"invalid config", "#jinja2:variable_start_string:False\n{{ value", "", "plain quoted"},
 		{"config escapes", "#jinja2:variable_start_string:'\\x7b'\n{{ value", "", "plain quoted"},
@@ -227,5 +231,94 @@ func TestTemplateUnavailableQueriesKeepPrimaryDependencies(t *testing.T) {
 	project.Selected["value.j2"] = true
 	if err := RequireWritableSelection(project); err == nil {
 		t.Fatal("selected template entered writable selection")
+	}
+}
+
+func TestTemplateLargeRawLiteralDoesNotRescanTagEndings(t *testing.T) {
+	input := "{% raw %}" + strings.Repeat("{%", 512*1024) + "{% endraw %}{{ value }}"
+	source, _ := Parse("literal.j2", []byte(input))
+	scan := scanTemplate(source)
+	if len(scan.diagnostics) > 0 || len(scan.reasons) > 0 || len(scan.expressions) != 1 || scan.expressions[0].Tokens[0].Text != "value" {
+		t.Fatalf("raw literal interpreted or ending lost: %+v", scan)
+	}
+	if string(source.Data) != input {
+		t.Fatal("raw source bytes changed")
+	}
+}
+
+func TestTemplateStoredOutputBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, reason string
+		diagnostics         int
+	}{
+		{"configuration whitespace", "#jinja2:trim_blocks:" + strings.Repeat(" ", 4096) + "True\n{{ unclosed", "4 KiB", 0},
+		{"tags", strings.Repeat("{{ a }}", 4097), "4096 tag", 0},
+		{"aggregate tokens", strings.Repeat("{{ f("+strings.Repeat("a,", 63)+"a) }}", 260), "32768 token", 0},
+		{"lexing bytes", "{{ '" + strings.Repeat("a", 64*1024) + "' }}", "64 KiB", 0},
+		{"long raw opening whitespace", "{% " + strings.Repeat(" ", 64*1024) + "raw %}{{ literal{% endraw %}", "64 KiB", 0},
+		{"diagnostics", strings.Repeat("{{ }}", 129), "128 finding", 128},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, _ := Parse("bounded.j2", []byte(tc.input))
+			scan := scanTemplate(source)
+			if len(scan.diagnostics) != tc.diagnostics || !strings.Contains(strings.Join(scan.reasons, ";"), tc.reason) {
+				t.Fatalf("stored output not bounded or explanation omitted: %+v", scan)
+			}
+			if string(source.Data) != tc.input {
+				t.Fatal("bounded check changed source bytes")
+			}
+		})
+	}
+	input := "{% raw %}" + strings.Repeat("{% "+strings.Repeat(" ", 128)+"literal", 4096) + "{%- endraw %}"
+	source, _ := Parse("whitespace.j2", []byte(input))
+	scan := scanTemplate(source)
+	if len(scan.diagnostics) > 0 || len(scan.reasons) > 0 || len(scan.expressions) > 0 {
+		t.Fatal("long raw whitespace candidates were interpreted")
+	}
+}
+
+func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T) {
+	root := t.TempDir()
+	narrow := filepath.Join(root, "roles/demo/templates")
+	filename := putFile(t, root, "roles/demo/templates/config.yaml", "---\nv: [1,2]\n")
+	putFile(t, root, "roles/demo/defaults/main.yml", "demo_role_value: true\n")
+	for _, name := range []string{"config.yaml", "extensionless"} {
+		if name == "extensionless" {
+			putFile(t, root, "roles/demo/templates/extensionless", "{{ value }}")
+		}
+		p, err := Load(t.Context(), Options{Root: narrow, Paths: []string{filepath.Join(narrow, name)}, IncludeAnalysis: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := p.Sources[name]
+		if p.Root != narrow || source.Kind != Template || source.Role != "" || source.RolePath != "" || len(p.Sources) != 1 {
+			t.Fatalf("physical classification invented outside-root context: %+v %+v", source, p)
+		}
+		if err := RequireWritableSelection(p); err == nil {
+			t.Fatal("physical template became writable")
+		}
+	}
+	// A tasks-looking suffix beneath the physical template root also stays raw.
+	putFile(t, root, "roles/demo/templates/tasks/main.yml", "{{ value }}")
+	if p, err := Load(t.Context(), Options{Root: narrow, Paths: []string{narrow}}); err == nil {
+		t.Fatalf("narrow directory selected templates: %+v", p)
+	}
+	alias := putFile(t, root, "unrelated.yml", "x: true\n")
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filename, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	p, err := Load(t.Context(), Options{Root: root, Paths: []string{alias}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Sources["unrelated.yml"].Kind != Template || p.Sources["unrelated.yml"].Path != "unrelated.yml" {
+		t.Fatal("alias template identity changed or writability expanded")
+	}
+	identity, err := ResolveSourceIdentity(root, alias)
+	if err != nil || !identity.IsTemplate() || identity.Path != "unrelated.yml" {
+		t.Fatalf("alias identity: %+v %v", identity, err)
 	}
 }

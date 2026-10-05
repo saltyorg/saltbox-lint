@@ -154,6 +154,7 @@ export async function run(): Promise<void> {
   const { runTemplates } = await import("./templates.ts");
   await runTemplates();
   await vscode.window.showTextDocument(document);
+  await vscode.commands.executeCommand("saltboxLint.checkDocument");
   const { runHelpStatus } = await import("./help-status.ts");
   await runHelpStatus(document);
   const original = document.getText();
