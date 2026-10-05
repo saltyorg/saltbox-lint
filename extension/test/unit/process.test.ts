@@ -10,8 +10,9 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
+import { Socket } from "node:net";
 
-test("a no-input request succeeds when its child closes stdin before returning output", async () => {
+test("a no-input request omits the writer that rejects a closed owned child pipe", async () => {
   const bundled = await build({
     entryPoints: ["src/process.ts"],
     bundle: true,
@@ -44,6 +45,11 @@ test("a no-input request succeeds when its child closes stdin before returning o
     stdin: string;
     error?: string;
     code?: number | null;
+    peerClosed: boolean;
+    ready: boolean;
+    forwarded: boolean;
+    callback?: string | null;
+    exited?: boolean;
   }[] = [];
   runInNewContext(bundled.outputFiles[0].text, {
     module,
@@ -63,10 +69,27 @@ test("a no-input request succeeds when its child closes stdin before returning o
         const stdio = options!.stdio as ["pipe" | "ignore", "pipe", "pipe"];
         const child = spawn(file, args, {
           ...options,
-          stdio: [...stdio, "ipc"],
+          // fd0 remains open in Windows libuv even after fs.closeSync(0).
+          // This controlled peer uses fd3 so public Socket.destroy really
+          // closes it. Normal stdin UTF8 and EOF use unmodified spawn below.
+          stdio: ["ignore", stdio[1], stdio[2], "pipe", "ipc"],
         });
-        const observation: (typeof observations)[number] = { stdin: stdio[0] };
+        const observation: (typeof observations)[number] = {
+          stdin: stdio[0],
+          peerClosed: false,
+          ready: false,
+          forwarded: false,
+        };
+        const peer = child.stdio[3];
+        assert.ok(peer instanceof Socket);
+        child.stdin = stdio[0] === "pipe" ? peer : null;
         observations.push(observation);
+        child.on("message", (message) => {
+          if (message === "peer-closed") observation.peerClosed = true;
+        });
+        child.once("exit", () => {
+          observation.exited = true;
+        });
         const finish = () =>
           child.send("finish", (error) => {
             if (error) gateErrors.push(error);
@@ -79,7 +102,14 @@ test("a no-input request succeeds when its child closes stdin before returning o
           Object.defineProperty(input, "end", {
             value: (...args: unknown[]) => {
               child.stdout!.once("data", () => {
-                Reflect.apply(end, input, args);
+                observation.ready = true;
+                observation.forwarded = true;
+                Reflect.apply(end, input, [
+                  ...args,
+                  (error?: NodeJS.ErrnoException | null) => {
+                    observation.callback = error?.code ?? null;
+                  },
+                ]);
               });
               return input;
             },
@@ -87,7 +117,11 @@ test("a no-input request succeeds when its child closes stdin before returning o
           input.on("error", (error: NodeJS.ErrnoException) => {
             observation.error = error.code;
           });
-        } else child.stdout!.once("data", finish);
+        } else
+          child.stdout!.once("data", () => {
+            observation.ready = true;
+            finish();
+          });
         joins.push(
           new Promise<void>((resolve) => {
             child.once("close", (code) => {
@@ -106,10 +140,8 @@ test("a no-input request succeeds when its child closes stdin before returning o
     cwd: process.cwd(),
     args: [
       "-e",
-      // Initialize input, output and the gate before closing standard input.
-      // Windows duplicates fd0 when opening stdin; destroy that handle as
-      // well as the original descriptor before publishing peer-close readiness.
-      'const output=process.stdout;process.on("message",()=>process.exit(0));const input=process.stdin;input.once("close",()=>{require("node:fs").closeSync(0);output.write("v1\\n");});input.destroy();',
+      // Initialize output and IPC before closing the dedicated owned peer.
+      'const output=process.stdout;process.on("message",()=>process.exit(0));const input=new (require("node:net").Socket)({fd:3,readable:true,writable:false});input.once("close",()=>process.send("peer-closed",(error)=>{if(error)throw error;output.write("v1\\n");}));input.destroy();',
     ],
   };
   try {
@@ -121,6 +153,10 @@ test("a no-input request succeeds when its child closes stdin before returning o
     assert.equal(observations.length, 1);
     assert.equal(observations[0].stdin, "ignore");
     assert.equal(observations[0].code, 0);
+    assert.equal(observations[0].peerClosed, true);
+    assert.equal(observations[0].exited, true);
+    assert.equal(observations[0].ready, true);
+    assert.equal(observations[0].forwarded, false);
     assert.deepEqual(gateErrors, []);
     await assert.rejects(
       module.exports.runProcess(
@@ -132,6 +168,16 @@ test("a no-input request succeeds when its child closes stdin before returning o
     await Promise.all(joins);
     assert.equal(observations[1].stdin, "pipe");
     assert.equal(observations[1].error, "EPIPE");
+    assert.equal(observations[1].peerClosed, true);
+    assert.equal(observations[1].exited, true);
+    assert.equal(observations[1].callback, "EPIPE");
+    assert.equal(observations[1].ready, true);
+    assert.equal(observations[1].forwarded, true);
+  } catch (error) {
+    throw new Error(
+      `Closed peer control phases: ${JSON.stringify(observations)}`,
+      { cause: error },
+    );
   } finally {
     abort.abort();
     await Promise.all(joins);
