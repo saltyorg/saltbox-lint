@@ -60,7 +60,7 @@ func NewRootCommand(streams Streams, version string) *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.PersistentFlags().StringVar(&opts.color, "color", "auto", "Color: auto, always, never")
 	root.PersistentFlags().StringVar(&opts.theme, "theme", "auto", "Theme: auto, dark, light (auto detects the terminal background)")
-	root.AddCommand(newCheckCommand(&opts), newFormatCommand(), newRulesCommand(&opts), newExplainCommand(), newReferencesCommand())
+	root.AddCommand(newCheckCommand(&opts), newFormatCommand(), newRulesCommand(&opts), newExplainCommand(), newReferencesCommand(), newQueryCommand())
 	return root
 }
 

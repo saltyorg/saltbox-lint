@@ -48,6 +48,10 @@
       {
         "command": "saltboxLint.showStatus",
         "title": "Saltbox Lint: Show Check Status"
+      },
+      {
+        "command": "saltboxLint.showImpact",
+        "title": "Saltbox Lint: Show Static Role Lookup Impact"
       }
     ],
     "configuration": {

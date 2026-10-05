@@ -47,6 +47,33 @@ if (
     "QUEUE",
   ].every((mode) => process.env[`SALTBOX_TEST_${mode}`] !== "1")
 ) {
+  for (const name of ["one", "two"]) {
+    for (const directory of [
+      "navsource/tasks",
+      "navsource/defaults",
+      "navtarget/defaults",
+      "navtarget/vars",
+    ])
+      mkdirSync(resolve(root, name, "roles", directory), { recursive: true });
+    writeFileSync(
+      resolve(root, name, "roles/navsource/tasks/main.yml"),
+      "# 😀é\r\n- debug: {msg: \"😀 {{ lookup('role_var', '_port', role='navtarget') }}\"}\r\n",
+    );
+    writeFileSync(
+      resolve(root, name, "roles/navsource/defaults/main.yml"),
+      "navsource_role_port: 9876\n",
+    );
+    writeFileSync(
+      resolve(root, name, "roles/navtarget/defaults/main.yml"),
+      "# [untrusted](command:evil) **comment** <b>literal</b>\nnavtarget_role_port: " +
+        (name === "one" ? "1234" : "84") +
+        "\nnavtarget_name: navalias\nnavalias_port: 4321\n",
+    );
+    writeFileSync(
+      resolve(root, name, "roles/navtarget/vars/main.yml"),
+      "navtarget_role_port: 5678\n",
+    );
+  }
   // Normal mode edits this buffer without changing role membership mid-test.
   // The runner owns the saved fixture for the entire host session.
   mkdirSync(resolve(root, "one/roles/example/tasks"), { recursive: true });

@@ -149,6 +149,9 @@ export async function run(): Promise<void> {
     "open should publish real CLI Jinja diagnostics",
   );
   console.log("PASS open diagnostics from bundled CLI");
+  const { runNavigation } = await import("./navigation.ts");
+  await runNavigation();
+  await vscode.window.showTextDocument(document);
   const { runHelpStatus } = await import("./help-status.ts");
   await runHelpStatus(document);
   const original = document.getText();

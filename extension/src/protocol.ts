@@ -184,6 +184,31 @@ export class SnapshotIndex {
     if (span) valid(span.start === start.byte && span.end === end.byte);
     return { start: this.position(range.start), end: this.position(range.end) };
   }
+  byteOffset(position: Position): number {
+    integer(position.line);
+    integer(position.character);
+    const found = this.lines[position.line]?.find(
+      (point) =>
+        point.character === position.character &&
+        !this.interiorCRLF.has(point.byte),
+    );
+    valid(found);
+    return found.byte;
+  }
+  span(span: Span): { start: Position; end: Position } {
+    integer(span.start);
+    integer(span.end);
+    valid(span.start <= span.end);
+    const locate = (byte: number): Position => {
+      for (let line = 0; line < this.lines.length; line++) {
+        const found = this.lines[line].find((point) => point.byte === byte);
+        if (found && !this.interiorCRLF.has(byte))
+          return { line, character: found.character };
+      }
+      throw new Error("Invalid Saltbox Lint byte boundary");
+    };
+    return { start: locate(span.start), end: locate(span.end) };
+  }
   edits(editsToMap: SourceEdit[]): EditorEdit[] {
     edits(editsToMap);
     let previous: EditorEdit | undefined;
@@ -238,7 +263,9 @@ function digest(value: unknown): asserts value is string {
   string(value);
   valid(/^[0-9a-f]{64}$/.test(value));
 }
-function analysisRecord(value: unknown): asserts value is AnalysisRecord {
+export function analysisRecord(
+  value: unknown,
+): asserts value is AnalysisRecord {
   object(value);
   valid(value.schema_version === 1 && value.complete === true);
   string(value.root);

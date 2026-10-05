@@ -102,6 +102,39 @@ Operational errors and skipped-format reasons appear in the **Saltbox Lint**
 Output channel. Manual operation failures also show a notification. There are no
 runtime downloads, telemetry, Python/Ansible execution, or persistent server.
 
+## Role lookup navigation
+
+Navigation is available in source builds and remains unreleased. In an eligible
+marked YAML or Ansible document, Go to Definition returns every applicable local
+declaration candidate for a literal `role_var` or `role_web` lookup. Hover shows
+escaped declaration comments and the literal source representation. These are
+source declarations; the extension does not evaluate runtime values or Ansible
+variable precedence. Dynamic arguments and unavailable context provide no
+fabricated locations.
+
+Invoke completion inside a recognized quoted role argument or `role_var` suffix.
+The chosen item replaces only that literal's contents, preserves its quotes, and
+uses the editor's normal undo history. Escaped or folded tokens with uncertain
+source mappings receive no completion edit. Definitions and hover continue to
+inspect safely mapped reads using the shared Go resolver.
+
+Find All References returns statically recognized local reads and labels its
+incomplete search in the status bar.
+**Saltbox Lint: Show Static Role Lookup Impact** opens a read-only view of read
+locations and declaration candidates, with incomplete coverage reasons. The
+search observes admitted project YAML and conventional context, including the
+current unsaved source snapshot. Dynamic reads, ignored directory discovery,
+external providers and templates prevent a complete runtime impact claim.
+Declaration contents are not written to Output or the impact view.
+
+Each navigation operation has bounded scheduling and process cancellation.
+Requests use captured UTF-8 snapshots, target hashes and canonical root ownership.
+Deleted, changed or dirty dependency targets decline locations; changed source,
+context, markers and closed documents revoke pending work. Fresh requests avoid
+retaining stale answers. Nested configured roots keep their own source authority.
+Templates remain context-only. Completion, rename and formatting of templates
+are not supported.
+
 ## Rule help and check status
 
 Rule help and status are source-built, unreleased additions. They are not in the

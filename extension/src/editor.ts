@@ -1,3 +1,9 @@
+import {
+  Navigation,
+  validateNavigation,
+  type NavigationAnswer,
+} from "./navigation.ts";
+import { parseQuery, type QueryOperation } from "./navigation-protocol.ts";
 import { RuleHelp } from "./help.ts";
 import * as vscode from "vscode";
 import { isUtf8 } from "node:buffer";
@@ -75,6 +81,21 @@ export class EditorIntegration implements vscode.Disposable {
   private activeProjectOnly = this.displayActiveProjectOnly();
   private readonly lint = new Scheduler("retain");
   private readonly formatting = new Scheduler();
+  private readonly queryLanes = new Map<QueryOperation, Scheduler>([
+    ["definition", new Scheduler()],
+    ["completion", new Scheduler()],
+    ["hover", new Scheduler()],
+    ["references", new Scheduler()],
+  ]);
+  private queryRevision = 0;
+  readonly navigation = new Navigation((document, position, operation, token) =>
+    this.query(document, position, operation, token),
+  );
+  private revokeQueries(): void {
+    this.queryRevision++;
+    for (const lane of this.queryLanes.values()) lane.cancelAll();
+  }
+
   private readonly collection =
     vscode.languages.createDiagnosticCollection("saltbox-lint");
   private readonly output = vscode.window.createOutputChannel("Saltbox Lint");
@@ -1026,6 +1047,115 @@ export class EditorIntegration implements vscode.Disposable {
     if (!this.current(document, result.snapshot)) return;
     await vscode.workspace.applyEdit(edit);
   }
+  private async query(
+    document: vscode.TextDocument,
+    position: { line: number; character: number },
+    operation: QueryOperation,
+    token?: vscode.CancellationToken,
+  ): Promise<NavigationAnswer | undefined> {
+    if (token?.isCancellationRequested) return;
+    const abort = new AbortController();
+    const listener = token?.onCancellationRequested(() => abort.abort());
+    const revision = this.queryRevision;
+    const dependencyToken = this.dependencies.begin();
+    try {
+      const snapshot = await this.snapshot(document);
+      const current = () =>
+        !!snapshot &&
+        !abort.signal.aborted &&
+        revision === this.queryRevision &&
+        this.current(document, snapshot);
+      if (!snapshot || !current()) return;
+      if (
+        !document.isDirty &&
+        !isUtf8(
+          await readFile(await resolveSource(snapshot.root, snapshot.path)),
+        )
+      )
+        return;
+      if (!current()) return;
+      const offset = snapshot.index.byteOffset(position);
+      const wire = await this.queryLanes.get(operation)!.submit(
+        document.uri.toString(),
+        1,
+        (signal) =>
+          runProcess(
+            {
+              executable: this.executable,
+              cwd: snapshot.root,
+              args: [
+                "query",
+                "--root",
+                snapshot.root,
+                "--stdin-filename",
+                snapshot.filename,
+                "--operation",
+                operation,
+                "--offset",
+                String(offset),
+                "-",
+              ],
+              input: snapshot.text,
+              maxBytes: 16 * 1024 * 1024,
+            },
+            signal,
+          ),
+        abort.signal,
+      );
+      if (wire === undefined || !current()) return;
+      const report = parseQuery(
+        wire,
+        snapshot.root,
+        snapshot.path,
+        snapshot.text,
+        operation,
+        offset,
+      );
+      const dependencies = new Set(
+        report.dependencies.sources[0].files.map((file) => file.path),
+      );
+      for (const buffer of vscode.workspace.textDocuments) {
+        if (buffer.isClosed || !buffer.isDirty || buffer.uri.scheme !== "file")
+          continue;
+        let identity: Identity;
+        try {
+          identity = await identify(snapshot.root, buffer.uri.fsPath);
+        } catch {
+          continue;
+        }
+        if (identity.path !== snapshot.path && dependencies.has(identity.path))
+          return;
+      }
+      const answer = await validateNavigation(
+        report,
+        snapshot.text,
+        snapshot.index,
+        document.uri,
+      );
+      const observed = await observeAnalysis(
+        report.dependencies,
+        new Set([snapshot.path]),
+      );
+      if (!current() || observed.changed.size) return;
+      const identity = await identify(snapshot.root, document.uri.fsPath);
+      if (
+        !current() ||
+        identity.filename !== snapshot.filename ||
+        identity.path !== snapshot.path
+      )
+        return;
+      // Events which arrived before a previously unknown query dependency was
+      // loaded still prevent late acceptance. Do not overwrite lint ownership.
+      if (this.dependencies.begin() !== dependencyToken) return;
+      return answer;
+    } catch {
+      // Navigation failure declines a location. Never log source values or a
+      // child response, and never turn a read-only query into a source change.
+      return;
+    } finally {
+      listener?.dispose();
+    }
+  }
   async format(
     document: vscode.TextDocument,
     mode: "canonical" | "lint-fixes",
@@ -1128,6 +1258,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.queueFile(document.uri, true);
     this.documentRevisions.set(document, ++this.nextRevision);
     this.relatedRevision++;
+    this.revokeQueries();
     this.lint.cancel(key);
     this.formatting.cancel(key);
     this.publish(document.uri);
@@ -1185,6 +1316,7 @@ export class EditorIntegration implements vscode.Disposable {
     const key = folder.uri.toString();
     const root = this.roots.get(key);
     if (!root) return;
+    this.revokeQueries();
     const known = this.sourceOwners.get(uri.toString());
     let relative =
       known?.root === root
@@ -1596,6 +1728,7 @@ export class EditorIntegration implements vscode.Disposable {
     this.refreshFolders(affected);
   }
   private refreshFolders(affected: Set<string>): void {
+    if (affected.size) this.revokeQueries();
     for (const folder of affected) {
       this.dependencies.remove(folder);
       this.rootRevisions.set(folder, ++this.nextRevision);
@@ -1658,6 +1791,8 @@ export class EditorIntegration implements vscode.Disposable {
     this.dependencies.clear();
     this.lint.dispose();
     this.formatting.dispose();
+    for (const lane of this.queryLanes.values()) lane.dispose();
+    this.navigation.dispose();
     this.collection.dispose();
     this.output.dispose();
     this.help.dispose();

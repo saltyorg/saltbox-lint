@@ -134,3 +134,53 @@ arguments, external contracts, invalid context, inventory scope and `set_fact`
 execution. Dependency completeness means the recorded observations were retained;
 it does not mean Ansible's runtime variable universe is closed. Clean and
 unresolved queries retain dependencies so later changes can invalidate them.
+
+## Editor query endpoint
+
+`query` is an unreleased read-only endpoint for one exact YAML buffer. It reuses
+this declaration index and resolver. Supply an operation, a filename and a UTF-8
+byte offset through the current snapshot. Offsets inside encoded characters or
+between CR and LF are rejected. The snapshot is limited to 16 MiB.
+
+```sh
+saltbox-lint query --root . --stdin-filename roles/example/tasks/main.yml --operation definition --offset 120 - < editor-buffer.yml
+```
+
+Operations are `definition`, `completion`, `hover` and `references`. Full admitted
+project discovery supplies role-name completion and static reads across roles.
+The current source overrides its saved bytes. Explicit source selection can
+inspect an ignored primary; directory discovery still excludes ignored peers.
+All reads retain the original reference scanner's lexical admission and contract.
+Exit status is 0 for generated results, including `none`, `dynamic`, `ambiguous`
+and `unavailable`, and 2 for usage, loading or reporting failure.
+
+Query schema version 1 is separate from reference-report schema version 1 and
+from default check schema version 2. The response contains:
+
+| Field | Meaning |
+| --- | --- |
+| `root`, `path`, `source_sha256` | Canonical source identity and exact snapshot hash |
+| `operation`, `offset` | Echoed request operation and validated byte offset |
+| `state`, `reasons` | Declaration resolution evidence, or `none` outside a recognized read/declaration |
+| `origin` | Optional original lookup or declaration-key location |
+| `target_hashes` | SHA-256 hashes of source snapshots for every returned target |
+| `locations` | Original source locations with `declaration` or statically recognized `read` kind |
+| `declarations` | Every applicable declaration candidate, comments and literal source representation |
+| `completions` | Literal labels, descriptive details and replacement location/text, preserving quotes |
+| `dependencies` | Analysis schema 1 collapsed to the primary owner with all observed sources, negative context and discovery controls |
+| `coverage` | `complete: false` and explicit reasons that runtime impact remains incomplete |
+
+Locations use the same original half-open UTF-8 spans, code point line/column and
+exact source text as reference inspection. Consumers must validate echoed
+identity, all target hashes, boundaries and current ownership before presenting
+results. A completion location covers only the active literal's contents.
+Completion declines dynamic calls, unsupported argument shapes, qualified
+external contracts and uncertain escaped/folded source representations.
+
+References can start on a recognized read or a declaration key. They return reads
+whose candidate sets include the declaration candidates at that location, rather
+than asserting which candidate Ansible will use. Coverage reasons explicitly
+retain templates, runtime providers, ignored discovery and dynamic reads.
+The VS Code adapter observes dependencies and target bytes before accepting a
+fresh response, and omits dirty target buffers. It provides a read-only impact
+view without declaration values. There is no persistent server or answer cache.

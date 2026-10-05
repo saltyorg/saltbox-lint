@@ -56,6 +56,22 @@ export function activate(context: vscode.ExtensionContext): void {
               ],
             },
           ),
+          vscode.languages.registerDefinitionProvider(selector, {
+            provideDefinition: (document, position, token) =>
+              editor.navigation.definition(document, position, token),
+          }),
+          vscode.languages.registerCompletionItemProvider(selector, {
+            provideCompletionItems: (document, position, token) =>
+              editor.navigation.completion(document, position, token),
+          }),
+          vscode.languages.registerHoverProvider(selector, {
+            provideHover: (document, position, token) =>
+              editor.navigation.hover(document, position, token),
+          }),
+          vscode.languages.registerReferenceProvider(selector, {
+            provideReferences: (document, position, context, token) =>
+              editor.navigation.references(document, position, context, token),
+          }),
           vscode.languages.registerDocumentFormattingEditProvider(selector, {
             provideDocumentFormattingEdits: (document, _options, token) =>
               editor.format(document, "canonical", token),
@@ -76,6 +92,9 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("saltboxLint.explainRule", (id?: string) =>
       editor.explainRule(id),
+    ),
+    vscode.commands.registerCommand("saltboxLint.showImpact", () =>
+      editor.navigation.impact(),
     ),
     vscode.commands.registerCommand("saltboxLint.showStatus", () =>
       editor.showStatus(),

@@ -50,6 +50,7 @@ type ReferenceCandidate struct {
 }
 
 type RoleReference struct {
+	arguments          []queryArgument
 	Location           ReferenceLocation    `json:"location"`
 	OwningRole         string               `json:"owning_role"`
 	OwningRolePath     string               `json:"owning_role_path"`
@@ -236,6 +237,7 @@ func sourceRoleReferences(source *Source) []RoleReference {
 					continue
 				}
 				read := RoleReference{Location: referenceLocation(source, call.Span), OwningRole: source.Role, OwningRolePath: source.RolePath, LookupKind: plugin, TargetKind: "explicit", Suffixes: []string{}, State: "unavailable", Reasons: []string{}, Candidates: []ReferenceCandidate{}, AliasDeclarations: []RoleDeclaration{}, SpellingCandidates: []RoleDeclaration{}, DefaultSupplied: hasNamedArgument(call, "default")}
+				read.arguments = queryArguments(source, call, plugin)
 				if bound[e.node][callee] {
 					read.State = "dynamic"
 					read.Reasons = append(read.Reasons, "local-callee-binding")
