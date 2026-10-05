@@ -66,6 +66,31 @@ export function publicFailureEvidence(value: unknown): unknown {
   );
 }
 
+export function logFailureEvidence(
+  prefix: string,
+  evidence: unknown,
+  write: (message: string) => void = console.error,
+): void {
+  const text = JSON.stringify(publicFailureEvidence(evidence));
+  const sha256 = createHash("sha256").update(text).digest("hex");
+  // VS Code bounds serialized console arguments. Small numbered records keep
+  // complete redacted evidence reconstructable, even for a large journal.
+  const chunkSize = 4096;
+  const count = Math.ceil(text.length / chunkSize);
+  for (let index = 0; index < count; index++)
+    write(
+      prefix +
+        " " +
+        JSON.stringify({
+          schemaVersion: 1,
+          index,
+          count,
+          sha256,
+          text: text.slice(index * chunkSize, (index + 1) * chunkSize),
+        }),
+    );
+}
+
 export async function journalFailureEvidence(journal: FixtureJournal) {
   const startedAt = new Date().toISOString();
   const snapshot = journal.failureSnapshot();

@@ -3,7 +3,45 @@ import { test } from "node:test";
 import {
   withFailureEvidence,
   publicFailureEvidence,
+  logFailureEvidence,
 } from "../host/failure-evidence.ts";
+import { createHash } from "node:crypto";
+
+test("large failure evidence survives the editor console limit without credentials", () => {
+  const evidence = {
+    phase: "alias assertion rejected before disposal",
+    records: Array.from({ length: 600 }, (_, index) => ({
+      index,
+      pid: index + 100,
+      token: "private fixture credential",
+      args: ["check", "--stdin-filename", "a".repeat(300) + "😀"],
+    })),
+  };
+  const messages: string[] = [];
+  logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", evidence, (message) => {
+    // VS Code 1.100 replaces a serialized console argument over 100000
+    // characters with an omission message. Keep every real argument bounded.
+    assert.ok(JSON.stringify([message]).length < 100000);
+    assert.ok(!message.includes("private fixture credential"));
+    messages.push(message);
+  });
+  const chunks = messages.map((message) =>
+    JSON.parse(message.slice("SALTBOX_DEPENDENCY_FAILURE ".length)),
+  ) as { index: number; count: number; sha256: string; text: string }[];
+  assert.ok(chunks.length > 1);
+  assert.deepEqual(
+    chunks.map((chunk) => chunk.index),
+    chunks.map((_, index) => index),
+  );
+  const text = chunks.map((chunk) => chunk.text).join("");
+  const digest = createHash("sha256").update(text).digest("hex");
+  assert.ok(
+    chunks.every(
+      (chunk) => chunk.count === chunks.length && chunk.sha256 === digest,
+    ),
+  );
+  assert.deepEqual(JSON.parse(text), publicFailureEvidence(evidence));
+});
 
 test("failure evidence is unused on success and starts only after original rejection", async () => {
   const events: string[] = [];
