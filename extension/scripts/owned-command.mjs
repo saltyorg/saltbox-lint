@@ -3,10 +3,14 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { groupHasLiveMembers } from "./owned-group.mjs";
 
-// Release probes own only the process they start and its descendants. Keep the
+// Build checks and release probes own only their command and its descendants. Keep the
 // deadline active until captured stdio closes. Inherited output belongs to the
 // owned child, so blocked writes and consumer errors cannot strand this owner.
-export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
+export function ownedCommand(
+  command,
+  args,
+  { phase, timeoutMs, signal, returnExitCode = false, ...options },
+) {
   return new Promise((resolveResult, reject) => {
     const windows = process.platform === "win32";
     const payload = Buffer.from(
@@ -67,10 +71,11 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
       clearTimeout(reapTimer);
       clearTimeout(groupTimer);
       observation.abort();
+      signal?.removeEventListener("abort", onAbort);
       child.stdin?.destroy();
       const settle = () => {
         if (error) reject(error);
-        else resolveResult(stdout);
+        else resolveResult(returnExitCode ? closed.code : stdout);
       };
       // Cancellation must also join our short-lived read-only ps probe.
       if (activeObservation) activeObservation.then(settle, settle);
@@ -94,7 +99,7 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
       if (!closed || !groupGone) return;
       const { code, signal } = closed;
       if (failure) finish(failure);
-      else if (code !== 0)
+      else if (code !== 0 && !(returnExitCode && code !== null))
         finish(new Error(`${identity}: exited ${code ?? signal}\n${stderr}`));
       else finish();
     };
@@ -145,10 +150,21 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
         }, 5000);
       }, 7000);
     };
-    const deadline = setTimeout(() => {
-      failure ??= new Error(`${identity}: timed out after ${timeoutMs}ms`);
+    const onAbort = () => {
+      failure ??= new Error(`${identity}: interrupted by owner`, {
+        cause: signal.reason,
+      });
       cleanup();
-    }, timeoutMs);
+    };
+    const deadline =
+      timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            failure ??= new Error(
+              `${identity}: timed out after ${timeoutMs}ms`,
+            );
+            cleanup();
+          }, timeoutMs);
     const collect = (data, stream) => {
       outputBytes += Buffer.byteLength(data);
       // Preserve spawnSync's previous default capture bound.
@@ -184,5 +200,7 @@ export function ownedCommand(command, args, { phase, timeoutMs, ...options }) {
       closed = { code, signal };
       complete();
     });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }

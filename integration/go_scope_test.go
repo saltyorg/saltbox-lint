@@ -3,6 +3,7 @@ package integration_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -22,8 +23,10 @@ func TestGoChecksUseCurrentProjectPackages(t *testing.T) {
 	f.runOK("git", "add", ".")
 	// Use current bytes and discover new packages before staging them.
 	f.write("new/source with spaces.go", "package added\nconst Value = 2\n")
+	f.write("new/unicode-é source.go", "package added\nconst Literal = 4\n")
 	if runtime.GOOS != "windows" {
 		f.write("new/source\nwith newline.go", "package added\nconst Other = 3\n")
+		f.write("new/source\twith tab.go", "package added\nconst Tab = 5\n")
 	}
 	f.write("dependency/tool/source.go", "package tool\n")
 	for _, dir := range []string{"_hidden", ".hidden", "testdata/fixture", "vendor/fixture"} {
@@ -76,6 +79,12 @@ func TestGoChecksUseCurrentProjectPackages(t *testing.T) {
 	if after := f.state(); !reflect.DeepEqual(before, after) {
 		t.Fatal("failed check changed current source, index or refs")
 	}
+	// Go rejects a leading hyphen in a source filename. Keep that error visible.
+	f.write("new/-source.go", "package added\n")
+	out, err := f.check("go", "test")
+	if err == nil || !strings.Contains(string(out), "invalid input file name") {
+		t.Fatalf("Go filename rejection must remain visible: %v\n%s", err, out)
+	}
 }
 
 func TestGoTidinessUsesCurrentSourceWithoutInstalledDependencies(t *testing.T) {
@@ -126,7 +135,16 @@ func TestGoSourceArchiveScope(t *testing.T) {
 	f.write("source.go", "package scope\n")
 	f.write("new/source.go", "package added\n")
 	f.write("dependency/tool/source.go", "package tool\nimport _ \"example.invalid/missing\"\n")
-	provenance := map[string]any{"inputs": map[string]string{"go.mod": "", "source.go": "", "new/source.go": ""}}
+	inputs := map[string]string{}
+	for _, path := range []string{"go.mod", "source.go", "new/source.go"} {
+		data, err := os.ReadFile(filepath.Join(f.root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(data)
+		inputs[path] = hex.EncodeToString(hash[:])
+	}
+	provenance := map[string]any{"inputs": inputs}
 	data, err := json.Marshal(provenance)
 	if err != nil {
 		t.Fatal(err)
@@ -143,10 +161,15 @@ func TestGoSourceArchiveScope(t *testing.T) {
 	f.checkOK("go", "test")
 	f.checkOK("tidy")
 	// Provenance paths must not escape the source tree.
-	f.write("SOURCE-PROVENANCE.json", `{"inputs":{"../outside.go":""}}`)
+	f.write("SOURCE-PROVENANCE.json", `{"inputs":{"../outside.go":"`+strings.Repeat("0", 64)+`"}}`)
 	out, err := f.check("tidy")
 	if err == nil || !strings.Contains(string(out), "escapes the module") {
 		t.Fatalf("source archive escape must fail: %v\n%s", err, out)
+	}
+	f.write("SOURCE-PROVENANCE.json", `{"inputs":[]}`)
+	out, err = f.check("tidy")
+	if err == nil || !strings.Contains(string(out), "inputs object") {
+		t.Fatalf("invalid archive inventory must fail: %v\n%s", err, out)
 	}
 }
 
@@ -170,6 +193,9 @@ func newGoScopeFixture(t *testing.T) goScopeFixture {
 	for _, name := range []string{"TMPDIR", "TEMP", "TMP"} {
 		t.Setenv(name, f.tidyTemp)
 	}
+	f.write(".fixture-gitconfig", "")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(f.root, ".fixture-gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GOWORK", "off")
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOSUMDB", "off")

@@ -98,6 +98,11 @@ jobs:
         env:
           PACKAGE_TARGET: ${{ matrix.target }}
         run: node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.PACKAGE_TARGET)"
+      - name: Verify Windows development process launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Native Go checks require PowerShell 7 for the owned process launcher" }
       - name: Native Go tests
         env:
           CGO_ENABLED: "0"

@@ -372,6 +372,45 @@ test("release probes preserve output and identify command failures", async () =>
   );
 });
 
+test("owned checks retain exit codes and join owner-cancelled descendants", async () => {
+  assert.equal(
+    await ownedCommand(process.execPath, ["-e", "process.exit(23)"], {
+      phase: "exit-code control",
+      returnExitCode: true,
+    }),
+    23,
+  );
+  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-check-"));
+  const filename = join(directory, "builder.json");
+  const controller = new AbortController();
+  const result = ownedCommand(process.execPath, [fixture, "tree", filename], {
+    phase: "owner cancellation control",
+    signal: controller.signal,
+    returnExitCode: true,
+  }).catch((error) => error);
+  try {
+    const parent = await record(filename);
+    const child = await record(filename + ".child");
+    assert.equal(await running(parent), true);
+    assert.equal(await running(child), true);
+    const reason = new Error("scope owner stopped");
+    controller.abort(reason);
+    const error = await result;
+    assert.ok(error instanceof Error);
+    assert.match(
+      error.message,
+      /owner cancellation control: .*interrupted by owner/s,
+    );
+    assert.equal(error.cause, reason);
+    assert.equal(await running(parent), false);
+    assert.equal(await running(child), false);
+  } finally {
+    controller.abort();
+    await result;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("staging deadline names its command and closes the owned builder tree", async () => {
   const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-build-"));
   const filename = join(directory, "builder.json");

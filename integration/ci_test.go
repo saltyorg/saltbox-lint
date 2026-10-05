@@ -160,10 +160,11 @@ func TestNativeExtensionPhasesHaveFailingDeadlines(t *testing.T) {
 
 func TestNativeGoChecksShareLocalSourceScope(t *testing.T) {
 	type step struct {
-		Name string
-		Uses string
-		Run  string
-		If   string
+		Name  string
+		Uses  string
+		Run   string
+		If    string
+		Shell string
 	}
 	var ci struct {
 		Jobs map[string]struct{ Steps []step }
@@ -192,15 +193,19 @@ func TestNativeGoChecksShareLocalSourceScope(t *testing.T) {
 		"Native patched Nuri race tests on supported targets": "go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer",
 	}
 	nodeReady := false
+	windowsLauncherReady := false
 	for _, step := range ci.Jobs["native"].Steps {
 		if strings.HasPrefix(step.Uses, "actions/setup-node@") {
 			nodeReady = true
+		}
+		if step.Name == "Verify Windows development process launcher" {
+			windowsLauncherReady = step.If == "runner.os == 'Windows'" && step.Shell == "pwsh" && strings.Contains(step.Run, "$PSVersionTable.PSVersion.Major -lt 7")
 		}
 		command, ok := want[step.Name]
 		if !ok {
 			continue
 		}
-		if !nodeReady || strings.TrimSpace(step.Run) != command {
+		if !nodeReady || !windowsLauncherReady || strings.TrimSpace(step.Run) != command {
 			t.Errorf("native Go phase requires Node and shared scope: %+v", step)
 		}
 		if strings.Contains(step.Name, "race") && step.If != "matrix.race" {

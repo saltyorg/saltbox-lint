@@ -1,5 +1,5 @@
 // Local and native checks share the current project source boundary.
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -11,10 +11,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { ownedCommand } from "../extension/scripts/owned-command.mjs";
 
 const root = process.cwd();
-let activeChild;
-const forwardSignal = (signal) => activeChild?.kill(signal);
+const interruption = new AbortController();
+const forwardSignal = (signal) => interruption.abort(new Error(signal));
 // Keep signals handled while a synchronous source snapshot is being copied.
 // Once the child starts, forward interruption and join it before cleanup.
 process.on("SIGINT", forwardSignal);
@@ -53,6 +54,15 @@ function sourceFiles() {
       const { inputs } = JSON.parse(readFileSync("SOURCE-PROVENANCE.json"));
       if (!inputs || typeof inputs !== "object" || Array.isArray(inputs))
         throw new Error("Source provenance must contain an inputs object");
+      if (
+        Object.entries(inputs).some(
+          ([path, hash]) =>
+            !path || typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash),
+        )
+      )
+        throw new Error(
+          "Source provenance inputs must map paths to SHA-256 hashes",
+        );
       files = Object.keys(inputs);
     }
   } else files = capture("git", gitArgs).split("\0");
@@ -99,7 +109,7 @@ function packages(files) {
     "list",
     "-e",
     "-f",
-    '{{if or .GoFiles .CgoFiles .TestGoFiles .XTestGoFiles .InvalidGoFiles}}{{.ImportPath}}{{end}}{{"\\x00"}}',
+    '{{if or .GoFiles .CgoFiles .TestGoFiles .XTestGoFiles .InvalidGoFiles}}{{.Dir}}{{end}}{{"\\x00"}}',
     ...[...directories].sort(),
   ]);
   const selected = output.split("\0\n").filter(Boolean);
@@ -107,19 +117,19 @@ function packages(files) {
     throw new Error(
       "No project Go packages match the current build constraints",
     );
-  return selected;
+  return selected.map((directory) => {
+    const local = relative(root, directory).split(sep).join("/");
+    return local ? `./${local}` : ".";
+  });
 }
 
 function run(command, args, cwd = root) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit" });
-    activeChild = child;
-    child.once("error", reject);
-    child.once("close", (status, signal) => {
-      activeChild = undefined;
-      if (signal) reject(new Error(`${command} terminated by ${signal}`));
-      else resolve(status);
-    });
+  return ownedCommand(command, args, {
+    phase: "project Go check",
+    cwd,
+    stdio: "inherit",
+    signal: interruption.signal,
+    returnExitCode: true,
   });
 }
 

@@ -497,6 +497,8 @@ current source files, including embedded assets and local module replacements,
 and removes that copy after success or failure. It reports genuine `go.mod` and
 `go.sum` differences without rewriting the originals. Published source uses its
 `SOURCE-PROVENANCE.json` input inventory when no project Git inputs are available.
+These development checks reuse the release probe's process ownership helper;
+Windows requires PowerShell 7 to launch commands in its kill-on-close Job.
 
 CI runs native source checks independently of Linux packaging on Linux, macOS,
 and Windows, each on amd64 and arm64. Every target runs the CGO-free Go suite,
