@@ -106,9 +106,10 @@ test("a no-input request succeeds when its child closes stdin before returning o
     cwd: process.cwd(),
     args: [
       "-e",
-      // Initialize output and the gate before closing input so Node never
-      // initializes a new stream with a vacant standard descriptor.
-      'const output=process.stdout;process.on("message",()=>process.exit(0));require("node:fs").closeSync(0);output.write("v1\\n");',
+      // Initialize input, output and the gate before closing standard input.
+      // Windows duplicates fd0 when opening stdin; destroy that handle as
+      // well as the original descriptor before publishing peer-close readiness.
+      'const output=process.stdout;process.on("message",()=>process.exit(0));const input=process.stdin;input.once("close",()=>{require("node:fs").closeSync(0);output.write("v1\\n");});input.destroy();',
     ],
   };
   try {
