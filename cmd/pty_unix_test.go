@@ -13,8 +13,38 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/unix"
 )
+
+func TestPTYDescriptorsWithoutControllingTerminal(t *testing.T) {
+	if os.Getenv("SALTBOX_LINT_TEST_PTY_DESCRIPTORS") == "1" {
+		for _, stream := range []*os.File{os.Stdin, os.Stdout, os.Stderr} {
+			if !term.IsTerminal(stream.Fd()) {
+				t.Fatalf("%s is not a terminal", stream.Name())
+			}
+			columns, rows, err := term.GetSize(stream.Fd())
+			if err != nil || columns != 40 || rows != 24 {
+				t.Fatalf("%s dimensions=%dx%d error=%v, want 40x24", stream.Name(), columns, rows, err)
+			}
+		}
+		controlling, err := os.OpenFile("/dev/tty", os.O_RDWR|unix.O_NOCTTY, 0)
+		if err == nil {
+			_ = controlling.Close()
+			t.Fatal("capture child owns a controlling terminal")
+		}
+		if !errors.Is(err, unix.ENXIO) {
+			t.Fatalf("inspect controlling terminal: %v", err)
+		}
+		os.Exit(0)
+	}
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestPTYDescriptorsWithoutControllingTerminal$")
+	command.Env = append(os.Environ(), "SALTBOX_LINT_TEST_PTY_DESCRIPTORS=1")
+	output, err := runTestPTY(t, command, 40, "")
+	if err != nil {
+		t.Fatalf("PTY descriptor checks: %v: %q", err, output)
+	}
+}
 
 func TestPTYCapturesCompleteOutput(t *testing.T) {
 	stdout := bytes.Repeat([]byte("stdout"), 16*1024)
@@ -57,7 +87,10 @@ func runTestPTY(t *testing.T, command *exec.Cmd, columns uint16, stdoutPath stri
 		defer func() { _ = output.Close() }()
 		command.Stdout = output
 	}
-	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	// Isolate capture from the host terminal without assigning a controlling
+	// terminal. On Darwin, its session leader's exit revokes the slave even
+	// while the parent retains it for the strict post-exit output drain.
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
