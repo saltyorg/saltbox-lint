@@ -264,7 +264,7 @@ can describe files that do not yet exist. Templates, including conventional
 `.yaml` or extensionless templates, support explicit read-only checking and
 static navigation. Directory and changed-file discovery retain YAML primary
 selection. Template formatting, fixes, completion edits and rename are unavailable.
-See [template coverage](docs/templates.md) for supported syntax and partial reasons.
+See [template coverage](https://github.com/saltyorg/saltbox-lint/blob/main/docs/templates.md) for supported syntax and partial reasons.
 
 Fix decisions come from the existing verified planner. They describe each
 selected finding as `available`, `manual-only`, `unsupported-syntax`,

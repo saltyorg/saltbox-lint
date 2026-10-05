@@ -135,7 +135,7 @@ retaining stale answers. Nested configured roots keep their own source authority
 Opened templates, including extensionless files in conventional template
 directories, support checking, help, definition, hover and references. Completion
 edits, rename, Fix All and formatting remain unavailable. Unsupported grammar
-appears as partial coverage. See [template coverage](../docs/templates.md).
+appears as partial coverage. See [template coverage](https://github.com/saltyorg/saltbox-lint/blob/main/docs/templates.md).
 
 ## Rule help and check status
 
