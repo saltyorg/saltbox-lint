@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +13,52 @@ import (
 
 	"github.com/saltyorg/saltbox-lint/lint"
 )
+
+func TestQueryCommandNameSuffixCompletion(t *testing.T) {
+	root, err := filepath.Abs("../lint/testdata/references")
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := filepath.Join(root, "roles/alpha/tasks/main.yml")
+	before, err := os.ReadFile(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, callee := range []string{"lookup", "query", "q"} {
+		for _, explicit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/explicit=%t", callee, explicit), func(t *testing.T) {
+				role := ""
+				if explicit {
+					role = ", role='alpha'"
+				}
+				source := "# 😀é\r\n- debug: {msg: \"{{ " + callee + "('role_var', '_na'" + role + ") }}\"}\r\n"
+				start := strings.Index(source, "_na")
+				var out, errors bytes.Buffer
+				code := Run(t.Context(), []string{"query", "--root", root, "--stdin-filename", primary, "--operation", "completion", "--offset", strconv.Itoa(start + 2), "-"}, Streams{In: strings.NewReader(source), Out: &out, Err: &errors}, "test")
+				var result lint.QueryReport
+				if code != 0 || errors.Len() != 0 || json.Unmarshal(out.Bytes(), &result) != nil {
+					t.Fatalf("query: %d %s %s", code, out.String(), errors.String())
+				}
+				if result.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(source))) {
+					t.Fatal("unsaved completion source identity changed")
+				}
+				for _, completion := range result.Completions {
+					if completion.Label == "_name" {
+						if completion.Location.Span != (lint.DecisionSpan{Start: start, End: start + 3}) || completion.Text != "_name" || completion.Location.Text != "_na" {
+							t.Fatalf("incorrect literal replacement: %#v", completion)
+						}
+						return
+					}
+				}
+				t.Fatalf("missing _name completion: %#v", result.Completions)
+			})
+		}
+	}
+	after, err := os.ReadFile(primary)
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatal("query changed original source")
+	}
+}
 
 func TestQueryCommandExactSnapshot(t *testing.T) {
 	root, err := filepath.Abs("../lint/testdata/references")

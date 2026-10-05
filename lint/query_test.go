@@ -111,6 +111,63 @@ func TestQueryLiteralCompletionsAndReferences(t *testing.T) {
 	}
 }
 
+func TestQueryNameSuffixCompletion(t *testing.T) {
+	root, primary := referenceFixture(t)
+	for _, callee := range []string{"lookup", "query", "q"} {
+		for _, quote := range []string{"'", `"`} {
+			for _, scope := range []struct {
+				name, role string
+				want       bool
+			}{
+				{"implicit", "", true},
+				{"explicit", ", role=" + quote + "alpha" + quote, true},
+				{"absent", ", role=" + quote + "beta" + quote, false},
+			} {
+				t.Run(callee+"/"+quote+"/"+scope.name, func(t *testing.T) {
+					source := "# 😀é\r\n- debug:\r\n    msg: |\r\n      {{ " + callee + "(" + quote + "role_var" + quote + ", " + quote + "_na" + quote + scope.role + ") }}\r\n"
+					start := strings.Index(source, "_na")
+					result, err := Query(t.Context(), QueryRequest{Root: root, Filename: primary, Source: []byte(source), Operation: "completion", Offset: start + 2})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if result.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(source))) {
+						t.Fatal("completion source identity changed")
+					}
+					found := false
+					for _, completion := range result.Completions {
+						if scope.name == "implicit" && completion.Label == "_edge_port" {
+							t.Fatal("guessed an implicit runtime alias")
+						}
+						if completion.Label != "_name" {
+							continue
+						}
+						found = true
+						if completion.Location.Span != (DecisionSpan{Start: start, End: start + 3}) || completion.Location.Text != "_na" || completion.Text != "_name" {
+							t.Fatalf("literal edit changed: %#v", completion)
+						}
+						edited := source[:start] + completion.Text + source[start+3:]
+						if edited != strings.Replace(source, quote+"_na"+quote, quote+"_name"+quote, 1) {
+							t.Fatal("completion changed surrounding bytes or quotes")
+						}
+						definition, err := Query(t.Context(), QueryRequest{Root: root, Filename: primary, Source: []byte(edited), Operation: "definition", Offset: start + 2})
+						if err != nil || len(definition.Declarations) != 1 || definition.Declarations[0].Name != "alpha_name" {
+							t.Fatalf("completion does not resolve its declaration: %#v %v", definition, err)
+						}
+						key := definition.Declarations[0].Key
+						data, err := os.ReadFile(filepath.Join(root, key.Path))
+						if err != nil || string(data[key.Span.Start:key.Span.End]) != key.Text || definition.TargetHashes[key.Path] != fmt.Sprintf("%x", sha256.Sum256(data)) {
+							t.Fatal("original declaration span or hash changed")
+						}
+					}
+					if found != scope.want {
+						t.Fatalf("_name completion present %t, want %t: %#v", found, scope.want, result.Completions)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestQueryDeclinesDynamicUnsafeAndUnmappedCompletion(t *testing.T) {
 	root, primary := referenceFixture(t)
 	for _, source := range []string{

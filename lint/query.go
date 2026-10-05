@@ -255,7 +255,9 @@ func (index roleSymbolIndex) queryCompletions(ctx context.Context, p *Project, s
 					}
 				}
 			}
-			suffixes := map[string]bool{}
+			// The _name fallback uses <role>_name rather than <role>_role_name.
+			// Let the shared resolver decide whether that special suffix exists.
+			suffixes := map[string]bool{"_name": true}
 			for _, declaration := range index.declarations {
 				name := declaration.declaration.Name
 				for _, prefix := range prefixes {
