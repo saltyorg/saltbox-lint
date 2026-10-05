@@ -1,3 +1,4 @@
+import { hostInputs } from "./host-inputs.mjs";
 import assert from "node:assert/strict";
 import {
   runTests,
@@ -17,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { spawnSync } from "node:child_process";
+const { expectedVersion, mode } = hostInputs(process.env);
 const root = resolve(".test-workspace");
 rmSync(root, { recursive: true, force: true });
 for (const name of ["one", "two"]) {
@@ -231,9 +233,7 @@ writeFileSync(
 );
 let executable = process.env.VSCODE_EXECUTABLE_PATH;
 if (vsix && !executable)
-  executable = await downloadAndUnzipVSCode(
-    process.env.VSCODE_VERSION ?? "1.137.0",
-  );
+  executable = await downloadAndUnzipVSCode(expectedVersion);
 function cli(args) {
   const [command, ...prefix] = resolveCliArgsFromVSCodeExecutablePath(
     executable,
@@ -286,7 +286,7 @@ if (process.env.SALTBOX_TEST_SAVE_SCOPE === "1") {
 }
 const options = {
   vscodeExecutablePath: executable,
-  version: process.env.VSCODE_VERSION ?? "1.137.0",
+  version: expectedVersion,
   extensionDevelopmentPath:
     vsix || process.env.SALTBOX_TEST_SAVE_SCOPE === "1"
       ? controller
@@ -294,6 +294,9 @@ const options = {
         ? [resolve("."), controller]
         : resolve("."),
   extensionTestsEnv: {
+    SALTBOX_TEST_EXPECTED_VSCODE_VERSION: expectedVersion,
+    SALTBOX_TEST_HOST_MODE: mode,
+    SALTBOX_TEST_INSTALLED_CLI_PATH: realCLI,
     SALTBOX_TEST_EXTENSIONS_DIR: extensionsDir,
     SALTBOX_TEST_REAL_CLI:
       process.env.SALTBOX_TEST_SAVE_SCOPE === "1" ? realCLI : "",

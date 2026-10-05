@@ -212,6 +212,7 @@ test("admission cleanup cancels its owner and joins the complete check before re
         release();
       },
     },
+    failed: false,
     admissionControl: Promise.allSettled([operation]),
     subscriptions: [],
     process: { env: {} },

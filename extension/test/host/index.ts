@@ -1,3 +1,4 @@
+import { editorAcceptance } from "./editor-acceptance.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
@@ -33,6 +34,25 @@ function diagnostics(uri: vscode.Uri) {
     .filter((d) => d.source === "saltbox-lint");
 }
 export async function run(): Promise<void> {
+  console.log(
+    "SALTBOX_EDITOR_ACCEPTANCE " +
+      JSON.stringify(
+        editorAcceptance({
+          expectedVersion: process.env.SALTBOX_TEST_EXPECTED_VSCODE_VERSION,
+          actualVersion: vscode.version,
+          platform: process.platform,
+          arch: process.arch,
+          mode: process.env.SALTBOX_TEST_HOST_MODE,
+          appRoot: vscode.env.appRoot,
+          controllerPath: __filename,
+          cliPath: process.env.SALTBOX_TEST_INSTALLED_CLI_PATH,
+          proxyPath:
+            process.env.SALTBOX_TEST_SAVE_SCOPE === "1"
+              ? process.env.SALTBOX_TEST_FIXTURE_PATH
+              : undefined,
+        }),
+      ),
+  );
   if (process.env.SALTBOX_TEST_DEPENDENCIES === "1") {
     const { runDependencies } = await import("./dependencies.ts");
     return runDependencies();

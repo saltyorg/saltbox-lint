@@ -11,6 +11,7 @@ import {
   fixtureInvocations,
   fixtureProcesses,
   fixtureRunning,
+  fixtureProbe,
 } from "../host/fixture-processes.ts";
 
 async function endpoint(answer: string | undefined, closeTimeoutMs = 5000) {
@@ -294,5 +295,82 @@ test("journal readiness binds exact argv and owns copies of complete observation
   } finally {
     await live.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("failure snapshot refreshes the real journal without losing cached evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-journal-failure-"));
+  const filename = join(directory, "instances.jsonl");
+  const first = {
+    pid: 123,
+    port: 321,
+    token: "a".repeat(64),
+    args: ["check", "first.yml"],
+  };
+  const appended = {
+    pid: 124,
+    port: 322,
+    token: "b".repeat(64),
+    args: ["check", "alias.yml"],
+  };
+  const rows = (...instances: (typeof first)[]) =>
+    instances.map((instance) => JSON.stringify(instance) + "\n").join("");
+  try {
+    await writeFile(filename, rows(first));
+    const journal = new FixtureJournal(filename);
+    journal.processes();
+    await writeFile(filename, rows(first, appended));
+    assert.deepEqual(
+      journal.observations(),
+      [first],
+      "original cached catch omits the append",
+    );
+    const snapshot = journal.failureSnapshot();
+    assert.deepEqual(snapshot.cached, [first]);
+    assert.deepEqual(snapshot.refreshed, [first, appended]);
+    assert.deepEqual(snapshot.retained, [first, appended]);
+    assert.equal(snapshot.error, undefined);
+    assert.equal(snapshot.state, "complete");
+    assert.equal(snapshot.raw, rows(first, appended));
+    assert.ok(Number.isFinite(Date.parse(snapshot.capturedAt)));
+    const tailRecord = {
+      pid: 125,
+      port: 323,
+      token: "c".repeat(64),
+      args: ["check", "fresh-tail.yml"],
+    };
+    await writeFile(filename, rows(first, appended, tailRecord) + "{");
+    const malformed = journal.failureSnapshot();
+    assert.equal(malformed.state, "partial");
+    assert.deepEqual(malformed.refreshed, [first, appended, tailRecord]);
+    assert.deepEqual(malformed.retained, [first, appended, tailRecord]);
+    assert.match(malformed.error!, /incomplete/);
+    await rm(filename);
+    const missing = journal.failureSnapshot();
+    assert.equal(missing.state, "unavailable");
+    assert.deepEqual(missing.cached, [first, appended, tailRecord]);
+    assert.deepEqual(missing.retained, [first, appended, tailRecord]);
+    assert.match(missing.error!, /ENOENT/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("failure endpoint observations never count unknown or mismatched credentials as absent", async () => {
+  for (const [answer, state] of [
+    ["a".repeat(64) + "\n", "alive"],
+    ["b".repeat(64) + "\n", "mismatch"],
+    [undefined, "unavailable"],
+    ["invalid\n", "unavailable"],
+  ] as const) {
+    const owned = await endpoint(answer);
+    try {
+      const result = await fixtureProbe(owned.instance);
+      assert.equal(result.state, state);
+      assert.deepEqual(result.instance, owned.instance);
+    } finally {
+      await owned.close();
+    }
+    assert.equal((await fixtureProbe(owned.instance)).state, "endpoint-absent");
   }
 });

@@ -1,3 +1,12 @@
+import { aliasFailureFacts } from "./alias-failure.ts";
+import {
+  failureReason,
+  journalFailureEvidence,
+  publicFailureEvidence,
+  retainFailureEvidence,
+  retainAfterDisposal,
+  withFailureEvidence,
+} from "./failure-evidence.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
@@ -83,6 +92,9 @@ export async function runDependencies(): Promise<void> {
   process.env.SALTBOX_TEST_PROCESS_INSTANCES = instancesLog;
   const journal = new FixtureJournal(instancesLog);
   const invocations = () => journal.invocations();
+  let failed = false;
+  let capturedFailure = false;
+  let retainedFailureDirectory: string | undefined;
   let cleanupStatus: { pid: number; token: string; running: boolean }[] = [];
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");
@@ -886,7 +898,41 @@ export async function runDependencies(): Promise<void> {
         "canonical template event must refresh an alias-owned primary",
       );
       await writeFile(template.fsPath, good);
-      await waitFor(() => !renderer(alias), "alias recovery");
+      await withFailureEvidence(
+        () => waitFor(() => !renderer(alias), "alias recovery"),
+        async (error) => {
+          capturedFailure = true;
+          const [aliasFacts, processFacts] = await Promise.all([
+            aliasFailureFacts(
+              editor,
+              aliasDocument,
+              alias,
+              task,
+              template,
+              defaults,
+            ),
+            journalFailureEvidence(journal),
+          ]);
+          const evidence = {
+            schemaVersion: 1,
+            phase: "alias assertion rejected before disposal",
+            originalError: failureReason(error),
+            aliasFacts,
+            processFacts,
+            cleanup: "not yet observed",
+            processStart:
+              "unavailable; journal records credentialed lifetime, not OS start identity",
+          };
+          const retention = await retainFailureEvidence(evidence);
+          retainedFailureDirectory = retention.directory;
+          return { ...evidence, retention };
+        },
+        (evidence) =>
+          console.error(
+            "SALTBOX_DEPENDENCY_FAILURE " +
+              JSON.stringify(publicFailureEvidence(evidence)),
+          ),
+      );
       await rm(alias.fsPath);
       success("canonical context events retain alias ownership");
     }
@@ -1479,23 +1525,48 @@ export async function runDependencies(): Promise<void> {
       `MEASURE dependency cleanup observed_processes=${journal.processes().length} surviving=0`,
     );
   } catch (error) {
-    console.error(
-      "Dependency host process log:",
-      journal
-        .observations()
-        .map((instance) => `${instance.pid} ${instance.args!.join(" ")}`),
-    );
-    console.error(
-      "Dependency host process instances:",
-      JSON.stringify(journal.observations()),
-    );
-    console.error(
-      "Dependency host cleanup status:",
-      JSON.stringify(cleanupStatus),
-    );
+    failed = true;
+    // The alias path already captured its public facts immediately after the
+    // unchanged assertion. Other failures still refresh the journal once.
+    if (!capturedFailure) {
+      try {
+        const evidence = {
+          schemaVersion: 1,
+          phase: "dependency rejection before disposal",
+          originalError: failureReason(error),
+          processFacts: await journalFailureEvidence(journal),
+          cleanup: cleanupStatus.length ? cleanupStatus : "not yet observed",
+        };
+        const retention = await retainFailureEvidence(evidence);
+        retainedFailureDirectory = retention.directory;
+        console.error(
+          "SALTBOX_DEPENDENCY_FAILURE " +
+            JSON.stringify(publicFailureEvidence({ ...evidence, retention })),
+        );
+      } catch {
+        // Preserve the original test rejection even if reporting fails.
+      }
+    }
     throw error;
   } finally {
     editor.dispose();
+    if (failed) {
+      try {
+        const evidence = {
+          schemaVersion: 1,
+          phase: "after existing owner disposal",
+          processFacts: await journalFailureEvidence(journal),
+        };
+        console.error(
+          "SALTBOX_DEPENDENCY_FAILURE " +
+            JSON.stringify(publicFailureEvidence(evidence)),
+        );
+        if (retainedFailureDirectory)
+          await retainAfterDisposal(retainedFailureDirectory, evidence);
+      } catch {
+        // Observation or logging failures cannot replace the assertion.
+      }
+    }
     await admissionControl;
     for (const subscription of subscriptions) subscription.dispose();
     delete process.env.SALTBOX_TEST_PROCESS_LOG;

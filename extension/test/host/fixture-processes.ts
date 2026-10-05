@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 
 export interface FixtureProcess {
@@ -117,6 +123,66 @@ export class FixtureJournal {
     return instances;
   }
 
+  // Failure evidence keeps the old projection distinct from a fresh read.
+  // A malformed tail must not discard earlier complete, validated records.
+  failureSnapshot(): FixtureJournalSnapshot {
+    const snapshot: FixtureJournalSnapshot = {
+      capturedAt: new Date().toISOString(),
+      state: "unavailable",
+      cached: this.observations(),
+      refreshed: [],
+      retained: [],
+    };
+    try {
+      const fd = openSync(this.filename, "r");
+      try {
+        const limit = 1024 * 1024;
+        assert.ok(
+          fstatSync(fd).size <= limit,
+          "fixture journal exceeds failure capture bound",
+        );
+        const bytes = Buffer.alloc(limit + 1);
+        const length = readSync(fd, bytes, 0, bytes.length, 0);
+        assert.ok(
+          length <= limit,
+          "fixture journal exceeds failure capture bound",
+        );
+        snapshot.raw = bytes.subarray(0, length).toString("utf8");
+      } finally {
+        closeSync(fd);
+      }
+      snapshot.state = "partial";
+      const lines = snapshot.raw.split("\n");
+      const tail = lines.pop();
+      const tokens = new Set<string>();
+      for (const line of lines) {
+        assert.ok(line, "fixture journal has an empty record");
+        const instance = parseFixtureProcesses(line)[0];
+        assert.ok(
+          !tokens.has(instance.token),
+          "fixture journal has duplicate credentials",
+        );
+        tokens.add(instance.token);
+        this.expect(instance);
+        snapshot.refreshed.push(instance);
+      }
+      assert.equal(tail, "", "fixture journal has an incomplete record");
+      assert.ok(lines.length > 0, "fixture journal is empty");
+      for (const previous of snapshot.cached)
+        assert.ok(
+          tokens.has(previous.token),
+          "observed fixture journal lost a record",
+        );
+      snapshot.state = "complete";
+    } catch (error) {
+      snapshot.error = redactFixtureEvidence(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    snapshot.retained = this.observations();
+    return snapshot;
+  }
+
   invocations(): string[] {
     return this.processes().map(
       (instance) => `${instance.pid} ${instance.args!.join(" ")}`,
@@ -207,6 +273,72 @@ export function fixtureRunning(instance: FixtureProcess): Promise<boolean> {
     socket.once("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "ECONNREFUSED") finish();
       else finish(error);
+    });
+  });
+}
+
+export interface FixtureJournalSnapshot {
+  capturedAt: string;
+  state: "complete" | "partial" | "unavailable";
+  cached: FixtureProcess[];
+  refreshed: FixtureProcess[];
+  retained: FixtureProcess[];
+  raw?: string;
+  error?: string;
+}
+
+export function redactFixtureEvidence(text: string): string {
+  return text.replace(/[a-f0-9]{64}/g, "<REDACTED>");
+}
+
+export interface FixtureProbe {
+  instance: FixtureProcess;
+  capturedAt: string;
+  completedAt: string;
+  state: "alive" | "endpoint-absent" | "mismatch" | "unavailable";
+  error?: string;
+}
+
+// Observation only. A mismatch or failed probe cannot establish absence.
+export function fixtureProbe(instance: FixtureProcess): Promise<FixtureProbe> {
+  const capturedAt = new Date().toISOString();
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port: instance.port });
+    let response = "";
+    let settled = false;
+    const finish = (state: FixtureProbe["state"], error?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve({
+        instance,
+        capturedAt,
+        completedAt: new Date().toISOString(),
+        state,
+        ...(error ? { error } : {}),
+      });
+    };
+    const timer = setTimeout(
+      () => finish("unavailable", "lifetime probe timed out"),
+      1000,
+    );
+    socket.on("data", (chunk) => {
+      response += chunk.toString("ascii");
+      if (response.length > 65)
+        finish("unavailable", "lifetime response exceeds bound");
+    });
+    socket.once("end", () => {
+      if (!/^[a-f0-9]{64}\n$/.test(response))
+        finish("unavailable", "lifetime response is invalid");
+      else finish(response === instance.token + "\n" ? "alive" : "mismatch");
+    });
+    socket.once("close", () =>
+      finish("unavailable", "lifetime probe closed unexpectedly"),
+    );
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ECONNREFUSED") finish("endpoint-absent");
+      else finish("unavailable", error.code ?? error.name);
     });
   });
 }

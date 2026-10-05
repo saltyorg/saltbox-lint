@@ -24,6 +24,8 @@ for (const version of ["1.100.0", "1.137.0"]) {
       env: {
         ...process.env,
         VSCODE_EXECUTABLE_PATH: executable,
+        SALTBOX_TEST_EXPECTED_VSCODE_VERSION: version,
+        SALTBOX_TEST_HOST_MODE: mode,
         SALTBOX_TEST_VSIX: vsix,
         SALTBOX_TEST_REGRESSIONS: mode === "regressions" ? "1" : "0",
         SALTBOX_TEST_MARKERS: mode === "markers" ? "1" : "0",
