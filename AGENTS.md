@@ -10,6 +10,27 @@
   when project context is missing, stale, or affected by stack changes. In
   planning mode, report discoveries without writing files.
 
+## Working document retention
+
+- At each agent handoff and completed plan, inspect disk usage in the external
+  task folder and remove released, regenerable dependency installs, caches,
+  build trees, extracted packages and temporary source copies. Keep generated
+  working files out of the documentation folder where practical.
+- Retain plans, research conclusions, decisions, review results, concise
+  validation reports, commit/tool identities, artifact hashes, final CI evidence,
+  and original failure logs with the small fixtures or scripts needed to
+  understand or reproduce them. Keep one authoritative copy of each record.
+- Retain a bulky artifact only when it contains evidence or inputs that cannot
+  be reconstructed from the recorded commit and pinned tools. Record why it is
+  needed and the next handoff or plan completion at which to reconsider it.
+  Prefer one compressed copy to duplicate archives and extracted trees.
+- Before cleanup, confirm the owning agent has released the files and that the
+  retained record is sufficient. Preserve active inputs and unresolved failure
+  evidence. Record removed paths and reclaimed space in a concise cleanup log;
+  historical manifests must clearly identify intentionally removed working
+  files. Routine cleanup of verified task-generated temporary files needs no
+  further approval.
+
 ## Design and rule development
 
 - Keep command handling, source analysis, rule evaluation, and reporting
