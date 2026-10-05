@@ -50,6 +50,12 @@ options also prevent these claims. Dynamic defaults and action groups have
 unknown applicability and receive partial coverage. Literal defaults for a known
 unrelated module, and template defaults without delimiter options, retain the
 ordinary scanner. No default values or group memberships are evaluated.
+The configuration guard also treats `ansible.legacy.template`, including
+`action` and `local_action`, as a possible owner without assigning builtin
+module contracts to that namespace. Conventional role-relative source aliases
+are compared through the source loader's root boundaries. Absolute paths, home
+expansion, dot traversal and a `templates/` source prefix receive partial
+coverage because their Ansible search behavior is outside this static subset.
 
 Expression and statement argument validation uses a bounded static subset.
 Unsupported collections, arithmetic, imports, extension tags and other grammar

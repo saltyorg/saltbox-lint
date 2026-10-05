@@ -1,7 +1,10 @@
 package lint
 
 import (
+	"errors"
+	"io/fs"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -27,15 +30,22 @@ func templateTaskConfigurationReasons(p *Project, s *Source) []string {
 			continue
 		}
 		for _, task := range TasksIn(owner) {
-			if task.Module != "template" {
+			// Legacy action resolution may select a template plugin. Keep this
+			// conservative admission local; other policies still require builtin
+			// module identity and must not acquire legacy module contracts.
+			if task.Module != "template" && task.Module != "ansible.legacy.template" {
 				continue
 			}
 			if reason := templateTaskSourceReason(task); reason != "" {
 				reasons = append(reasons, reason)
 				continue
 			}
-			src := task.argument("src")
-			if path.Join(owner.RolePath, "templates", src.Value) != s.Path {
+			owns, reason := templateTaskOwnsSource(p, owner, s, task.argument("src").Value)
+			if reason != "" {
+				reasons = append(reasons, reason)
+				continue
+			}
+			if !owns {
 				continue
 			}
 			if templateModuleDefaultsUnknown(task) {
@@ -54,6 +64,30 @@ func templateTaskConfigurationReasons(p *Project, s *Source) []string {
 	return slices.Compact(reasons)
 }
 
+// Only conventional role-relative sources are resolved here. Absolute paths,
+// home expansion and dot traversal involve Ansible search behavior outside this
+// milestone. Existing aliases use the same root admission as source loading,
+// without reading another file or inferring ownership from equal file contents.
+func templateTaskOwnsSource(p *Project, owner, selected *Source, src string) (bool, string) {
+	unknown := "template configuration is unavailable: unsupported template task source resolution"
+	target := path.Join(owner.RolePath, "templates", src)
+	if target == selected.Path {
+		return true, ""
+	}
+	resolved, err := ownedSourcePath(p.Root, filepath.Join(p.Root, filepath.FromSlash(target)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, ""
+	}
+	if err != nil || !strings.HasPrefix(resolved, owner.RolePath+"/templates/") {
+		return false, unknown
+	}
+	selectedPath, err := ownedSourcePath(p.Root, filepath.Join(p.Root, filepath.FromSlash(selected.Path)))
+	if err != nil {
+		return false, unknown
+	}
+	return resolved == selectedPath, ""
+}
+
 func templateTaskSourceReason(task Task) string {
 	args := task.Node.Get("args")
 	if task.unknownArguments || args != nil && args.Kind != "mapping" {
@@ -62,6 +96,9 @@ func templateTaskSourceReason(task Task) string {
 	src := task.argument("src")
 	if src == nil || src.Kind != "string" || src.Value == "" || src.Tag == "!unsafe" || strings.ContainsAny(src.Value, "{}\\") {
 		return "template configuration is unavailable: dynamic template task source"
+	}
+	if strings.HasPrefix(src.Value, "/") || strings.HasPrefix(src.Value, "~") || strings.HasPrefix(src.Value, "templates/") || strings.Contains(src.Value, ":") || slices.ContainsFunc(strings.Split(src.Value, "/"), func(part string) bool { return part == "." || part == ".." || part == "" }) {
+		return "template configuration is unavailable: unsupported template task source resolution"
 	}
 	return ""
 }
