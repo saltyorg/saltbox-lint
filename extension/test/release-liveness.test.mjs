@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -36,28 +36,64 @@ async function record(filename) {
   throw new Error(`Owned builder did not publish ${filename}`);
 }
 
-function running(instance, request) {
-  return new Promise((resolve, reject) => {
+function probe(instance, request) {
+  return new Promise((resolve) => {
     const socket = createConnection({ host: "127.0.0.1", port: instance.port });
     let response = "";
-    const finish = (error, alive) => {
+    let settled = false;
+    const finish = (state, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       socket.destroy();
-      if (error) reject(error);
-      else resolve(alive);
+      resolve({ state, ...(error ? { error } : {}) });
     };
-    socket.setTimeout(1000, () =>
-      finish(new Error("Owned builder probe timed out")),
+    const timer = setTimeout(
+      () => finish("unavailable", "Owned builder probe timed out"),
+      1000,
     );
     if (request) socket.once("connect", () => socket.end(request));
-    socket.on("data", (chunk) => (response += chunk.toString("ascii")));
-    socket.once("end", () =>
-      finish(undefined, response === instance.token + "\n"),
+    socket.on("data", (chunk) => {
+      response += chunk.toString("ascii");
+      if (response.length > 65) finish("unavailable", "response exceeds bound");
+    });
+    socket.once("end", () => {
+      if (!/^[a-f0-9]{64}\n$/.test(response))
+        finish("unavailable", "invalid response");
+      else finish(response === instance.token + "\n" ? "alive" : "mismatch");
+    });
+    socket.once("close", () =>
+      finish("unavailable", "probe closed unexpectedly"),
     );
     socket.once("error", (error) => {
-      if (error.code === "ECONNREFUSED") finish(undefined, false);
-      else finish(error);
+      if (error.code === "ECONNREFUSED") finish("endpoint-absent");
+      else finish("unavailable", error.code ?? error.name);
     });
   });
+}
+
+async function running(instance, request) {
+  const result = await probe(instance, request);
+  if (result.state === "alive") return true;
+  if (result.state === "endpoint-absent") return false;
+  throw new Error(
+    `Owned builder probe ${result.state}: ${result.error ?? "foreign credential"}`,
+  );
+}
+
+// Exit observation requires a refused connection, never a reset, timeout or
+// foreign credential. Callers also verify the owned child/group has exited.
+async function endpointAbsent(instance, request) {
+  const until = Date.now() + 1000;
+  let result;
+  do {
+    result = await probe(instance, request);
+    if (result.state === "endpoint-absent") return true;
+    await delay(10);
+  } while (Date.now() < until);
+  throw new Error(
+    `Owned builder endpoint absence was not confirmed: ${result.state}`,
+  );
 }
 
 test("POSIX observer retains a live worker after its main thread exits", async () => {
@@ -149,8 +185,8 @@ test("POSIX observer retains a live worker after its main thread exits", async (
     if (child?.pid) {
       const instance = await record(filename);
       assert.equal(
-        await running(instance, "probe\n"),
-        false,
+        await endpointAbsent(instance, "probe\n"),
+        true,
         "exact killed worker endpoint is absent",
       );
     }
@@ -320,8 +356,8 @@ test("POSIX group observation rejects cancellation and distinguishes a real reta
     // Darwin's group signal check excludes SZOMB members and returns EPERM
     // even for our own retained child. The exact ps row proves membership.
     assert.equal(
-      await running(instance),
-      false,
+      await endpointAbsent(instance),
+      true,
       "exact child endpoint is absent",
     );
     assert.equal(
@@ -332,12 +368,52 @@ test("POSIX group observation rejects cancellation and distinguishes a real reta
     supervisor.stdin.end("reap\n");
     assert.deepEqual(await exited, { code: 0, signal: null });
   } finally {
-    if (instance && (await running(instance)))
+    if (instance && (await groupHasLiveMembers(instance.pid)))
       process.kill(-instance.pid, "SIGKILL");
     supervisor?.stdin.end("reap\n");
     if (exited) await exited;
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("release exit probes keep connected resets and foreign credentials inconclusive", async () => {
+  const token = randomBytes(32).toString("hex");
+  const server = createServer((socket) => {
+    socket.once("data", (bytes) => {
+      if (bytes.toString() === "reset\n") socket.resetAndDestroy();
+      else socket.end(token + "\n");
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const instance = { pid: process.pid, port: server.address().port, token };
+  try {
+    assert.equal(await running(instance, "probe\n"), true);
+    const reset = await probe(instance, "reset\n");
+    assert.equal(reset.state, "unavailable");
+    assert.equal(reset.error, "ECONNRESET");
+    assert.equal(
+      await running(instance, "probe\n"),
+      true,
+      "reset did not stop the owned listener",
+    );
+    assert.equal(
+      (
+        await probe(
+          { ...instance, token: randomBytes(32).toString("hex") },
+          "probe\n",
+        )
+      ).state,
+      "mismatch",
+    );
+  } finally {
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+  assert.equal(await endpointAbsent(instance, "probe\n"), true);
 });
 
 test("release probes preserve output and identify command failures", async () => {

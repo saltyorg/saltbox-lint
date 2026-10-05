@@ -222,7 +222,8 @@ func TestTemplateTaskSourceAliasBoundaries(t *testing.T) {
 	escaped := putFile(t, t.TempDir(), "config.j2", "{{ value }}")
 	owner, _ := Parse("roles/demo/tasks/main.yml", []byte("- template: {src: config.j2}\n"))
 	selected, _ := Parse("roles/demo/templates/config.j2", []byte("{{ value }}"))
-	p := &Project{Root: root}
+	// This helper consumes the canonical root established by Load.
+	p := &Project{Root: canonicalTestPath(t, root)}
 	for _, tc := range []struct {
 		name, target  string
 		owns, partial bool

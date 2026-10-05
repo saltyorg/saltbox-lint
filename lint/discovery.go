@@ -372,6 +372,18 @@ func (l *sourceLoader) rememberTemplateSpelling(filename, absolute string) {
 	name, err := relativeSource(l.project.Root, spelling)
 	if err != nil {
 		name = ""
+		// The caller may name the admitted root through a directory alias
+		// (including /tmp on Darwin). Resolve only the root ancestor, keeping
+		// every spelling below it: a leaf alias can have a different role owner.
+		for ancestor := filepath.Dir(spelling); ; ancestor = filepath.Dir(ancestor) {
+			if resolved, resolveErr := filepath.EvalSymlinks(ancestor); resolveErr == nil && resolved == l.project.Root {
+				name, _ = relativeSource(ancestor, spelling)
+				break
+			}
+			if filepath.Dir(ancestor) == ancestor {
+				break
+			}
+		}
 	}
 	l.templateSpellings[absolute] = append(l.templateSpellings[absolute], name)
 }
