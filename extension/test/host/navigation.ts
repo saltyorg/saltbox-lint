@@ -181,10 +181,18 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
     vscode.window,
     "createOutputChannel",
   )!;
-  const noticeDescriptor = Object.getOwnPropertyDescriptor(
-    vscode.window,
-    "showErrorMessage",
-  )!;
+  // VS Code assigns each extension its own API object. Observe the installed
+  // command through the API belonging to its real extension path as well.
+  const installed = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
+  const installedAPI = createRequire(
+    join(installed.extensionPath, "package.json"),
+  )("vscode") as typeof vscode;
+  const noticeDescriptors = [
+    ...new Set([vscode.window, installedAPI.window]),
+  ].map((window) => ({
+    window,
+    descriptor: Object.getOwnPropertyDescriptor(window, "showErrorMessage")!,
+  }));
   const createOutput = vscode.window.createOutputChannel;
   const lines: string[] = [],
     notices: string[] = [];
@@ -214,13 +222,14 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
         });
       },
     });
-    Object.defineProperty(vscode.window, "showErrorMessage", {
-      ...noticeDescriptor,
-      value: (message: string) => {
-        notices.push(message);
-        return Promise.resolve(undefined);
-      },
-    });
+    for (const { window, descriptor } of noticeDescriptors)
+      Object.defineProperty(window, "showErrorMessage", {
+        ...descriptor,
+        value: (message: string) => {
+          notices.push(message);
+          return Promise.resolve(undefined);
+        },
+      });
     Object.defineProperty(childProcess, "spawn", {
       ...spawnDescriptor,
       value: function (this: unknown, ...args: Parameters<typeof spawn>) {
@@ -311,7 +320,8 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
       "createOutputChannel",
       outputDescriptor,
     );
-    Object.defineProperty(vscode.window, "showErrorMessage", noticeDescriptor);
+    for (const { window, descriptor } of noticeDescriptors)
+      Object.defineProperty(window, "showErrorMessage", descriptor);
     await Promise.all(joins);
     await rm(temporary, { recursive: true, force: true });
   }
