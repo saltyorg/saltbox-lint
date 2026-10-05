@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   FixtureJournal,
+  FixtureGateCohort,
   fixtureGateInstance,
   fixtureInvocations,
   fixtureProcesses,
@@ -372,5 +373,140 @@ test("failure endpoint observations never count unknown or mismatched credential
       await owned.close();
     }
     assert.equal((await fixtureProbe(owned.instance)).state, "endpoint-absent");
+  }
+});
+
+test("gated control membership excludes background and stale calls while retaining all cleanup credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-gate-cohort-"));
+  const endpoints: Awaited<ReturnType<typeof endpoint>>[] = [];
+  const args = [
+    "format",
+    "--root",
+    directory,
+    "--stdin-filename",
+    join(directory, "selected.yaml"),
+    "--mode",
+    "canonical",
+    "-",
+  ];
+  const instances: ReturnType<typeof fixtureProcesses>[number][] = [];
+  const filename = join(directory, "instances.jsonl");
+  const record = async (argv: string[]) => {
+    const token = (instances.length + 1).toString(16).padStart(64, "0");
+    const live = await endpoint(token + "\n");
+    endpoints.push(live);
+    const instance = { ...live.instance, token, args: argv };
+    instances.push(instance);
+    await writeFile(
+      filename,
+      instances.map((item) => JSON.stringify(item)).join("\n") + "\n",
+    );
+    return instance;
+  };
+  try {
+    const stale = await record(args);
+    const journal = new FixtureJournal(filename);
+    const labels = [
+      "canonical:stable",
+      "canonical:retarget",
+      "lint-fixes:stable",
+      "lint-fixes:retarget",
+      "fixAll:stable",
+      "fixAll:retarget",
+    ];
+    const cohort = new FixtureGateCohort(filename, journal, labels);
+    const foreign = await record(["check", "--", "unrelated.yaml"]);
+    const first = await record(args);
+    const ready = { pid: first.pid, instance: first, nonce: "current", args };
+    assert.throws(() => cohort.complete(), /every intended control/);
+    assert.throws(
+      () =>
+        cohort.capture(
+          labels[0],
+          { ...ready, nonce: "previous" },
+          "current",
+          args,
+        ),
+      /current control nonce/,
+    );
+    assert.throws(
+      () =>
+        cohort.capture(
+          labels[0],
+          {
+            ...ready,
+            args: args.map((a) =>
+              a === join(directory, "selected.yaml")
+                ? join(directory, "foreign.yaml")
+                : a,
+            ),
+          },
+          "current",
+          args,
+        ),
+      /complete control argv/,
+    );
+    assert.throws(
+      () =>
+        cohort.capture(
+          labels[0],
+          { ...ready, instance: stale },
+          "current",
+          args,
+        ),
+      /new to this cohort/,
+    );
+    assert.throws(
+      () => cohort.capture("unsolicited", ready, "current", args),
+      /intended control/,
+    );
+    assert.throws(
+      () =>
+        cohort.capture(
+          labels[0],
+          { ...ready, instance: { ...foreign, args } },
+          "current",
+          args,
+        ),
+      /observed fixture identity must not change/,
+    );
+    assert.equal(
+      await fixtureRunning(cohort.capture(labels[0], ready, "current", args)),
+      true,
+    );
+    assert.throws(
+      () => cohort.capture(labels[0], ready, "current", args),
+      /not duplicated/,
+    );
+    assert.throws(
+      () => cohort.capture(labels[1], ready, "current", args),
+      /independent credentials/,
+    );
+    for (const label of labels.slice(1)) {
+      const instance = await record(args);
+      const nonce = label;
+      assert.equal(
+        await fixtureRunning(
+          cohort.capture(
+            label,
+            { pid: instance.pid, instance, nonce, args },
+            nonce,
+            args,
+          ),
+        ),
+        true,
+      );
+    }
+    cohort.complete();
+    assert.equal(
+      journal.processes(true).length,
+      8,
+      "six controls plus stale/background calls all remain owned",
+    );
+  } finally {
+    for (const live of endpoints) await live.close();
+    for (const instance of instances)
+      assert.equal((await fixtureProbe(instance)).state, "endpoint-absent");
+    await rm(directory, { recursive: true, force: true });
   }
 });

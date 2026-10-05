@@ -41,6 +41,85 @@ export function fixtureGateInstance(
   return ready.instance;
 }
 
+// Count intended gated calls separately from the journal's complete cleanup
+// membership. Background checks remain owned even though they are not controls.
+export class FixtureGateCohort {
+  private readonly captured = new Map<string, FixtureProcess>();
+  private readonly earlier: Set<string>;
+  private readonly filename: string;
+  private readonly journal: FixtureJournal;
+  private readonly controls: readonly string[];
+  constructor(
+    filename: string,
+    journal: FixtureJournal,
+    controls: readonly string[],
+  ) {
+    this.filename = filename;
+    this.journal = journal;
+    this.controls = [...controls];
+    assert.equal(new Set(controls).size, controls.length);
+    this.earlier = new Set(journal.processes().map((item) => item.token));
+  }
+
+  capture(
+    control: string,
+    ready: {
+      pid: number;
+      instance: FixtureProcess;
+      nonce: string;
+      args: string[];
+    },
+    nonce: string,
+    args: string[],
+  ): FixtureProcess {
+    assert.ok(
+      this.controls.includes(control),
+      "readiness names an intended control",
+    );
+    assert.ok(
+      !this.captured.has(control),
+      "control readiness is not duplicated",
+    );
+    assert.equal(
+      ready.nonce,
+      nonce,
+      "readiness belongs to the current control nonce",
+    );
+    assert.deepEqual(
+      ready.args,
+      args,
+      "readiness contains the complete control argv",
+    );
+    const instance = fixtureGateInstance(ready, this.filename, this.journal);
+    assert.deepEqual(
+      instance.args,
+      args,
+      "control instance owns the complete argv",
+    );
+    assert.ok(
+      !this.earlier.has(instance.token),
+      "control credential is new to this cohort",
+    );
+    assert.ok(
+      ![...this.captured.values()].some(
+        (item) => item.token === instance.token,
+      ),
+      "controls have independent credentials",
+    );
+    this.captured.set(control, { ...instance, args: [...args] });
+    return instance;
+  }
+
+  complete(): void {
+    this.journal.processes(true);
+    assert.deepEqual(
+      [...this.captured.keys()].sort(),
+      [...this.controls].sort(),
+      "every intended control has exactly one independent credential",
+    );
+  }
+}
+
 // The journal is append-only. Keep independent earlier observations so two
 // projections of a lost or truncated file cannot establish cleanup membership.
 // Before the first complete observation a missing file is unrecorded startup.

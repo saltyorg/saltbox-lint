@@ -1189,9 +1189,14 @@ export async function runDependencies(): Promise<void> {
         journal,
       );
       assert.equal(await fixtureRunning(blockerInstance), true);
-      // Saved checks synchronize every open YAML source, including ignored
-      // sources in other roots. Open this unknown source only after the exact
-      // blocker owns the lane, so refreshes cannot admit it before its request.
+      // Open a new source after the blocker owns the lane. Checking resolves
+      // its bounded identity before queueing, but must not copy text or launch
+      // its child until the lane releases the blocker.
+      assert.equal(
+        Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
+        false,
+        "the first-open source starts without a remembered identity",
+      );
       const queuedDocument = await vscode.workspace.openTextDocument(queuedUri);
       let queuedReads = 0;
       const queuedTracked: vscode.TextDocument = Object.create(queuedDocument, {
@@ -1213,10 +1218,6 @@ export async function runDependencies(): Promise<void> {
         );
       };
       await vscode.window.showTextDocument(queuedDocument, { preview: false });
-      assert.equal(
-        Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
-        false,
-      );
       await writeFile(queuedGate, "");
       process.env.SALTBOX_TEST_PROCESS_GATE = queuedGate;
       process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = queuedNonce;
@@ -1225,6 +1226,20 @@ export async function runDependencies(): Promise<void> {
       await waitFor(
         () => Reflect.get(lane, "pending").has(queuedUri.toString()),
         "new source is actually queued behind the exact held child",
+      );
+      const admittedOwner = Reflect.get(editor, "sourceOwners").get(
+        queuedUri.toString(),
+      );
+      assert.ok(
+        admittedOwner,
+        "queued checking has resolved its bounded identity",
+      );
+      const queuedOwner = { ...admittedOwner };
+      assert.equal(queuedOwner.root, await realpath(roots[1].uri.fsPath));
+      assert.equal(queuedOwner.filename, await realpath(queuedUri.fsPath));
+      assert.equal(
+        queuedOwner.path,
+        "roles/example/tasks/first-open/ignored.yml",
       );
       const queuedVersion = queuedDocument.version;
       const dependencies = Reflect.get(editor, "dependencies");
@@ -1258,16 +1273,17 @@ export async function runDependencies(): Promise<void> {
           Reflect.get(lane, "pending").has(queuedUri.toString()),
           true,
         );
-        assert.equal(
-          Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
-          false,
+        assert.deepEqual(
+          Reflect.get(editor, "sourceOwners").get(queuedUri.toString()),
+          queuedOwner,
+          "unrelated events preserve the queued source's bounded identity",
         );
         assert.equal(await fixtureRunning(blockerInstance), true);
         const automaticBar = queuedBar.text;
         const status = editor.status(queuedTracked);
         const manual = await editor.showStatus();
         console.log(
-          `MEASURE queued pending scope=${scope} status=${status.state} manual=${manual.state} automatic_bar=${automaticBar} bar=${queuedBar.text} canonical_admitted=false reads=${queuedReads} endpoint_live=true`,
+          `MEASURE queued pending scope=${scope} status=${status.state} manual=${manual.state} automatic_bar=${automaticBar} bar=${queuedBar.text} canonical_admitted=true reads=${queuedReads} endpoint_live=true`,
         );
         assert.equal(automaticBar, "Saltbox Lint: checking");
         assert.equal(status.state, "checking");

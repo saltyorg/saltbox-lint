@@ -14,8 +14,9 @@ import { tmpdir } from "node:os";
 import { EditorIntegration } from "../../src/editor.ts";
 import {
   FixtureJournal,
+  FixtureGateCohort,
   fixtureAbsent,
-  fixtureGateInstance,
+  fixtureRunning,
 } from "./fixture-processes.ts";
 
 export async function checkPendingWritableOwnership(
@@ -31,6 +32,12 @@ export async function checkPendingWritableOwnership(
   const gate = join(temporary, "response");
   const instances = join(temporary, "instances.jsonl");
   const journal = new FixtureJournal(instances);
+  const modes = ["canonical", "lint-fixes", "fixAll"] as const;
+  const cohort = new FixtureGateCohort(
+    instances,
+    journal,
+    modes.flatMap((mode) => [mode + ":stable", mode + ":retarget"]),
+  );
   const keys = [
     "SALTBOX_TEST_REAL_CLI",
     "SALTBOX_TEST_PROCESS_GATE",
@@ -77,7 +84,7 @@ export async function checkPendingWritableOwnership(
   });
   process.env.SALTBOX_TEST_REAL_CLI = executable;
   process.env.SALTBOX_TEST_PROCESS_INSTANCES = instances;
-  delete process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX;
+  process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX = "format";
   delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
   const until = async (predicate: () => Promise<boolean>, message: string) => {
     const deadline = Date.now() + 10000;
@@ -94,7 +101,7 @@ export async function checkPendingWritableOwnership(
       await writeFile(join(directory.fsPath, "main.yaml"), bytes);
     const canonicalRoot = await realpath(root.fsPath);
     const canonicalSource = await realpath(join(original.fsPath, "main.yaml"));
-    for (const mode of ["canonical", "lint-fixes", "fixAll"] as const) {
+    for (const mode of modes) {
       for (const retarget of [false, true]) {
         await symlink(original.fsPath, alias.fsPath, "junction");
         const uri = vscode.Uri.joinPath(alias, "main.yaml");
@@ -115,21 +122,27 @@ export async function checkPendingWritableOwnership(
           return result;
         });
         try {
+          let controlled: ReturnType<FixtureGateCohort["capture"]> | undefined;
           await until(async () => {
             try {
               const ready = JSON.parse(await readFile(gate + ".ready", "utf8"));
               if (ready.nonce !== nonce) return false;
-              assert.deepEqual(ready.args, [
-                "format",
-                "--root",
-                canonicalRoot,
-                "--stdin-filename",
-                canonicalSource,
-                "--mode",
-                mode === "fixAll" ? "lint-fixes" : mode,
-                "-",
-              ]);
-              fixtureGateInstance(ready, instances, journal);
+              controlled = cohort.capture(
+                mode + (retarget ? ":retarget" : ":stable"),
+                ready,
+                nonce,
+                [
+                  "format",
+                  "--root",
+                  canonicalRoot,
+                  "--stdin-filename",
+                  canonicalSource,
+                  "--mode",
+                  mode === "fixAll" ? "lint-fixes" : mode,
+                  "-",
+                ],
+              );
+              assert.equal(await fixtureRunning(controlled), true);
               return true;
             } catch (error) {
               if ((error as NodeJS.ErrnoException).code === "ENOENT")
@@ -154,6 +167,11 @@ export async function checkPendingWritableOwnership(
           }
           await rm(gate);
           const result = await pending;
+          assert.ok(controlled);
+          await until(
+            () => fixtureAbsent(controlled!),
+            "the exact controlled formatter has joined",
+          );
           if (mode === "fixAll")
             assert.equal(
               document.getText() === bytes.toString("utf8"),
@@ -182,11 +200,7 @@ export async function checkPendingWritableOwnership(
         }
       }
     }
-    assert.equal(
-      journal.processes(true).length,
-      6,
-      "all six real response controls have independent credentials",
-    );
+    cohort.complete();
     console.log(
       "PASS real pending canonical, lint-fixes and Fix All reject identical-byte template retargets before filesystem callbacks; stable YAML remains writable",
     );
