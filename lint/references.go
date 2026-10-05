@@ -122,7 +122,7 @@ func referenceLocation(source *Source, span Span) ReferenceLocation {
 	if span.Start >= 0 && span.End >= span.Start && span.End <= len(source.Data) {
 		text = string(source.Data[span.Start:span.End])
 	}
-	return ReferenceLocation{Path: source.Path, Span: DecisionSpan{Start: span.Start, End: span.End}, Line: position.Line, Column: position.Column, Text: text}
+	return ReferenceLocation{Path: source.Path, Span: DecisionSpan(span), Line: position.Line, Column: position.Column, Text: text}
 }
 
 var literalRoleName = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_-]*$`)
@@ -246,7 +246,8 @@ func sourceRoleReferences(source *Source) []RoleReference {
 					read.State = "dynamic"
 					read.Reasons = append(read.Reasons, "dynamic-target")
 				}
-				if plugin == "role_var" {
+				switch plugin {
+				case "role_var":
 					suffix, ok := lookupPositionalLiteral(call, 1)
 					if ok && !strings.ContainsAny(suffix, "{}") {
 						read.Suffixes = append(read.Suffixes, suffix)
@@ -254,7 +255,7 @@ func sourceRoleReferences(source *Source) []RoleReference {
 						read.State = "dynamic"
 						read.Reasons = append(read.Reasons, "dynamic-suffix")
 					}
-				} else if plugin == "role_web" {
+				case "role_web":
 					endpoint, ok := "web", true
 					if hasNamedArgument(call, "endpoint") {
 						endpoint, ok = lookupNamedLiteral(call, "endpoint")
