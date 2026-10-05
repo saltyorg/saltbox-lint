@@ -223,7 +223,7 @@ saltbox-lint references roles/example/tasks/main.yml --root .
 saltbox-lint references roles/example/tasks/main.yml --root . --format json
 ```
 
-See the [reference inspection contract and JSON schema](docs/references.md) for
+See the [reference inspection contract and JSON schema](https://github.com/saltyorg/saltbox-lint/blob/main/docs/references.md) for
 candidate layers, dependency observations and conservative coverage limits.
 
 ## Rule and source explanations
