@@ -130,14 +130,15 @@ type Project struct {
 	Selection            *SelectionRecord
 }
 type Options struct {
-	referenceContext bool
-	Root             string
-	Paths            []string
-	StdinFilename    string
-	Stdin            []byte
-	IncludeAnalysis  bool
-	ChangedSince     string
-	allowEmpty       bool
+	referenceContext    bool
+	Root                string
+	Paths               []string
+	StdinFilename       string
+	StdinSourceFilename string
+	Stdin               []byte
+	IncludeAnalysis     bool
+	ChangedSince        string
+	allowEmpty          bool
 }
 type Change struct {
 	fixRules      []string

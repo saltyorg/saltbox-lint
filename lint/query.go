@@ -13,11 +13,12 @@ import (
 // QueryRequest describes one exact editor snapshot. Offset is a half-open UTF-8
 // boundary in Source; no query evaluates Ansible or writes any source.
 type QueryRequest struct {
-	Root      string
-	Filename  string
-	Source    []byte
-	Operation string
-	Offset    int
+	Root           string
+	Filename       string
+	SourceFilename string
+	Source         []byte
+	Operation      string
+	Offset         int
 }
 
 type QueryCompletion struct {
@@ -76,7 +77,7 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 		return result, err
 	}
 	result.Root, result.Path, result.SourceSHA256 = identity.Root, identity.Path, fmt.Sprintf("%x", sha256.Sum256(request.Source))
-	p, err := Load(ctx, Options{Root: identity.Root, Paths: []string{identity.Root}, StdinFilename: filepath.Join(identity.Root, filepath.FromSlash(identity.Path)), Stdin: request.Source, IncludeAnalysis: true, referenceContext: true})
+	p, err := Load(ctx, Options{Root: identity.Root, Paths: []string{identity.Root}, StdinFilename: filepath.Join(identity.Root, filepath.FromSlash(identity.Path)), StdinSourceFilename: request.SourceFilename, Stdin: request.Source, IncludeAnalysis: true, referenceContext: true})
 	if err != nil {
 		return result, err
 	}

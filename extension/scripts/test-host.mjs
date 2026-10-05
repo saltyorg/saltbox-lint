@@ -90,7 +90,25 @@ if (
     resolve(root, "one/readonly-alias"),
     "junction",
   );
+  mkdirSync(resolve(root, "one/roles/readonly/defaults"), { recursive: true });
+  const reverseTemplateOwner = resolve(
+    root,
+    "one/roles/readonly/defaults/reverse.yml",
+  );
+  writeFileSync(
+    reverseTemplateOwner,
+    "readonly_role_value: \"{{ value\n }}\"\nlookup: \"{{ lookup('role_var', '_port', role='navtarget') }}\"\n",
+  );
+  for (const spelling of [
+    "one/reverse-alias.j2",
+    "one/roles/readonly/templates/reverse.yaml",
+  ])
+    symlinkSync(reverseTemplateOwner, resolve(root, spelling), "file");
   writeFileSync(resolve(root, "one/standalone.j2"), "{{ value");
+  writeFileSync(
+    resolve(root, "one/roles/readonly/templates/closed-config.yaml"),
+    "{{ unfinished",
+  );
   writeFileSync(
     resolve(root, "one/roles/readonly/templates/watch-config"),
     "{{ value",

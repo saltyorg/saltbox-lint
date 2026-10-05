@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFile, writeFile, unlink } from "node:fs/promises";
+import { parseCheck } from "../../src/protocol.ts";
 import { runProcess } from "../../src/process.ts";
+import { MarkedRoots } from "../../src/roots.ts";
 import { EditorIntegration, type CheckStatus } from "../../src/editor.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
@@ -39,6 +41,8 @@ export async function runTemplates(): Promise<void> {
   // has established an owner for the same physical file.
   for (const uri of [
     vscode.Uri.joinPath(root, "readonly-alias/config"),
+    vscode.Uri.joinPath(root, "reverse-alias.j2"),
+    vscode.Uri.joinPath(root, "roles/readonly/templates/reverse.yaml"),
     ...["config", "config.yaml", "config.j2"].map((basename) =>
       vscode.Uri.joinPath(root, "roles/readonly/templates", basename),
     ),
@@ -50,6 +54,51 @@ export async function runTemplates(): Promise<void> {
       assert.equal(document.languageId, "plaintext");
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
     assert.deepEqual(findings(document), []);
+    if (uri.path.includes("reverse")) {
+      const canonical = vscode.Uri.joinPath(
+        root,
+        "roles/readonly/defaults/reverse.yml",
+      );
+      const report = parseCheck(
+        await runProcess(
+          {
+            executable,
+            cwd: root.fsPath,
+            args: [
+              "check",
+              "--root",
+              root.fsPath,
+              "--stdin-filename",
+              canonical.fsPath,
+              "--stdin-source-filename",
+              uri.fsPath,
+              "--format",
+              "json",
+              "--include-analysis",
+              "-",
+            ],
+            input: original,
+            successCodes: [0, 1],
+          },
+          new AbortController().signal,
+        ),
+        true,
+      );
+      assert.equal(
+        report.analysis!.sources[0].path,
+        "roles/readonly/defaults/reverse.yml",
+      );
+      assert.ok(
+        !report.diagnostics.some(
+          (finding) => finding.rule_id === "jinja-layout",
+        ),
+      );
+      assert.equal(
+        report.fixes.size,
+        0,
+        "canonical response keeps the admitted alias read-only",
+      );
+    }
     const position = document.positionAt(original.indexOf("_port") + 2);
     await waitFor(async () => {
       const locations = await vscode.commands.executeCommand<
@@ -245,6 +294,10 @@ export async function runTemplates(): Promise<void> {
       vscode.ConfigurationTarget.WorkspaceFolder,
     );
     adapter = new EditorIntegration(executable);
+    await observeClosedTemplateContext(
+      vscode.Uri.joinPath(root, "roles/readonly/templates/closed-config.yaml"),
+      adapter,
+    );
     for (const uri of [
       vscode.Uri.joinPath(root, "roles/readonly/templates/config.yaml"),
       vscode.Uri.joinPath(root, "readonly-alias/config.yaml"),
@@ -349,5 +402,61 @@ async function runExternalTemplateDeletion(
   } finally {
     await writeFile(uri.fsPath, original);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  }
+}
+
+async function observeClosedTemplateContext(
+  uri: vscode.Uri,
+  adapter: EditorIntegration,
+): Promise<void> {
+  assert.ok(
+    !vscode.workspace.textDocuments.some(
+      (document) => document.uri.toString() === uri.toString(),
+    ),
+    "closed template fixture has never been opened",
+  );
+  const roots: unknown = Reflect.get(adapter, "roots");
+  assert.ok(roots instanceof MarkedRoots);
+  await roots.ready();
+  const pending: unknown = Reflect.get(adapter, "pendingFiles");
+  assert.ok(pending instanceof Map);
+  const original = await readFile(uri.fsPath);
+  let listener: vscode.Disposable | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const delivered = new Promise<void>((resolve, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(new Error("closed template context event was not delivered")),
+        10000,
+      );
+      // The component's synchronous context handler precedes this observer.
+      // Inspect its actual selection immediately after the real watcher event.
+      listener = roots.onDidChangeFile((changed) => {
+        if (changed.toString() !== uri.toString()) return;
+        try {
+          assert.equal(
+            pending.has(uri.toString()),
+            false,
+            "narrowed physical template stays out of closed primary selections",
+          );
+          assert.deepEqual(
+            vscode.languages
+              .getDiagnostics(uri)
+              .filter((item) => item.source === "saltbox-lint"),
+            [],
+          );
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await writeFile(uri.fsPath, "{% if closed_template_changed %}");
+    await delivered;
+  } finally {
+    if (timer) clearTimeout(timer);
+    listener?.dispose();
+    await writeFile(uri.fsPath, original);
   }
 }

@@ -48,6 +48,7 @@ func newExplainCommand() *cobra.Command {
 	command.Flags().StringVar(&opts.changedSince, "changed-since", "", "Explain current worktree changes from an exact commit and affected primary sources")
 	command.Flags().StringVar(&opts.root, "root", "", "Source root for identities and context")
 	command.Flags().StringVar(&opts.stdinFilename, "stdin-filename", "", "Working-directory-relative filename for '-' input")
+	command.Flags().StringVar(&opts.stdinSourceFilename, "stdin-source-filename", "", "Original source spelling for stdin classification; must resolve to the same source owner")
 	command.Flags().StringVar(&format, "format", "human", "Output format: human, json")
 	return command
 }

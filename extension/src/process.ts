@@ -3,7 +3,7 @@ export interface ProcessRequest {
   executable: string;
   args: string[];
   cwd: string;
-  input?: string;
+  input?: string | Uint8Array;
   successCodes?: number[];
   timeoutMs?: number;
   maxBytes?: number;

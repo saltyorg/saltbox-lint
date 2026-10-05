@@ -37,6 +37,7 @@ func newQueryCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&request.Root, "root", "", "Source root for identities and context")
 	command.Flags().StringVar(&request.Filename, "stdin-filename", "", "Working-directory-relative filename for the snapshot")
+	command.Flags().StringVar(&request.SourceFilename, "stdin-source-filename", "", "Original source spelling for stdin classification; must resolve to the same source owner")
 	command.Flags().StringVar(&request.Operation, "operation", "definition", "Query: definition, completion, hover, references")
 	command.Flags().IntVar(&request.Offset, "offset", -1, "Validated UTF-8 byte offset in the snapshot")
 	return command

@@ -276,3 +276,99 @@ func TestTemplateCrossRoleAliasDeclinesConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplateSnapshotSpellingKeepsCanonicalOwner(t *testing.T) {
+	root := t.TempDir()
+	name := "roles/demo/defaults/main.yml"
+	text := "demo_role_value: \"{{ value\n }}\"\n{{ lookup('role_var', '_port', role='foreign') }}"
+	filename := putFile(t, root, name, text)
+	putFile(t, root, "roles/foreign/defaults/main.yml", "foreign_role_port: 1234\n")
+	for _, spelling := range []string{"alias.j2", "roles/demo/templates/config.yaml"} {
+		alias := templateAlias(t, root, spelling, filename)
+		opts := Options{Root: root, StdinFilename: filename, StdinSourceFilename: alias, Stdin: []byte(text), IncludeAnalysis: true}
+		p, err := Load(t.Context(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Sources[name].Kind != Template || !p.Selected[name] || p.Selected[spelling] {
+			t.Fatal("snapshot spelling replaced canonical ownership or lost template kind")
+		}
+		for _, finding := range Analyze(p, Rules()) {
+			if finding.RuleID == "jinja-layout" || finding.Fix != nil {
+				t.Fatalf("template emitted a layout policy or fix: %+v", finding)
+			}
+		}
+		explanation, err := Explain(t.Context(), opts)
+		if err != nil || explanation.Source.Path != name || explanation.Source.Kind != Template {
+			t.Fatalf("explanation lost template snapshot kind: %+v %v", explanation, err)
+		}
+		for _, operation := range []string{"definition", "hover", "references", "completion"} {
+			result, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, SourceFilename: alias, Source: []byte(text), Operation: operation, Offset: strings.Index(text, "_port") + 2})
+			if err != nil || result.Path != name {
+				t.Fatalf("canonical snapshot query: %+v %v", result, err)
+			}
+			if operation == "completion" {
+				if result.State != "unavailable" || !slices.Contains(result.Reasons, "templates-are-read-only") || len(result.Completions) != 0 {
+					t.Fatalf("template became writable: %+v", result)
+				}
+			} else if result.State != "resolved" || len(result.Declarations) != 1 {
+				t.Fatalf("read-only template navigation lost: %+v", result)
+			}
+		}
+		raw := []byte{0xff, 0, '\r', '\n'}
+		opts.Stdin = raw
+		rawProject, err := Load(t.Context(), opts)
+		if err != nil || rawProject.Sources[name].Kind != Template || !slices.Equal(rawProject.Sources[name].Data, raw) {
+			t.Fatalf("raw template snapshot lost kind or bytes: %+v %v", rawProject, err)
+		}
+		if after, err := os.ReadFile(filename); err != nil || string(after) != text {
+			t.Fatal("snapshot check changed source")
+		}
+	}
+	for _, mode := range []string{"missing", "retargeted", "escaping"} {
+		t.Run(mode, func(t *testing.T) {
+			alias := filepath.Join(root, mode+".j2")
+			if mode != "missing" {
+				target := putFile(t, root, "other.yml", "other: true\n")
+				if mode == "escaping" {
+					target = putFile(t, t.TempDir(), "external.yml", "external: true\n")
+				}
+				templateAlias(t, root, mode+".j2", target)
+			}
+			opts := Options{Root: root, StdinFilename: filename, StdinSourceFilename: alias, Stdin: []byte(text)}
+			if _, err := Load(t.Context(), opts); err == nil {
+				t.Fatal("invalid source spelling fell back to YAML")
+			}
+			if _, err := Explain(t.Context(), opts); err == nil {
+				t.Fatal("invalid source spelling produced explanation claims")
+			}
+			if _, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, SourceFilename: alias, Source: []byte(text), Operation: "definition", Offset: 0}); err == nil {
+				t.Fatal("invalid source spelling produced navigation claims")
+			}
+		})
+	}
+}
+
+func TestTemplateSnapshotSpellingOverlaysOnlyMatchingAliases(t *testing.T) {
+	root := t.TempDir()
+	name := "roles/demo/defaults/main.yml"
+	disk := "demo_role_value: \"{{ value\n }}\"\n"
+	filename := putFile(t, root, name, disk)
+	alias := templateAlias(t, root, "source.j2", filename)
+	alternate := templateAlias(t, root, "alternate.yml", filename)
+	unrelated := putFile(t, root, "unrelated.yml", disk)
+	buffer := []byte("{% if snapshot %}{{ value }}{% endif %}  ")
+	project, err := Load(t.Context(), Options{Root: root, Paths: []string{root, alternate, unrelated}, StdinFilename: filename, StdinSourceFilename: alias, Stdin: buffer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sourceName := range []string{name, "alternate.yml"} {
+		source := project.Sources[sourceName]
+		if source == nil || source.Kind != Template || !slices.Equal(source.Data, buffer) {
+			t.Fatalf("matching alias did not share snapshot bytes and kind: %+v", source)
+		}
+	}
+	if source := project.Sources["unrelated.yml"]; source == nil || source.Kind == Template || string(source.Data) != disk {
+		t.Fatalf("equal unrelated contents were reclassified or overlaid: %+v", source)
+	}
+}

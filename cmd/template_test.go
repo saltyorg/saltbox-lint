@@ -173,3 +173,55 @@ func TestTemplateAliasCommandsRetainConfigurationAndPath(t *testing.T) {
 		t.Fatal("alias commands changed template bytes")
 	}
 }
+
+func TestTemplateSnapshotSpellingCommandConsumers(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "input.yml")
+	alias := filepath.Join(root, "alias.j2")
+	text := "v: \"{{ value\n }}\"\n"
+	if err := os.WriteFile(filename, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filename, alias); err != nil {
+		t.Fatal(err)
+	}
+	code, out, stderr := invoke(t, text, "check", "--root", root, "--stdin-filename", filename, "--format", "json", "-")
+	if code != 1 || !strings.Contains(out, "jinja-layout") {
+		t.Fatalf("ordinary YAML counterfactual: %d %s %s", code, out, stderr)
+	}
+	for _, command := range []string{"check", "explain", "query"} {
+		args := []string{command, "--root", root, "--stdin-filename", filename, "--stdin-source-filename", alias}
+		if command == "query" {
+			args = append(args, "--operation", "completion", "--offset", "10")
+		} else {
+			args = append(args, "--format", "json")
+			if command == "check" {
+				args = append(args, "--include-analysis")
+			}
+		}
+		args = append(args, "-")
+		code, out, stderr := invoke(t, text, args...)
+		if code != 0 || strings.Contains(out, "jinja-layout") || strings.Contains(out, "fix_id") || !strings.Contains(out, "input.yml") {
+			t.Fatalf("snapshot spelling %s: %d %s %s", command, code, out, stderr)
+		}
+		if command == "query" && !strings.Contains(out, "templates-are-read-only") {
+			t.Fatalf("query granted completion edits: %s", out)
+		}
+		if err := os.Remove(alias); err != nil {
+			t.Fatal(err)
+		}
+		code, _, _ = invoke(t, text, args...)
+		if code != 2 {
+			t.Fatalf("missing spelling fell back to YAML in %s", command)
+		}
+		if err := os.Symlink(filename, alias); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, command := range []string{"check", "explain"} {
+		code, _, _ := invoke(t, "", command, "--root", root, "--stdin-source-filename", alias, filename)
+		if code != 2 {
+			t.Fatal("source spelling accepted without a snapshot")
+		}
+	}
+}

@@ -31,10 +31,20 @@ const bundled = await build({
           path: "vscode",
           namespace: "admission-api",
         }));
-        builder.onLoad({ filter: /.*/, namespace: "admission-api" }, () => ({
-          contents: "module.exports = globalThis.api",
-          loader: "js",
+        builder.onResolve({ filter: /^\.\/process\.ts$/ }, () => ({
+          path: "process",
+          namespace: "admission-api",
         }));
+        builder.onLoad(
+          { filter: /.*/, namespace: "admission-api" },
+          ({ path }) => ({
+            contents:
+              path === "process"
+                ? "exports.runProcess = globalThis.api.runProcess"
+                : "module.exports = globalThis.api",
+            loader: "js",
+          }),
+        );
       },
     },
   ],
@@ -228,6 +238,301 @@ test("first plaintext alias admission resolves canonical templates and retains o
     assert.equal(sourceOwners.size, 0);
   } finally {
     await rm(external, { force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("closed watcher selection classifies physical templates and preserves ordinary YAML primaries", async () => {
+  const base = await realpath(
+    await mkdtemp(join(tmpdir(), "saltbox-template-selection-")),
+  );
+  const templates = join(base, "roles/demo/templates");
+  const yaml = join(base, "roles/demo/defaults/main.yml");
+  const uri = (filename: string) => ({
+    scheme: "file",
+    path: filename.replaceAll("\\", "/"),
+    fsPath: filename,
+    toString: () => `file://${filename}`,
+  });
+  const module = {
+    exports: {} as { EditorIntegration: typeof EditorIntegration },
+  };
+  const documents: TextDocument[] = [];
+  const folder = { uri: uri(base) };
+  runInNewContext(bundled.outputFiles[0].text, {
+    module,
+    exports: module.exports,
+    require: createRequire(import.meta.url),
+    process,
+    Buffer,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    api: {
+      workspace: {
+        isTrusted: true,
+        getWorkspaceFolder: () => folder,
+        workspaceFolders: [folder],
+        textDocuments: documents,
+      },
+      Uri: { file: uri },
+    },
+  });
+  const selected: string[][] = [];
+  const checked: string[] = [];
+  let root = base;
+  const editor = Object.assign(
+    Object.create(module.exports.EditorIntegration.prototype) as {
+      flushFiles(): Promise<void>;
+    },
+    {
+      disposed: false,
+      flushingFiles: false,
+      closedTabs: new Set(),
+      sourceOwners: new Map(),
+      canonicalRoots: new Map(),
+      rootRevisions: new Map(),
+      documentRevisions: new WeakMap(),
+      nextRevision: 0,
+      roots: { ready: async () => {}, get: () => root, folder: () => folder },
+      dependencies: { admissionRevision: () => 0 },
+      pendingFiles: new Map(),
+      pendingRefresh: new Set(),
+      missingFiles: new Map(),
+      fileFingerprints: new Map(),
+      pendingDiskReload: new Set(),
+      results: { hasCompleteScan: () => true, document: () => undefined },
+      checkSaved: async (
+        _folder: unknown,
+        _manual: boolean,
+        files: Map<string, unknown>,
+      ) => {
+        selected.push([...files.keys()]);
+        return new Set();
+      },
+      check: async (document: TextDocument) => {
+        checked.push(document.uri.fsPath);
+      },
+      error(error: unknown) {
+        throw error;
+      },
+    },
+  );
+  try {
+    await mkdir(templates, { recursive: true });
+    await mkdir(join(base, "roles/demo/defaults"), { recursive: true });
+    await writeFile(yaml, "demo_role_value: true\n");
+    await writeFile(join(templates, "config.yaml"), "{% if broken %}");
+    await symlink(
+      join(templates, "config.yaml"),
+      join(base, "hidden.yaml"),
+      "file",
+    );
+    await symlink(yaml, join(templates, "yaml-alias.yaml"), "file");
+    for (const scenario of [
+      {
+        filename: join(templates, "config.yaml"),
+        narrow: true,
+        open: false,
+        primary: false,
+      },
+      {
+        filename: join(base, "hidden.yaml"),
+        narrow: false,
+        open: false,
+        primary: false,
+      },
+      {
+        filename: join(templates, "yaml-alias.yaml"),
+        narrow: false,
+        open: false,
+        primary: false,
+      },
+      { filename: yaml, narrow: false, open: false, primary: true },
+      {
+        filename: join(templates, "config.yaml"),
+        narrow: true,
+        open: true,
+        primary: true,
+      },
+    ]) {
+      root = scenario.narrow ? templates : base;
+      selected.length = 0;
+      checked.length = 0;
+      documents.length = 0;
+      const target = uri(scenario.filename);
+      if (scenario.open)
+        documents.push({
+          uri: target,
+          languageId: "yaml",
+          isClosed: false,
+          isDirty: false,
+          version: 1,
+          getText: () => "{% if broken %}",
+        } as unknown as TextDocument);
+      (Reflect.get(editor, "pendingFiles") as Map<string, unknown>).set(
+        target.toString(),
+        { uri: target, force: true },
+      );
+      await editor.flushFiles();
+      assert.equal(
+        selected.length + checked.length,
+        scenario.primary ? 1 : 0,
+        JSON.stringify(scenario),
+      );
+      if (scenario.open) assert.deepEqual(checked, [scenario.filename]);
+      if (scenario.primary && !scenario.open)
+        assert.deepEqual(selected, [["roles/demo/defaults/main.yml"]]);
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("snapshot check and query retain reverse template spelling while responses remain canonically owned", async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "saltbox-template-wire-")),
+  );
+  const filename = join(root, "roles/demo/defaults/main.yml");
+  const alias = join(root, "alias.j2");
+  const text = 'demo_role_value: "{{ value\n }}"\n';
+  let buffer = text;
+  const uri = (filename: string) => ({
+    scheme: "file",
+    path: filename.replaceAll("\\", "/"),
+    fsPath: filename,
+    toString: () => `file://${filename}`,
+  });
+  const document = {
+    uri: uri(alias),
+    languageId: "plaintext",
+    version: 1,
+    isClosed: false,
+    isDirty: false,
+    getText: () => buffer,
+  } as unknown as TextDocument;
+  const folder = { uri: uri(root) };
+  const requests: { args: string[]; input?: string | Uint8Array }[] = [];
+  const module = {
+    exports: {} as { EditorIntegration: typeof EditorIntegration },
+  };
+  runInNewContext(bundled.outputFiles[0].text, {
+    module,
+    exports: module.exports,
+    require: createRequire(import.meta.url),
+    process,
+    Buffer,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    api: {
+      workspace: {
+        isTrusted: true,
+        getWorkspaceFolder: () => folder,
+        textDocuments: [document],
+      },
+      Uri: { file: uri },
+      runProcess: async (request: {
+        args: string[];
+        input?: string | Uint8Array;
+      }) => {
+        requests.push(request);
+        throw new Error(
+          "controlled wire capture stops before response acceptance",
+        );
+      },
+    },
+  });
+  const submit = async (
+    _key: string,
+    _priority: number,
+    operation: (signal: AbortSignal) => Promise<unknown>,
+  ) => operation(new AbortController().signal);
+  const editor = Object.assign(
+    Object.create(module.exports.EditorIntegration.prototype) as {
+      checkSnapshot(
+        document: TextDocument,
+        manual: boolean,
+        version: number,
+      ): Promise<unknown>;
+      query(
+        document: TextDocument,
+        position: { line: number; character: number },
+        operation: string,
+      ): Promise<unknown>;
+    },
+    {
+      disposed: false,
+      executable: "controlled-CLI",
+      closedTabs: new Set(),
+      sourceOwners: new Map(),
+      canonicalRoots: new Map(),
+      documentFolders: new Map(),
+      checking: new Map(),
+      rootRevisions: new Map(),
+      documentRevisions: new WeakMap(),
+      nextRevision: 0,
+      queryRevision: 1,
+      failures: new Map(),
+      roots: { ready: async () => {}, get: () => root, watchSource() {} },
+      dependencies: {
+        begin: () => 0,
+        revision: () => 0,
+        admissionRevision: () => 0,
+      },
+      eligibilityChanged: { fire() {} },
+      publish() {},
+      updateStatus() {},
+      error() {},
+      lint: { submit },
+      queryLanes: new Map([["definition", { submit }]]),
+    },
+  );
+  try {
+    await mkdir(join(root, "roles/demo/defaults"), { recursive: true });
+    await writeFile(filename, text);
+    await symlink(filename, alias, "file");
+    await editor.checkSnapshot(document, true, 1);
+    await editor.query(document, { line: 0, character: 25 }, "definition");
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.equal(
+        request.args[request.args.indexOf("--stdin-filename") + 1],
+        filename,
+      );
+      assert.equal(
+        request.args[request.args.indexOf("--stdin-source-filename") + 1],
+        alias,
+      );
+      assert.equal(request.input, text);
+    }
+    assert.deepEqual(
+      requests.map((request) => request.args[0]),
+      ["check", "query"],
+    );
+    const raw = Uint8Array.from([0xff, 0x00, 0x0d, 0x0a]);
+    await writeFile(filename, raw);
+    buffer = Buffer.from(raw).toString("utf8");
+    Reflect.set(document, "version", 2);
+    requests.length = 0;
+    await editor.checkSnapshot(document, true, 2);
+    assert.equal(requests.length, 1);
+    assert.equal(
+      requests[0].args[requests[0].args.indexOf("--stdin-source-filename") + 1],
+      alias,
+    );
+    assert.deepEqual(
+      [...requests[0].input!],
+      [...raw],
+      "unsupported templates send raw bytes without editor replacement characters",
+    );
+    await editor.query(document, { line: 0, character: 0 }, "definition");
+    assert.equal(
+      requests.length,
+      1,
+      "navigation declines invalid UTF8 before subprocess work",
+    );
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

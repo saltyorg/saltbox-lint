@@ -13,6 +13,15 @@ saltbox-lint check --root . roles/example/templates/config
 saltbox-lint explain --root . roles/example/templates/config
 ```
 
+Editor requests keep canonical response paths even when a `.j2` or conventional
+template spelling aliases YAML. `check`, `explain` and `query` accept
+`--stdin-source-filename PATH` beside `--stdin-filename` to retain that original
+spelling for snapshot classification. The loader requires an existing spelling
+that resolves to the same in-root owner. Missing, retargeted or escaping aliases
+fail instead of falling back to YAML policies. This option never grants writes.
+Closed template watcher events remain context changes, including roots narrowed
+inside a template directory. They do not add unopened templates to selections.
+
 | Capability | YAML | Explicit or opened template |
 |---|---|---|
 | Check and rule help | Yes | Bounded static checks |

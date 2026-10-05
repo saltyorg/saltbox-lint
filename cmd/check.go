@@ -15,9 +15,9 @@ import (
 )
 
 type checkOptions struct {
-	root, format, stdinFilename, changedSince string
-	fix, diff                                 bool
-	includeAnalysis                           bool
+	root, format, stdinFilename, stdinSourceFilename, changedSince string
+	fix, diff                                                      bool
+	includeAnalysis                                                bool
 }
 
 func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
@@ -38,6 +38,7 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 	flags.StringVar(&opts.changedSince, "changed-since", "", "Check current worktree changes from an exact commit and affected primary sources")
 	flags.StringVar(&opts.root, "root", "", "Source root for identities and context")
 	flags.StringVar(&opts.stdinFilename, "stdin-filename", "", "Working-directory-relative filename for '-' input")
+	flags.StringVar(&opts.stdinSourceFilename, "stdin-source-filename", "", "Original source spelling for stdin classification; must resolve to the same source owner")
 	flags.StringVar(&opts.format, "format", "auto", "Output format: auto, human, concise, json, github (auto uses human on a terminal)")
 	flags.BoolVar(&opts.fix, "fix", false, "Apply verified formatting fixes and recheck")
 	flags.BoolVar(&opts.diff, "diff", false, "Print unified formatting changes without writing")
@@ -60,7 +61,7 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 	}
 	load := lint.Options{Root: opts.root, IncludeAnalysis: opts.includeAnalysis, ChangedSince: opts.changedSince}
 	if opts.changedSince != "" {
-		if len(args) != 0 || opts.stdinFilename != "" || opts.fix {
+		if len(args) != 0 || opts.stdinFilename != "" || opts.stdinSourceFilename != "" || opts.fix {
 			return load, fmt.Errorf("--changed-since cannot be combined with paths, stdin or --fix")
 		}
 		return load, nil
@@ -79,6 +80,9 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 	if (stdin == 1) != (opts.stdinFilename != "") {
 		return load, fmt.Errorf("'-' and --stdin-filename must be used together")
 	}
+	if opts.stdinSourceFilename != "" && stdin != 1 {
+		return load, fmt.Errorf("--stdin-source-filename requires stdin")
+	}
 	if stdin == 1 {
 		if opts.fix || opts.diff {
 			return load, fmt.Errorf("--fix and --diff cannot be used with stdin")
@@ -88,6 +92,7 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 			return load, fmt.Errorf("read stdin: %w", err)
 		}
 		load.StdinFilename = opts.stdinFilename
+		load.StdinSourceFilename = opts.stdinSourceFilename
 		load.Stdin = data
 	}
 	if len(args) == 0 {

@@ -32,7 +32,7 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 	if len(opts.Paths) == 0 && opts.StdinFilename == "" {
 		return nil, fmt.Errorf("no source targets selected")
 	}
-	if opts.Stdin != nil && opts.StdinFilename == "" {
+	if (opts.Stdin != nil || opts.StdinSourceFilename != "") && opts.StdinFilename == "" {
 		return nil, fmt.Errorf("stdin requires a filename")
 	}
 	root, err := sourceRoot(opts)
@@ -107,6 +107,16 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 			return nil, err
 		}
 		l.stdinTemplate = isTemplateFile(l.stdinPath)
+		if opts.StdinSourceFilename != "" {
+			l.stdinSourcePath, err = absoluteTarget(opts.StdinSourceFilename)
+			if err != nil {
+				return nil, err
+			}
+			if err := l.validateStdinSource(); err != nil {
+				return nil, err
+			}
+			l.stdinTemplate = l.stdinTemplate || isTemplateFile(l.stdinSourcePath)
+		}
 	}
 	targets := slices.Clone(opts.Paths)
 	if opts.StdinFilename != "" {
@@ -321,9 +331,24 @@ type sourceLoader struct {
 	project            *Project
 	gitFiles           []string
 	stdinPath          string
+	stdinSourcePath    string
 	stdin              []byte
 	stdinCanonicalPath string
 	stdinTemplate      bool
+}
+
+// validateStdinSource admits an original spelling solely for classification.
+// Its resolved owner must equal the snapshot owner; missing or escaped aliases
+// never supply a fallback source kind or authorize a read outside the root.
+func (l *sourceLoader) validateStdinSource() error {
+	canonical, err := ownedSourcePath(l.project.Root, l.stdinSourcePath)
+	if err != nil {
+		return err
+	}
+	if canonical != l.stdinCanonicalPath {
+		return fmt.Errorf("stdin source spelling changed owner")
+	}
+	return nil
 }
 
 func (l *sourceLoader) stdinIdentity() (string, error) {
@@ -391,12 +416,20 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	if absolute != l.stdinPath && l.stdinTemplate && canonical == l.stdinCanonicalPath && (isTemplate(relative) || isTemplate(canonical) || isTemplateFile(absolute)) {
+	if absolute != l.stdinPath && l.stdinTemplate && canonical == l.stdinCanonicalPath && (l.stdinSourcePath != "" || isTemplate(relative) || isTemplate(canonical) || isTemplateFile(absolute)) {
 		// One template buffer supplies all admitted spellings of that output.
 		// This is invocation-local and never overlays unrelated equal contents.
 		data = bytes.Clone(l.stdin)
 	}
 	parseName := relative
+	if l.stdinSourcePath != "" && canonical == l.stdinCanonicalPath {
+		if err := l.validateStdinSource(); err != nil {
+			return nil, err
+		}
+		if l.stdinTemplate {
+			parseName = "source.j2"
+		}
+	}
 	if isTemplate(canonical) {
 		parseName = canonical
 	} else if !isTemplate(relative) && isTemplateFile(absolute) {

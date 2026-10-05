@@ -47,7 +47,7 @@ func loadChanged(ctx context.Context, opts Options) (*Project, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(opts.Paths) != 0 || opts.StdinFilename != "" || opts.Stdin != nil {
+	if len(opts.Paths) != 0 || opts.StdinFilename != "" || opts.StdinSourceFilename != "" || opts.Stdin != nil {
 		return nil, fmt.Errorf("--changed-since cannot be combined with paths or stdin")
 	}
 	rootOpts := opts

@@ -211,6 +211,21 @@ test("process sends exact UTF8 snapshot and argv without a shell", async () => {
   );
   assert.equal(result, "a: 😀\r\n");
 });
+test("process sends raw unsupported UTF8 snapshot bytes without replacement", async () => {
+  const bytes = Uint8Array.from([0xff, 0x00, 0x0d, 0x0a]);
+  const result = await runProcess(
+    {
+      ...base,
+      args: [
+        "-e",
+        'const chunks=[];process.stdin.on("data",c=>chunks.push(c));process.stdin.on("end",()=>process.stdout.write(Buffer.concat(chunks).toString("hex")));',
+      ],
+      input: bytes,
+    },
+    new AbortController().signal,
+  );
+  assert.equal(result, "ff000d0a");
+});
 test("process rejects stderr, operational failure and excessive output", async () => {
   for (const args of [
     ["-e", 'process.stderr.write("bad")'],

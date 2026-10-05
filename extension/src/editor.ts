@@ -45,6 +45,7 @@ export interface CheckStatus {
   reason: string;
 }
 interface Snapshot extends Identity {
+  sourceFilename: string;
   uri: vscode.Uri;
   version: number;
   text: string;
@@ -517,6 +518,7 @@ export class EditorIntegration implements vscode.Disposable {
     const identity = await identify(root, document.uri.fsPath);
     const snapshot = {
       ...identity,
+      sourceFilename: document.uri.fsPath,
       uri: document.uri,
       version,
       text,
@@ -688,11 +690,14 @@ export class EditorIntegration implements vscode.Disposable {
             : undefined;
           if (signal.aborted || !current()) return;
           const unsupported = bytes !== undefined && !isUtf8(bytes);
+          // Ordinary invalid YAML retains the saved-file transport. A read-only
+          // template keeps its admitted spelling and exact raw bytes together.
+          const savedYaml = unsupported && !this.isTemplate(document);
           const wire = await runProcess(
             {
               executable: this.executable,
               cwd: snapshot.root,
-              args: unsupported
+              args: savedYaml
                 ? [
                     "check",
                     "--root",
@@ -709,12 +714,20 @@ export class EditorIntegration implements vscode.Disposable {
                     snapshot.root,
                     "--stdin-filename",
                     snapshot.filename,
+                    ...(templatePath(snapshot.sourceFilename) &&
+                    !templatePath(snapshot.filename)
+                      ? ["--stdin-source-filename", snapshot.sourceFilename]
+                      : []),
                     "--format",
                     "json",
                     "--include-analysis",
                     "-",
                   ],
-              input: unsupported ? undefined : snapshot.text,
+              input: savedYaml
+                ? undefined
+                : unsupported
+                  ? bytes
+                  : snapshot.text,
               successCodes: [0, 1],
             },
             signal,
@@ -735,6 +748,13 @@ export class EditorIntegration implements vscode.Disposable {
       const { wire, snapshot, sourceHash, unsupported } = result;
       if (!this.current(document, snapshot)) return retry();
       if (unsupported && document.isDirty) return;
+      const identity = await identify(snapshot.root, snapshot.sourceFilename);
+      if (
+        !this.current(document, snapshot) ||
+        identity.filename !== snapshot.filename ||
+        identity.path !== snapshot.path
+      )
+        return retry();
       const report = parseCheck(wire, true);
       if (
         report.analysis!.root !== snapshot.root ||
@@ -1178,6 +1198,10 @@ export class EditorIntegration implements vscode.Disposable {
                 snapshot.root,
                 "--stdin-filename",
                 snapshot.filename,
+                ...(templatePath(snapshot.sourceFilename) &&
+                !templatePath(snapshot.filename)
+                  ? ["--stdin-source-filename", snapshot.sourceFilename]
+                  : []),
                 "--operation",
                 operation,
                 "--offset",
@@ -1560,7 +1584,9 @@ export class EditorIntegration implements vscode.Disposable {
       return;
     }
     if (
-      (/\.ya?ml$/i.test(uri.path) && !templatePath(relative)) ||
+      (/\.ya?ml$/i.test(uri.path) &&
+        !templatePath(uri.path) &&
+        !templatePath(relative)) ||
       vscode.workspace.textDocuments.some(
         (document) =>
           document.uri.toString() === uri.toString() && this.eligible(document),
@@ -1671,7 +1697,9 @@ export class EditorIntegration implements vscode.Disposable {
         try {
           const identity = await identify(root, uri.fsPath);
           if (
-            templatePath(identity.path) &&
+            (templatePath(uri.path) ||
+              templatePath(identity.path) ||
+              templatePath(identity.filename)) &&
             !vscode.workspace.textDocuments.some(
               (document) =>
                 document.uri.toString() === key && this.eligible(document),
