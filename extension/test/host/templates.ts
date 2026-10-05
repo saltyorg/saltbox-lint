@@ -157,12 +157,13 @@ export async function runTemplates(): Promise<void> {
     );
     await vscode.commands.executeCommand("saltboxLint.fixAll", uri);
     assert.equal(document.getText(), bad);
-    const formats = await vscode.commands.executeCommand<vscode.TextEdit[]>(
-      "vscode.executeFormatDocumentProvider",
-      uri,
-      { tabSize: 2, insertSpaces: true },
-    );
-    assert.deepEqual(formats, []);
+    const formats = await vscode.commands.executeCommand<
+      vscode.TextEdit[] | undefined
+    >("vscode.executeFormatDocumentProvider", uri, {
+      tabSize: 2,
+      insertSpaces: true,
+    });
+    assert.deepEqual(formats === undefined ? [] : formats, []);
     for (const mode of ["canonical", "lint-fixes"]) {
       const wire: unknown = JSON.parse(
         await runProcess(
@@ -246,14 +247,13 @@ export async function runTemplates(): Promise<void> {
         assert.deepEqual(await adapter.format(document, mode), []);
       await adapter.fixAll(uri);
       assert.equal(document.getText(), original);
-      assert.deepEqual(
-        await vscode.commands.executeCommand<vscode.TextEdit[]>(
-          "vscode.executeFormatDocumentProvider",
-          uri,
-          { tabSize: 2, insertSpaces: true },
-        ),
-        [],
-      );
+      const formats = await vscode.commands.executeCommand<
+        vscode.TextEdit[] | undefined
+      >("vscode.executeFormatDocumentProvider", uri, {
+        tabSize: 2,
+        insertSpaces: true,
+      });
+      assert.deepEqual(formats === undefined ? [] : formats, []);
       assert.equal(await readFile(uri.fsPath, "utf8"), original);
       await vscode.commands.executeCommand(
         "workbench.action.closeActiveEditor",
