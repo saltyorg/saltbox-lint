@@ -1,7 +1,13 @@
 import { lstat, readFile, stat, realpath } from "node:fs/promises";
+import { identify } from "./identity.ts";
 import type { BigIntStats } from "node:fs";
 import * as path from "node:path";
-import { hash, type AnalysisRecord, type DependencyFile } from "./protocol.ts";
+import {
+  hash,
+  sourcePath,
+  type AnalysisRecord,
+  type DependencyFile,
+} from "./protocol.ts";
 
 export function fileFingerprint(value: BigIntStats): string {
   return [
@@ -39,17 +45,69 @@ export interface TemplateOverlay {
   sha256: string;
 }
 
+// Query aliases require a known admitted canonical source, not matching bytes
+// alone. The observation pins both the lexical entry and its canonical owner.
+export interface ObservedAlias {
+  filename: string;
+  fingerprint: string;
+  rootFingerprint: string;
+}
+export async function aliasCurrent(
+  root: string,
+  relative: string,
+  alias: ObservedAlias,
+  digest: string,
+): Promise<boolean> {
+  try {
+    sourcePath(relative);
+    const filename = path.join(root, ...relative.split("/"));
+    const identity = await identify(root, filename);
+    if (
+      identity.filename !== alias.filename ||
+      relative.split("/").includes(".git") ||
+      identity.path.split("/").includes(".git") ||
+      (await realpath(root)) !== root ||
+      fileFingerprint(await lstat(root, { bigint: true })) !==
+        alias.rootFingerprint
+    )
+      return false;
+    const entry = await lstat(filename, { bigint: true });
+    const target = entry.isSymbolicLink()
+      ? await stat(filename, { bigint: true })
+      : undefined;
+    return (
+      observationFingerprint(entry, target) + ":" + digest ===
+        alias.fingerprint && (await realpath(filename)) === alias.filename
+    );
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === "ENOENT" ||
+      (error as NodeJS.ErrnoException).code === "ENOTDIR" ||
+      (error instanceof Error &&
+        error.message === "Invalid Saltbox Lint response")
+    )
+      return false;
+    throw error;
+  }
+}
+
 export async function observeAnalysis(
   record: AnalysisRecord,
   buffers: ReadonlySet<string> = new Set(),
   readSource: (filename: string) => Promise<Uint8Array> = readFile,
   templateOverlay?: TemplateOverlay,
+  captureAliases = false,
 ): Promise<{
   fingerprints: Map<string, string>;
   changed: Set<string>;
   overlayPaths: Set<string>;
+  aliases: Map<string, ObservedAlias>;
 }> {
   const overlayPaths = new Set<string>();
+  const aliases = new Map<string, ObservedAlias>();
+  const rootFingerprint = captureAliases
+    ? fileFingerprint(await lstat(record.root, { bigint: true }))
+    : undefined;
   // The CLI substitutes one template snapshot into its admitted aliases.
   // Match ownership and the captured digest, never equal content alone.
   const overlayFiles = new Set<string>();
@@ -87,12 +145,16 @@ export async function observeAnalysis(
         fingerprints: new Map(),
         changed: new Set([templateOverlay.path]),
         overlayPaths,
+        aliases,
       };
     }
   }
   const observations = new Map<string, DependencyFile>();
+  const sourceFiles = new Map<string, DependencyFile>();
   const identities = new Map<string, DependencyFile>();
   for (const source of record.sources) {
+    if (captureAliases)
+      for (const file of source.files) sourceFiles.set(file.path, file);
     for (const file of [...source.files, ...source.discovery])
       observations.set(file.path, file);
     for (const marker of source.identity) identities.set(marker.path, marker);
@@ -159,6 +221,31 @@ export async function observeAnalysis(
         changed.add(relative);
         continue;
       }
+      if (
+        rootFingerprint &&
+        resolved &&
+        resolved !== filename &&
+        bytes &&
+        !overlay
+      ) {
+        const canonical = path
+          .relative(record.root, resolved)
+          .split(path.sep)
+          .join("/");
+        const owner = sourceFiles.get(canonical);
+        if (
+          owner?.state === "read" &&
+          owner.sha256 === file.sha256 &&
+          !relative.split("/").includes(".git") &&
+          !canonical.split("/").includes(".git")
+        ) {
+          aliases.set(relative, {
+            filename: resolved,
+            fingerprint: contentFingerprint(after, bytes, afterTarget),
+            rootFingerprint,
+          });
+        }
+      }
       fingerprints.set(
         relative,
         bytes
@@ -222,5 +309,5 @@ export async function observeAnalysis(
       changed.add(templateOverlay.path);
     }
   }
-  return { fingerprints, changed, overlayPaths };
+  return { fingerprints, changed, overlayPaths, aliases };
 }

@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { identify, resolveSource, templatePath } from "./identity.ts";
 import { SnapshotIndex, hash, type Position } from "./protocol.ts";
 import { range } from "./diagnostics.ts";
+import { aliasCurrent, type ObservedAlias } from "./observations.ts";
 import type {
   QueryLocation,
   QueryOperation,
@@ -16,6 +17,7 @@ export interface NavigationAnswer {
   report: QueryReport;
   locations: Map<QueryLocation, vscode.Location>;
   sourceIndex: SnapshotIndex;
+  targetsCurrent: () => Promise<boolean>;
 }
 
 // Source bytes and original coordinates are checked together. Dirty dependency
@@ -47,12 +49,36 @@ export async function validateNavigation(
   index: SnapshotIndex,
   uri: vscode.Uri,
   overlayPaths: ReadonlySet<string> = new Set(),
+  aliases: ReadonlyMap<string, ObservedAlias> = new Map(),
 ): Promise<NavigationAnswer | undefined> {
   const snapshots = new Map<
     string,
     { text: string; index: SnapshotIndex; uri: vscode.Uri }
   >();
   snapshots.set(report.path, { text, index, uri });
+  const usedAliases = new Map<string, ObservedAlias>();
+  const targetsCurrent = async () => {
+    for (const [target, alias] of usedAliases) {
+      const digest = report.target_hashes[target];
+      for (const document of vscode.workspace.textDocuments) {
+        if (document.isClosed || document.uri.scheme !== "file") continue;
+        let identity;
+        try {
+          identity = await identify(report.root, document.uri.fsPath);
+        } catch {
+          continue;
+        }
+        if (
+          identity.filename === alias.filename &&
+          (document.isDirty || hash(document.getText()) !== digest)
+        )
+          return false;
+      }
+      if (!(await aliasCurrent(report.root, target, alias, digest)))
+        return false;
+    }
+    return true;
+  };
   for (const [target, digest] of Object.entries(report.target_hashes)) {
     if (target === report.path) {
       if (digest !== hash(text)) return;
@@ -80,7 +106,12 @@ export async function validateNavigation(
     }
     let filename: string;
     try {
-      filename = await resolveSource(report.root, target);
+      const alias = aliases.get(target);
+      if (alias) {
+        if (!(await aliasCurrent(report.root, target, alias, digest))) return;
+        filename = alias.filename;
+        usedAliases.set(target, alias);
+      } else filename = await resolveSource(report.root, target);
     } catch (error) {
       // A removed or retargeted source no longer belongs to this observation.
       const code = (error as NodeJS.ErrnoException).code;
@@ -92,7 +123,11 @@ export async function validateNavigation(
         return;
       throw error;
     }
-    const targetURI = vscode.Uri.file(filename);
+    const targetURI = vscode.Uri.file(
+      usedAliases.has(target)
+        ? path.join(report.root, ...target.split("/"))
+        : filename,
+    );
     const buffers = vscode.workspace.textDocuments.filter(
       (doc) =>
         !doc.isClosed &&
@@ -168,7 +203,8 @@ export async function validateNavigation(
     )
       throw new Error("Completion span does not preserve literal quoting");
   }
-  return { report, locations, sourceIndex: index };
+  if (!(await targetsCurrent())) return;
+  return { report, locations, sourceIndex: index, targetsCurrent };
 }
 export class Navigation implements vscode.Disposable {
   private readonly scheme = `saltbox-lint-impact-${randomUUID()}`;

@@ -1279,6 +1279,7 @@ export class EditorIntegration implements vscode.Disposable {
         this.isTemplate(document)
           ? { ...snapshot, sha256: snapshot.hash }
           : undefined,
+        true,
       );
       if (!current() || observed.changed.size) return;
       const answer = await validateNavigation(
@@ -1287,6 +1288,7 @@ export class EditorIntegration implements vscode.Disposable {
         snapshot.index,
         document.uri,
         observed.overlayPaths,
+        observed.aliases,
       );
       if (!answer || !current()) return;
       const identity = await identify(snapshot.root, document.uri.fsPath);
@@ -1298,7 +1300,12 @@ export class EditorIntegration implements vscode.Disposable {
         return;
       // Events which arrived before a previously unknown query dependency was
       // loaded still prevent late acceptance. Do not overwrite lint ownership.
-      if (this.dependencies.begin() !== dependencyToken) return;
+      if (
+        !(await answer.targetsCurrent()) ||
+        !current() ||
+        this.dependencies.begin() !== dependencyToken
+      )
+        return;
       return answer;
     } catch (error) {
       // Missing primary context is a quiet refusal. The same filesystem code

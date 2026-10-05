@@ -786,6 +786,33 @@ export async function runNavigation(): Promise<void> {
       (location) => location.uri.toString() === document.uri.toString(),
     ),
   );
+  const referenceAlias = vscode.Uri.joinPath(
+    roots[0].uri,
+    "roles/readonly/templates/reverse.yaml",
+  );
+  const aliasLocation = references.find(
+    (location) => location.uri.toString() === referenceAlias.toString(),
+  );
+  assert.ok(
+    aliasLocation,
+    "actual references retain the admitted template alias URI",
+  );
+  const canonicalAliasOwner = vscode.Uri.joinPath(
+    roots[0].uri,
+    "roles/readonly/defaults/reverse.yml",
+  );
+  assert.equal(
+    realpathSync(aliasLocation.uri.fsPath),
+    realpathSync(canonicalAliasOwner.fsPath),
+  );
+  assert.deepEqual(
+    readFileSync(aliasLocation.uri.fsPath),
+    readFileSync(canonicalAliasOwner.fsPath),
+  );
+  assert.equal(aliasLocation.range.start.line, 2);
+  assert.equal(aliasLocation.range.start.character, 12);
+  assert.equal(aliasLocation.range.end.line, 2);
+  assert.equal(aliasLocation.range.end.character, 57);
   editor.selection = new vscode.Selection(position, position);
   const impact = await vscode.commands.executeCommand<QueryReport>(
     "saltboxLint.showImpact",
