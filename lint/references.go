@@ -354,7 +354,7 @@ func (index roleSymbolIndex) resolve(p *Project, source *Source, read *RoleRefer
 		if d.scope != (Span{}) {
 			return d.declaration.Key.Path == source.Path && read.Location.Span.Start >= d.scope.Start && read.Location.Span.End <= d.scope.End
 		}
-		return slices.Contains(paths, d.declaration.RolePath) || (source.RolePath != "" && d.declaration.RolePath == source.RolePath) || d.declaration.Provenance == "inventory" || (d.declaration.RolePath == "" && d.declaration.Provenance == "vars")
+		return d.declaration.Key.Path == source.Path || slices.Contains(paths, d.declaration.RolePath) || (source.RolePath != "" && d.declaration.RolePath == source.RolePath) || d.declaration.Provenance == "inventory" || (d.declaration.RolePath == "" && d.declaration.Provenance == "vars")
 	}
 	aliases := []string{}
 	if read.TargetKind == "explicit" {
@@ -379,16 +379,16 @@ func (index roleSymbolIndex) resolve(p *Project, source *Source, read *RoleRefer
 	read.Reasons = append(read.Reasons, "runtime-alias-unmodeled")
 	incomplete, foundLocal := false, false
 	for _, d := range p.Sources {
-		if (d.Kind == Inventory || (d.Kind == Vars && d.RolePath == "") || (source.RolePath != "" && d.RolePath == source.RolePath && d.Kind != Template)) && len(d.parseDiagnostics) > 0 {
+		if (d.Kind == Inventory || (d.Kind == Vars && d.RolePath == "") || (source.RolePath != "" && d.RolePath == source.RolePath && roleDeclarationContext(d))) && len(d.parseDiagnostics) > 0 {
 			incomplete = true
 		}
 	}
 	for _, role := range paths {
 		for _, d := range p.Sources {
-			if d.RolePath == role {
+			if d.RolePath == role && (roleDeclarationContext(d) || d.Kind == Template) {
 				foundLocal = true
 			}
-			if d.RolePath == role && d.Kind != Template && len(d.parseDiagnostics) > 0 {
+			if d.RolePath == role && roleDeclarationContext(d) && len(d.parseDiagnostics) > 0 {
 				incomplete = true
 			}
 		}
@@ -551,4 +551,8 @@ func referenceBindings(expression Expression) map[int]bool {
 		}
 	}
 	return bindings
+}
+
+func roleDeclarationContext(source *Source) bool {
+	return slices.Contains([]Kind{Defaults, Vars, Tasks, Handlers}, source.Kind)
 }

@@ -310,3 +310,40 @@ func TestReferencesOwningProviderAndDuplicateRoleRoots(t *testing.T) {
 		t.Fatal("owning set_fact provider omitted")
 	}
 }
+
+func TestReferencesUnindexedSelectionDoesNotChangePrimary(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "roles/a/tasks/main.yml")
+	writeTestSource(t, primary, "- debug:\n    msg: \"{{ lookup('role_var', '_port', role='a') }}\"\n")
+	writeTestSource(t, filepath.Join(root, "roles/a/defaults/main.yml"), "a_role_port: 42\n")
+	meta := filepath.Join(root, "roles/a/meta/main.yml")
+	writeTestSource(t, meta, "unindexed: [\n")
+	selected, err := References(t.Context(), Options{Root: root, Paths: []string{primary}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra, err := References(t.Context(), Options{Root: root, Paths: []string{primary, meta}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(selected.References, extra.References) || extra.References[0].State != "resolved" {
+		t.Fatal("unindexed source changed a primary record")
+	}
+}
+
+func TestReferencesPrimaryCallerSetFactIsRetained(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "tasks/main.yml")
+	writeTestSource(t, primary, `- set_fact:
+    b_role_port: 42
+- debug:
+    msg: "{{ lookup('role_var', '_port', role='b') }}"
+`)
+	report, err := References(t.Context(), Options{Root: root, Paths: []string{primary}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.References[0].Candidates) != 1 || report.References[0].Candidates[0].Declaration.Provenance != "set-fact" || report.References[0].State != "unavailable" {
+		t.Fatal("primary runtime provider lost or external role claimed complete")
+	}
+}

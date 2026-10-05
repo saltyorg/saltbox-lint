@@ -64,7 +64,7 @@ exported as source facts.
 
 Declarations include top-level role defaults and vars, conventional inventory
 variable mappings, root variable mappings, root YAML inventory group/host vars,
-applicable task-local vars, and mapping-form `set_fact` values. Task vars belong
+applicable task-local vars, and mapping-form `set_fact` values in the primary source or its owning/target roles. Unindexed role metadata cannot change primary resolution. Task vars belong
 to their exact task or enclosing block. `set_fact` declarations remain possible
 sources because the query does not model execution order. Inventory declarations
 remain possible sources because host/group applicability is unmodeled. Scalar
