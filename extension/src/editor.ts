@@ -1219,11 +1219,12 @@ export class EditorIntegration implements vscode.Disposable {
     mode: "canonical" | "lint-fixes",
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
-    if (token?.isCancellationRequested || !this.writable(document)) return [];
+    const version = document.version;
+    if (token?.isCancellationRequested || this.isTemplate(document)) return [];
     const abort = new AbortController();
     const listener = token?.onCancellationRequested(() => abort.abort());
     try {
-      const snapshot = await this.snapshot(document);
+      const snapshot = await this.snapshot(document, version);
       if (!snapshot || abort.signal.aborted || !this.writable(document))
         return [];
       if (!document.isDirty && !isUtf8(await readFile(snapshot.filename))) {

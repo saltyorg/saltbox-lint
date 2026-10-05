@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { EditorIntegration } from "../../src/editor.ts";
 import { observeRootFormatting } from "./root-observations.ts";
 import { checkMarkerEvents } from "./marker-events.ts";
+import { checkFormatReadiness } from "./format-readiness.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const diagnostics = (uri: vscode.Uri) =>
@@ -140,6 +141,14 @@ export async function runMarkers(): Promise<void> {
   await waitFor(
     () => diagnostics(second.uri).length > 0,
     "second root opts in",
+  );
+  await checkFormatReadiness(
+    join(
+      extension.extensionPath,
+      "bin",
+      "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+    ),
+    document,
   );
   await replace(document, original + "# hang\n");
   const pending = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
