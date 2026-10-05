@@ -532,3 +532,123 @@ func TestReferencesPrimaryCallerSetFactIsRetained(t *testing.T) {
 		t.Fatal("primary runtime provider lost or external role claimed complete")
 	}
 }
+
+func TestReferencesUnsafeActionPayloads(t *testing.T) {
+	for _, callee := range []string{"lookup", "query", "q"} {
+		call := callee + "('role_var', '_port', role='b')"
+		for _, tc := range []struct {
+			name, unsafe, safe string
+		}{
+			{"action-scalar", `- action: !unsafe "debug msg={{ %s }}"`, `- action: "debug msg={{ %s }}"`},
+			{"local-action-scalar", `- local_action: !unsafe "debug msg={{ %s }}"`, `- local_action: "debug msg={{ %s }}"`},
+			{"module-scalar", `- debug: !unsafe "msg={{ %s }}"`, `- debug: "msg={{ %s }}"`},
+			{"action-mapping", "- action: !unsafe\n    module: debug\n    args:\n      msg: \"{{ %s }}\"", "- action:\n    module: debug\n    args:\n      msg: \"{{ %s }}\""},
+			{"action-module-tail", "- action:\n    module: !unsafe \"debug msg={{ %s }}\"", "- action:\n    module: \"debug msg={{ %s }}\""},
+			{"nested-args-mapping", "- action:\n    module: debug\n    args: !unsafe\n      msg: \"{{ %s }}\"", "- action:\n    module: debug\n    args:\n      msg: \"{{ %s }}\""},
+			{"nested-args-scalar", "- action:\n    module: debug\n    args: !unsafe \"msg={{ %s }}\"", "- action:\n    module: debug\n    args: \"msg={{ %s }}\""},
+			{"module-mapping", "- debug: !unsafe\n    msg: \"{{ %s }}\"", "- debug:\n    msg: \"{{ %s }}\""},
+			{"document-sequence", "!unsafe\n- action: \"debug msg={{ %s }}\"\n---", "- action: \"debug msg={{ %s }}\""},
+			{"task-mapping", "- !unsafe\n  action: \"debug msg={{ %s }}\"", "- action: \"debug msg={{ %s }}\""},
+			{"nested-block", "- block: !unsafe\n    - debug: \"msg={{ %s }}\"", "- block:\n    - debug: \"msg={{ %s }}\""},
+		} {
+			t.Run(callee+"/"+tc.name, func(t *testing.T) {
+				input := fmt.Sprintf(tc.unsafe+"\n"+tc.safe+"\n", call, call)
+				report := queryReferenceBoundaryFixture(t, input)
+				if len(report.References) != 1 {
+					t.Fatalf("unsafe payload became a runtime reference: %#v", report.References)
+				}
+				read := report.References[0]
+				if read.State != "resolved" || len(read.Candidates) != 1 || read.Location.Span != (DecisionSpan{strings.LastIndex(input, call), strings.LastIndex(input, call) + len(call)}) {
+					t.Fatalf("safe counterpart lost resolution or exact span: %#v", read)
+				}
+			})
+		}
+	}
+}
+
+func TestReferencesNamespaceAttributesDoNotBindCallees(t *testing.T) {
+	for _, callee := range []string{"lookup", "query", "q"} {
+		call := callee + "('role_var', '_port', role='b')"
+		for _, tc := range []struct {
+			name, statement string
+			bound           bool
+		}{
+			{"attribute", "set ns." + callee + " = helper", false},
+			{"namespace-base", "set " + callee + ".value = helper", false},
+			{"identifier", "set " + callee + " = helper", true},
+			{"tuple-identifier", "set other, " + callee + " = helpers", true},
+			{"block-identifier", "set " + callee + " %}text{% endset", true},
+			{"filter-name", "filter " + callee + " %}text{% endfilter", false},
+		} {
+			t.Run(callee+"/"+tc.name, func(t *testing.T) {
+				input := fmt.Sprintf("- debug:\n    msg: |\n      {{ %s }}\n      {%% %s %%}{{ %s }}\n- debug:\n    msg: \"{{ %s }}\"\n", call, tc.statement, call, call)
+				report := queryReferenceBoundaryFixture(t, input)
+				if len(report.References) != 3 {
+					t.Fatalf("references: %#v", report.References)
+				}
+				for i, read := range report.References {
+					if tc.bound && i < 2 {
+						if read.State != "dynamic" || len(read.Candidates) != 0 || !slices.Contains(read.Reasons, "local-callee-binding") {
+							t.Fatalf("identifier binding lost conservative scalar policy: %#v", read)
+						}
+					} else if read.State != "resolved" || len(read.Candidates) != 1 || slices.Contains(read.Reasons, "local-callee-binding") {
+						t.Fatalf("namespace attribute falsely bound a global callee: %#v", read)
+					}
+				}
+			})
+		}
+	}
+}
+
+func queryReferenceBoundaryFixture(t *testing.T, input string) ReferenceReport {
+	t.Helper()
+	root := t.TempDir()
+	primary := filepath.Join(root, "roles/a/tasks/main.yml")
+	declaration := filepath.Join(root, "roles/b/defaults/main.yml")
+	const defaults = "b_role_port: 42\n"
+	writeTestSource(t, primary, input)
+	writeTestSource(t, declaration, defaults)
+	selected, err := References(t.Context(), Options{Root: root, Paths: []string{primary}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := References(t.Context(), Options{Root: root, Paths: []string{root}})
+	if err != nil || !reflect.DeepEqual(selected.References, full.References) {
+		t.Fatalf("selected/full: %#v / %#v, %v", selected.References, full.References, err)
+	}
+	for _, read := range selected.References {
+		if read.Location.Path != "roles/a/tasks/main.yml" || read.OwningRole != "a" || read.OwningRolePath != "roles/a" || input[read.Location.Span.Start:read.Location.Span.End] != read.Location.Text {
+			t.Fatalf("source ownership or original span lost: %#v", read)
+		}
+		if len(read.Candidates) == 1 {
+			key := read.Candidates[0].Declaration.Key
+			if key.Path != "roles/b/defaults/main.yml" || key.Span != (DecisionSpan{0, 11}) || key.Text != "b_role_port" {
+				t.Fatalf("declaration location lost: %#v", key)
+			}
+		}
+	}
+	if !selected.Dependencies.Complete || len(selected.Dependencies.Sources) != 1 || selected.Dependencies.Sources[0].Path != "roles/a/tasks/main.yml" {
+		t.Fatalf("source dependencies lost: %#v", selected.Dependencies)
+	}
+	found := false
+	for _, directory := range selected.Dependencies.Sources[0].Directories {
+		if directory.Path == "roles/b/defaults" && directory.State == "directory" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("target dependency lost")
+	}
+	for _, source := range selected.Sources {
+		if source.ParseState != "parsed" {
+			t.Fatalf("unparsed input: %#v", source)
+		}
+	}
+	for filename, want := range map[string]string{primary: input, declaration: defaults} {
+		data, err := os.ReadFile(filename)
+		if err != nil || string(data) != want {
+			t.Fatalf("query changed source %s: %v", filename, err)
+		}
+	}
+	return selected
+}

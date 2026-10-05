@@ -168,6 +168,7 @@ func referenceContextDirectories(p *Project) map[string][]string {
 // declines scope/branch evaluation, including calls before a later binding.
 func sourceRoleReferences(source *Source) []RoleReference {
 	expressions := RuntimeExpressions(source)
+	query := newDeclarationExpressionQuery(source)
 	// Reuse Ansible argument decoding for action scalars, instead of treating
 	// escaped quotes in those payloads as literal Jinja escapes.
 	for _, task := range TasksIn(source) {
@@ -192,7 +193,9 @@ func sourceRoleReferences(source *Source) []RoleReference {
 			return false
 		})
 		for _, key := range sortedKeys(task.projectedArguments) {
-			expressions = append(expressions, scalarExpressions(source, task.projectedArguments[key])...)
+			// The shared query admits only source-owned safe scalars, including
+			// projected origins and every unsafe ancestor.
+			expressions = append(expressions, query.expressions(defaultDeclaration{Value: task.projectedArguments[key]})...)
 		}
 	}
 	bound := map[*Node]map[string]bool{}
@@ -582,6 +585,17 @@ func referenceBindings(expression Expression) map[int]bool {
 			if tokens[i].Text == "as" {
 				bindings[i+1] = true
 			}
+		}
+	}
+	// Read exclusions also include namespace assignment targets and filter
+	// names. Neither introduces a local identifier binding. Keep the shared
+	// target parsing, then admit only names that can bind the global callee.
+	for i := range bindings {
+		if i >= len(tokens) || tokens[i].Kind != "name" ||
+			(i > 0 && tokens[i-1].Text == ".") ||
+			(i+1 < len(tokens) && tokens[i+1].Text == ".") ||
+			(tokens[0].Text == "filter" && i == 1) {
+			delete(bindings, i)
 		}
 	}
 	return bindings
