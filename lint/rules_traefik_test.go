@@ -638,7 +638,7 @@ func TestTraefikRendererRejectsDiscardedAPIReads(t *testing.T) {
 						if !reflect.DeepEqual(ds, full) {
 							t.Fatalf("selected task diagnostics=%+v, full=%+v", ds, full)
 						}
-					} else if selected == traefikTemplatePath && len(scanTemplate(p.Sources[selected]).reasons) == 0 {
+					} else if selected == traefikTemplatePath {
 						if len(ds) != 1 || ds[0].Path != selected || ds[0].RuleID != "traefik-renderer-contract" {
 							t.Fatalf("explicit template ownership: %+v", ds)
 						}

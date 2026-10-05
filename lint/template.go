@@ -533,13 +533,10 @@ func checkTemplateRenderer(p *Project, s *Source) []Diagnostic {
 		if renderer.OutputSource != s {
 			continue
 		}
-		scan := scanTemplate(s)
-		if len(scan.reasons) > 0 || len(scan.diagnostics) > 0 {
+		if len(renderer.Unavailable) > 0 || len(invalidTraefikRenderer(renderer)) > 0 {
 			return nil
 		}
-		evaluation := *p
-		evaluation.Selected = map[string]bool{s.Path: true}
-		for _, d := range checkTraefikRendererContract(&evaluation, renderer.Source) {
+		for _, d := range traefikRendererDiagnostics(facts, renderer) {
 			d.Related = slices.DeleteFunc(d.Related, func(location RelatedLocation) bool { return location.Path == s.Path })
 			d.Related = append(d.Related, RelatedLocation{Path: d.Path, Span: d.Span, Message: "template referenced by this task"})
 			d.Path = s.Path
@@ -619,11 +616,84 @@ func templateSignature(tokens []Token) bool {
 	return true
 }
 
-// YAML-only contract context retains its established scanner. Explicit template
-// selection uses the declared configuration and supported static grammar.
-func selectedTemplateExpressions(p *Project, source *Source) []Expression {
-	if p.Selected[source.Path] {
-		return scanTemplate(source).expressions
+// Contract recognition supports non-output assignments, filtered captures and
+// simple list guards beyond the general syntax subset. Other scanner limitations
+// make absence of consumption unknown, regardless of selection.
+func templateContractReasons(scan templateScan) []string {
+	return slices.DeleteFunc(slices.Clone(scan.reasons), func(reason string) bool {
+		if reason != "statement argument grammar outside the supported static subset: set" && reason != "statement argument grammar outside the supported static subset: if" && reason != "expression grammar outside the supported static subset" {
+			return false
+		}
+		for _, e := range scan.expressions {
+			tokens := e.Tokens
+			if e.Kind == "output" {
+				if _, ok := parseFixExpression(tokens); !ok {
+					return false
+				}
+				continue
+			}
+			if len(tokens) == 0 {
+				continue
+			}
+			switch tokens[0].Text {
+			case "set":
+				if supportedTemplateStatement(e) {
+					continue
+				}
+				if len(tokens) < 4 || tokens[1].Kind != "name" {
+					return false
+				}
+				switch tokens[2].Text {
+				case "|":
+					if _, ok := parseFixExpression(tokens[3:]); !ok || templateAssignment(tokens) {
+						return false
+					}
+				case "=":
+					if !traefikContractGuard(tokens[3:]) {
+						return false
+					}
+				default:
+					return false
+				}
+			case "if", "elif":
+				if !traefikContractGuard(tokens[1:]) {
+					return false
+				}
+			}
+		}
+		return true
+	})
+}
+
+// The legacy contract recognizer reads direct names in list guards, but neither
+// evaluates the guard nor treats an assignment's value as emitted output.
+func traefikContractGuard(tokens []Token) bool {
+	if _, ok := parseFixExpression(tokens); ok {
+		return true
 	}
-	return scanExpressions(string(source.Data))
+	if len(tokens) < 3 || tokens[0].Text != "[" || tokens[len(tokens)-1].Text != "]" {
+		return false
+	}
+	tokens = tokens[1 : len(tokens)-1]
+	start, depth := 0, 0
+	for i, token := range tokens {
+		switch token.Text {
+		case "(", "[", "{":
+			depth++
+		case ")", "]", "}":
+			depth--
+		case ",":
+			if depth == 0 {
+				if _, ok := parseFixExpression(tokens[start:i]); !ok {
+					return false
+				}
+				start = i + 1
+			}
+		}
+	}
+	if start == len(tokens) {
+		return true
+	}
+	_, ok := parseFixExpression(tokens[start:])
+	return ok
 }

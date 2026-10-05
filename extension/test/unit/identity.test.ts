@@ -36,9 +36,14 @@ test("conventional templates remain read-only regardless of extension", async ()
     "resources/roles/a/templates/config.txt",
     "resources/templates/config.yml",
     "/absolute/roles/a/templates/config.conf",
+    "C:\\workspace\\roles\\a\\templates\\router.yaml",
+    "C:\\workspace\\resources\\roles\\a\\templates\\config",
+    "C:\\workspace\\resources\\templates\\config.yml",
+    "\\\\server\\workspace\\roles\\a\\templates\\config.yaml",
     "router.j2",
   ])
     assert.equal(templatePath(filename), true);
   assert.equal(templatePath("roles/a/tasks/template.yml"), false);
   assert.equal(templatePath("roles/a/defaults/main.yml"), false);
+  assert.equal(templatePath("C:\\workspace\\roles\\a\\tasks\\main.yml"), false);
 });

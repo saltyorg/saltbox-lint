@@ -251,6 +251,8 @@ type traefikRenderer struct {
 	Conditions      []Expression
 	Related         []RelatedLocation
 	MissingTemplate string
+	Unavailable     []string
+	Invalid         []RelatedLocation
 }
 
 func traefikRenderConditions(runtime []Expression, task Task) []Expression {
@@ -287,7 +289,12 @@ func traefikRenderers(p *Project, tasks []*Source) []traefikRenderer {
 				}
 				target := path.Join(s.RolePath, "templates", src.Value)
 				if template := p.Sources[target]; template != nil && template.Kind == Template {
-					renderers = append(renderers, traefikRenderer{Source: s, OutputSource: template, Kind: task.Module, Span: src.Span, Conditions: conditions, Expressions: traefikOutputExpressions(template, selectedTemplateExpressions(p, template)), Related: []RelatedLocation{{Path: target, Span: Span{0, len(template.Data)}, Message: "template rendered by this task"}}})
+					scan := scanTemplate(template)
+					renderer := traefikRenderer{Source: s, OutputSource: template, Kind: task.Module, Span: src.Span, Conditions: conditions, Expressions: traefikOutputExpressions(template, scan.expressions), Unavailable: templateContractReasons(scan), Related: []RelatedLocation{{Path: target, Span: Span{0, len(template.Data)}, Message: "template rendered by this task"}}}
+					if len(scan.diagnostics) > 0 {
+						renderer.Invalid = []RelatedLocation{{Path: target, Span: scan.diagnostics[0].Span, Message: "renderer contains invalid Jinja syntax"}}
+					}
+					renderers = append(renderers, renderer)
 				} else {
 					renderers = append(renderers, traefikRenderer{Source: s, Span: src.Span, Conditions: conditions, MissingTemplate: src.Value})
 				}
@@ -613,6 +620,9 @@ func traefikMigrationGuard(tokens []Token, excluded bool) (string, bool) {
 }
 
 func invalidTraefikRenderer(renderer traefikRenderer) []RelatedLocation {
+	if len(renderer.Invalid) > 0 {
+		return renderer.Invalid
+	}
 	for _, expression := range renderer.Expressions {
 		if !expression.Complete {
 			sourcePath := renderer.Source.Path
@@ -638,7 +648,7 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 	if len(invalidDefaults) > 0 && s.Kind != Defaults {
 		for _, r := range renderers {
 			if r.Source == s {
-				return []Diagnostic{traefikContextDiagnostic(s, "traefik-renderer-contract", r.Span, invalidDefaults)}
+				return traefikTaskRendererDiagnostics(p, facts, r)
 			}
 		}
 	}
@@ -654,7 +664,7 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 		}
 		for _, r := range renderers {
 			if r.Source == s {
-				return []Diagnostic{traefikContextDiagnostic(s, "traefik-renderer-contract", r.Span, invalid)}
+				return traefikTaskRendererDiagnostics(p, facts, r)
 			}
 		}
 		return nil
@@ -671,20 +681,40 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 	if renderer.Source != s {
 		return nil
 	}
+	return traefikTaskRendererDiagnostics(p, facts, renderer)
+}
+
+func traefikTaskRendererDiagnostics(p *Project, facts *traefikRoleFacts, renderer traefikRenderer) []Diagnostic {
+	if template := renderer.OutputSource; template != nil && template.Kind == Template && p.Selected[template.Path] && len(renderer.Unavailable) == 0 && len(invalidTraefikRenderer(renderer)) == 0 {
+		return nil
+	}
+	return traefikRendererDiagnostics(facts, renderer)
+}
+
+// Both ownership paths consume the same renderer, availability and role facts.
+// The caller decides whether the actual output or its YAML task owns the result.
+func traefikRendererDiagnostics(facts *traefikRoleFacts, renderer traefikRenderer) []Diagnostic {
+	s := renderer.Source
+	if len(facts.invalidDefaults) > 0 {
+		return []Diagnostic{traefikContextDiagnostic(s, "traefik-renderer-contract", renderer.Span, facts.invalidDefaults)}
+	}
+	if facts.anchor == nil || facts.complete {
+		return nil
+	}
+	if len(facts.invalidTasks) > 0 {
+		return []Diagnostic{traefikContextDiagnostic(s, "traefik-renderer-contract", renderer.Span, facts.invalidTasks)}
+	}
 	if invalid := invalidTraefikRenderer(renderer); len(invalid) > 0 {
 		return []Diagnostic{traefikContextDiagnostic(s, "traefik-renderer-contract", renderer.Span, invalid)}
+	}
+	if len(renderer.Unavailable) > 0 {
+		return nil
 	}
 	d := ansibleDiagnostic(s, "traefik-renderer-contract", renderer.Span, "Traefik renderer is missing API contract consumption", "Render "+strings.Join(missingTraefikConsumption(renderer, s.Role), ", ")+" using live owner-targeted reads in the output; API enablement may guard this rendering task with when.")
 	if renderer.MissingTemplate != "" {
 		d.Message = "cannot validate Traefik renderer because its template context is unavailable"
 		d.Expected = "Provide the statically named role template " + renderer.MissingTemplate + " and render the API contract there."
 	}
-	if template := renderer.OutputSource; template != nil && template.Kind == Template && p.Selected[template.Path] {
-		scan := scanTemplate(template)
-		if len(scan.reasons) == 0 && len(scan.diagnostics) == 0 && p.Selected[s.Path] {
-			return nil
-		}
-	}
-	d.Related = append(slices.Clone(renderer.Related), RelatedLocation{Path: anchor.Path, Span: declaration.Key.Span, Message: "role declares Traefik support"})
+	d.Related = append(slices.Clone(renderer.Related), RelatedLocation{Path: facts.anchor.Path, Span: facts.declaration.Key.Span, Message: "role declares Traefik support"})
 	return []Diagnostic{d}
 }

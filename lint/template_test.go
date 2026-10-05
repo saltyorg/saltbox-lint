@@ -2,8 +2,10 @@ package lint
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -178,6 +180,202 @@ func TestTemplateRendererOwnership(t *testing.T) {
 		}
 		if len(ds) != 1 || ds[0].Path != want || ds[0].Fix != nil {
 			t.Fatalf("ownership %v: %+v", selection, ds)
+		}
+	}
+}
+
+func TestTemplateRendererMultipleOutputOwnership(t *testing.T) {
+	const a = "roles/example/templates/a.j2"
+	const b = "roles/example/templates/b.j2"
+	const otherTask = "roles/example/tasks/z.yml"
+	for _, separateTasks := range []bool{false, true} {
+		t.Run(fmt.Sprintf("separate tasks=%v", separateTasks), func(t *testing.T) {
+			root := t.TempDir()
+			taskA := "- template: {src: a.j2, dest: /a}\n"
+			taskB := "- template: {src: b.j2, dest: /b}\n"
+			putFile(t, root, traefikDefaultsPath, traefikFixture(t, "api.good.yml"))
+			putFile(t, root, a, "{% if example_role_traefik_api_enabled %}{{ traefik_middleware_api }}{% endif %}\n")
+			putFile(t, root, b, "{{ example_role_traefik_api_endpoint }}\n")
+			bOwner := traefikTasksPath
+			if separateTasks {
+				putFile(t, root, traefikTasksPath, taskA)
+				putFile(t, root, otherTask, taskB+taskB)
+				bOwner = otherTask
+			} else {
+				putFile(t, root, traefikTasksPath, taskA+taskB+taskB)
+			}
+			rules := traefikRules("traefik-renderer-contract")
+			analyze := func(selection []string) []Diagnostic {
+				t.Helper()
+				paths := make([]string, len(selection))
+				for i, name := range selection {
+					paths[i] = filepath.Join(root, filepath.FromSlash(name))
+				}
+				p, err := Load(t.Context(), Options{Root: root, Paths: paths})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return Analyze(p, rules)
+			}
+			allSelection := []string{traefikTasksPath, a, b}
+			if separateTasks {
+				allSelection = append(allSelection, otherTask)
+			}
+			all := analyze(allSelection)
+			for _, tc := range []struct {
+				name              string
+				selection, owners []string
+			}{
+				{"A only", []string{a}, []string{a}},
+				{"B only", []string{b}, []string{b}},
+				{"YAML only", []string{traefikTasksPath}, []string{traefikTasksPath}},
+				{"YAML plus A", []string{traefikTasksPath, a}, []string{a}},
+				{"YAML plus B", []string{traefikTasksPath, b}, []string{traefikTasksPath, b}},
+				{"all", allSelection, []string{a, b}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					ds := analyze(tc.selection)
+					var owners []string
+					for _, d := range ds {
+						owners = append(owners, d.Path)
+						if d.Fix != nil {
+							t.Fatal("template contract offered fix")
+						}
+						if d.Path != a && d.Path != b {
+							continue
+						}
+						wantMissing, owner := "_traefik_api_endpoint", traefikTasksPath
+						if d.Path == b {
+							wantMissing, owner = "traefik_middleware_api, _traefik_api_enabled", bOwner
+						}
+						if !strings.Contains(d.Expected, "Render "+wantMissing+" using") {
+							t.Fatalf("wrong renderer evidence: %+v", d)
+						}
+						if !slices.ContainsFunc(d.Related, func(r RelatedLocation) bool {
+							return r.Path == owner && r.Message == "template referenced by this task"
+						}) {
+							t.Fatalf("wrong task owner: %+v", d)
+						}
+						if !slices.ContainsFunc(all, func(full Diagnostic) bool { return reflect.DeepEqual(full, d) }) {
+							t.Fatalf("selected/full template mismatch: %+v %+v", ds, all)
+						}
+					}
+					if !reflect.DeepEqual(owners, tc.owners) {
+						t.Fatalf("owners=%v want=%v: %+v", owners, tc.owners, ds)
+					}
+				})
+			}
+			putFile(t, root, b, traefikFixture(t, "renderer.good.j2"))
+			for _, selection := range [][]string{{a}, {b}, {traefikTasksPath}, {traefikTasksPath, a, b}} {
+				if ds := analyze(selection); len(ds) != 0 {
+					t.Fatalf("complete role output regressed: %+v", ds)
+				}
+			}
+		})
+	}
+}
+
+func TestTemplateRendererUnavailableFacts(t *testing.T) {
+	good := traefikFixture(t, "renderer.good.j2")
+	for _, tc := range []struct {
+		name, text, reason string
+		missing            bool
+	}{
+		{"unsupported config", "#jinja2:line_statement_prefix:'#'\n" + good, "line statements", false},
+		{"unsupported extension", "{% unknown_extension %}\n" + good, "unsupported template statement", false},
+		{"unsupported expression", "{{ [x for x in values] }}\n", "expression grammar", false},
+		{"unsupported statement", "{% with value=source %}literal{% endwith %}\n", "statement argument grammar", false},
+		{"default supported good", good, "", false},
+		{"default supported bad", traefikFixture(t, "renderer.bad.j2"), "", true},
+		{"custom supported good", "#jinja2:variable_start_string:'[[',variable_end_string:']]'\n" + strings.ReplaceAll(strings.ReplaceAll(good, "{{", "[["), "}}", "]]"), "", false},
+		{"filtered capture", "{% set ignored | default(value=true) %}\n" + good + "{% endset %}\n", "statement argument grammar", true},
+		{"discarded list assignment", "{% set ignored = [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}\n", "statement argument grammar", true},
+		{"list guard", "{% if [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}literal{% endif %}\n", "statement argument grammar", true},
+		{"unsupported assignment comprehension", "{% set ignored = [x for x in values] %}\n", "statement argument grammar", false},
+		{"unsupported guard comprehension", "{% if [x for x in values] %}literal{% endif %}\n", "statement argument grammar", false},
+		{"unsupported capture argument", "{% set ignored | default([x for x in values]) %}literal{% endset %}\n", "statement argument grammar", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			putFile(t, root, traefikDefaultsPath, traefikFixture(t, "api.good.yml"))
+			putFile(t, root, traefikTasksPath, "- template: {src: router.yml.j2, dest: /router.yml}\n")
+			putFile(t, root, traefikTemplatePath, tc.text)
+			for _, selection := range [][]string{{traefikTasksPath}, {traefikTemplatePath}, {traefikTasksPath, traefikTemplatePath}} {
+				paths := make([]string, len(selection))
+				for i, name := range selection {
+					paths[i] = filepath.Join(root, filepath.FromSlash(name))
+				}
+				p, err := Load(t.Context(), Options{Root: root, Paths: paths})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rules := append(traefikRules("traefik-renderer-contract"), traefikRules("template-partial-coverage")...)
+				ds := Analyze(p, rules)
+				selectedTemplate := slices.Contains(selection, traefikTemplatePath)
+				want := 0
+				if tc.reason != "" && selectedTemplate {
+					want++
+				}
+				if tc.missing {
+					want++
+				}
+				if len(ds) != want {
+					t.Fatalf("%v diagnostics=%+v want=%d", selection, ds, want)
+				}
+				for _, d := range ds {
+					if d.RuleID == "template-partial-coverage" {
+						if d.Path != traefikTemplatePath || !strings.Contains(d.Message, tc.reason) {
+							t.Fatalf("lost partial reason: %+v", d)
+						}
+					} else {
+						owner := traefikTasksPath
+						if selectedTemplate {
+							owner = traefikTemplatePath
+						}
+						if !tc.missing || d.Path != owner || d.RuleID != "traefik-renderer-contract" {
+							t.Fatalf("unavailable facts became missing policy: %+v", d)
+						}
+					}
+				}
+				if string(p.Sources[traefikTemplatePath].Data) != tc.text {
+					t.Fatal("renderer inspection changed bytes")
+				}
+				facts := analyzeTraefikRole(p, p.Sources[traefikTemplatePath])
+				if len(facts.renderers) != 1 {
+					t.Fatalf("renderer facts unavailable: %+v", facts)
+				}
+				if (len(facts.renderers[0].Unavailable) > 0) != (tc.reason != "" && !tc.missing) {
+					t.Fatalf("lost fact availability: %+v", facts.renderers[0])
+				}
+			}
+		})
+	}
+}
+
+func TestTemplateRendererInvalidContextOwnership(t *testing.T) {
+	for _, broken := range []string{traefikDefaultsPath, "roles/example/tasks/broken.yml"} {
+		root := t.TempDir()
+		putFile(t, root, traefikDefaultsPath, traefikFixture(t, "api.good.yml"))
+		putFile(t, root, traefikTasksPath, "- template: {src: router.yml.j2, dest: /router.yml}\n")
+		putFile(t, root, traefikTemplatePath, traefikFixture(t, "renderer.bad.j2"))
+		putFile(t, root, broken, "broken: [\n")
+		for _, selection := range [][]string{{traefikTasksPath}, {traefikTemplatePath}, {traefikTasksPath, traefikTemplatePath}} {
+			paths := make([]string, len(selection))
+			for i, name := range selection {
+				paths[i] = filepath.Join(root, filepath.FromSlash(name))
+			}
+			p, err := Load(t.Context(), Options{Root: root, Paths: paths})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ds := Analyze(p, traefikRules("traefik-renderer-contract"))
+			owner := traefikTasksPath
+			if slices.Contains(selection, traefikTemplatePath) {
+				owner = traefikTemplatePath
+			}
+			if len(ds) != 1 || ds[0].Path != owner || !strings.Contains(ds[0].Message, "invalid") || !slices.ContainsFunc(ds[0].Related, func(r RelatedLocation) bool { return r.Path == broken }) {
+				t.Fatalf("%s %v contextual ownership: %+v", broken, selection, ds)
+			}
 		}
 	}
 }

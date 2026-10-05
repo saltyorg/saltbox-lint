@@ -88,7 +88,7 @@ func deriveTraefikRole(p *Project, s *Source) *traefikRoleFacts {
 	facts.complete = hasTraefikDockerHelper(tasks) || retiredTraefikRole(p, tasks)
 	if !facts.complete {
 		for _, r := range facts.renderers {
-			if len(invalidTraefikRenderer(r)) == 0 && (traefikDockerLabelsOutput(r) || len(missingTraefikConsumption(r, s.Role)) == 0) {
+			if len(r.Unavailable) == 0 && len(invalidTraefikRenderer(r)) == 0 && (traefikDockerLabelsOutput(r) || len(missingTraefikConsumption(r, s.Role)) == 0) {
 				facts.complete = true
 				break
 			}

@@ -2,7 +2,8 @@ import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runProcess } from "../../src/process.ts";
-import { EditorIntegration } from "../../src/editor.ts";
+import { EditorIntegration, type CheckStatus } from "../../src/editor.ts";
+import type { QueryReport } from "../../src/navigation-protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 
 async function replace(document: vscode.TextDocument, text: string) {
@@ -38,7 +39,7 @@ export async function runTemplates(): Promise<void> {
     const uri = vscode.Uri.joinPath(root, "roles/readonly/templates", basename);
     const original = await readFile(uri.fsPath, "utf8");
     const document = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(document);
+    const editor = await vscode.window.showTextDocument(document);
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
     assert.deepEqual(findings(document), []);
     const position = document.positionAt(original.indexOf("_port") + 2);
@@ -53,14 +54,38 @@ export async function runTemplates(): Promise<void> {
       uri,
       position,
     );
+    const contents = hovers
+      .flatMap((hover) => hover.contents)
+      .filter(
+        (content): content is vscode.MarkdownString =>
+          typeof content === "object" && "value" in content,
+      );
     assert.ok(
-      hovers.some((hover) =>
-        hover.contents.some(
-          (content) =>
-            typeof content === "object" &&
-            "value" in content &&
-            content.value.includes("Coverage: incomplete"),
-        ),
+      contents.some(
+        (content) =>
+          content.value.includes("Source&nbsp;declarations") &&
+          content.value.includes(
+            "Runtime&nbsp;values&nbsp;and&nbsp;precedence&nbsp;are&nbsp;not&nbsp;evaluated",
+          ) &&
+          content.value.includes("Literal&nbsp;source&nbsp;representation") &&
+          content.value.includes("1234") &&
+          content.value.includes("\\[untrusted\\]") &&
+          content.value.includes("\\*\\*comment\\*\\*"),
+      ),
+      "actual template hover preserves declarations, literal values and escaped comments",
+    );
+    assert.ok(
+      contents.every(
+        (content) => content.isTrusted !== true && !content.supportHtml,
+      ),
+    );
+    assert.ok(
+      hovers.some(
+        (hover) =>
+          hover.range &&
+          document
+            .getText(hover.range)
+            .startsWith("lookup('role_var', '_port'"),
       ),
     );
     const references = await vscode.commands.executeCommand<vscode.Location[]>(
@@ -71,6 +96,23 @@ export async function runTemplates(): Promise<void> {
     assert.ok(
       references.some((location) => location.uri.toString() === uri.toString()),
     );
+    editor.selection = new vscode.Selection(position, position);
+    const impact = await vscode.commands.executeCommand<QueryReport>(
+      "saltboxLint.showImpact",
+    );
+    assert.equal(impact.coverage.complete, false);
+    assert.ok(impact.coverage.reasons.length > 0);
+    assert.match(
+      vscode.window.activeTextEditor!.document.getText(),
+      /Coverage: incomplete/,
+    );
+    assert.ok(
+      vscode.window.activeTextEditor!.document.uri.scheme.startsWith(
+        "saltbox-lint-impact-",
+      ),
+    );
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+    await vscode.window.showTextDocument(document);
     const completions =
       await vscode.commands.executeCommand<vscode.CompletionList>(
         "vscode.executeCompletionItemProvider",
@@ -164,6 +206,12 @@ export async function runTemplates(): Promise<void> {
         (item) => diagnosticCode(item) === "template-syntax",
       ),
     );
+    const status = await vscode.commands.executeCommand<CheckStatus>(
+      "saltboxLint.showStatus",
+    );
+    assert.equal(status.state, "current");
+    assert.match(status.reason, /Template coverage is bounded and read-only/);
+    assert.match(status.reason, /partial coverage/);
     await vscode.commands.executeCommand("workbench.action.files.revert");
     assert.equal(document.getText(), original);
     assert.equal(await readFile(uri.fsPath, "utf8"), original);

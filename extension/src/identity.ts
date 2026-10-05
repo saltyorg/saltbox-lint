@@ -44,6 +44,8 @@ export async function resolveSource(
 }
 
 export function templatePath(filename: string): boolean {
+  // Classify native Windows filenames without changing their disk identity.
+  filename = filename.replaceAll("\\", "/");
   return (
     /(?:^|\/)(?:resources\/)?roles\/[^/]+\/templates\//.test(filename) ||
     /(?:^|\/)resources\/templates\//.test(filename) ||
