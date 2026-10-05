@@ -453,7 +453,7 @@ func TestTemplateCommittedFixtures(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
 		diagnostics, partial bool
-	}{{"valid.j2", false, false}, {"invalid.j2", true, false}, {"partial.j2", false, true}, {"custom.j2", false, false}} {
+	}{{"valid.j2", false, false}, {"invalid.j2", true, false}, {"partial.j2", false, true}, {"custom.j2", false, false}, {"whitespace-valid.j2", false, false}, {"whitespace-invalid.j2", true, false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, err := os.ReadFile("testdata/templates/" + tc.name)
 			if err != nil {

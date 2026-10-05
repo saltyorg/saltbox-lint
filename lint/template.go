@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"slices"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -375,9 +374,7 @@ func templateRawEnd(text string, start int, d templateDelimiters) (int, bool) {
 func templateSpaceEnd(text string, start int) int {
 	for start < len(text) {
 		r, size := utf8.DecodeRuneInString(text[start:])
-		// Python's regular-expression whitespace additionally admits these four
-		// separators, used by Jinja's raw-end lexer.
-		if !unicode.IsSpace(r) && (r < 0x1c || r > 0x1f) {
+		if !jinjaSpace(r) {
 			break
 		}
 		start += size
@@ -460,8 +457,10 @@ func templateConfiguration(text string) (templateDelimiters, int, string) {
 	seen := map[string]bool{}
 	for pair := range strings.SplitSeq(text[len("#jinja2:"):end], ",") {
 		key, value, ok := strings.Cut(pair, ":")
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
+		key = strings.TrimFunc(key, jinjaSpace)
+		// Ansible strips keys, but passes values to Python literal parsing.
+		// Its whitespace is narrower than the Jinja expression lexer's \\s.
+		value = strings.Trim(value, " \t\r\n\f")
 		if !ok || seen[key] {
 			return d, 0, "unsupported #jinja2 configuration: malformed or repeated option"
 		}
@@ -503,7 +502,7 @@ func templateConfiguration(text string) (templateDelimiters, int, string) {
 			return d, 0, "unsupported #jinja2 configuration: delimiter must be a nonempty plain quoted string"
 		}
 		literal := value[1 : len(value)-1]
-		if len(literal) > 32 || strings.TrimSpace(literal) != literal {
+		if len(literal) > 32 || strings.TrimFunc(literal, jinjaSpace) != literal {
 			return d, 0, "unsupported #jinja2 configuration: delimiter size or whitespace"
 		}
 		if opening {

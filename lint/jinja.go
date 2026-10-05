@@ -273,6 +273,10 @@ func scalarPositions(s *Source, n *Node) ([]Span, bool) {
 }
 func space(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 
+// Jinja's Python \s lexer includes Unicode whitespace and four additional
+// ASCII separators. YAML folding/layout continues to use space's byte grammar.
+func jinjaSpace(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f }
+
 func scanExpressions(text string) []Expression {
 	var out []Expression
 	for i := 0; i+1 < len(text); {
@@ -335,8 +339,9 @@ func scanExpressions(text string) []Expression {
 }
 
 // scanExpressionTokens shares token grammar without reinterpreting an extracted
-// template body. An empty close lexes all bytes with no delimiter or trim handling.
-// Nonempty closes retain the existing YAML scalar whitespace-control behavior.
+// template body. An empty close uses Jinja whitespace with no delimiter or trim
+// handling. Nonempty closes retain the existing YAML scalar whitespace grammar
+// and whitespace-control behavior.
 func scanExpressionTokens(text string, start int, close string) (tokens []Token, end int, closing Span, complete bool) {
 	var stack []byte
 	i := start
@@ -350,8 +355,13 @@ func scanExpressionTokens(text string, start int, close string) (tokens []Token,
 			closing.End = i
 			return tokens, i, closing, true
 		}
-		if space(text[i]) {
-			i++
+		whitespace, width := space(text[i]), 1
+		if close == "" && !whitespace {
+			r, size := utf8.DecodeRuneInString(text[i:])
+			whitespace, width = jinjaSpace(r), size
+		}
+		if whitespace {
+			i += width
 			continue
 		}
 		a := i
