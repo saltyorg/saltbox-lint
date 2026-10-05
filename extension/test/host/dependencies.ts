@@ -2,7 +2,7 @@ import { aliasFailureFacts } from "./alias-failure.ts";
 import {
   failureReason,
   journalFailureEvidence,
-  publicFailureEvidence,
+  logFailureEvidence,
   retainFailureEvidence,
   retainAfterDisposal,
   withFailureEvidence,
@@ -928,10 +928,84 @@ export async function runDependencies(): Promise<void> {
           return { ...evidence, retention };
         },
         (evidence) =>
-          console.error(
-            "SALTBOX_DEPENDENCY_FAILURE " +
-              JSON.stringify(publicFailureEvidence(evidence)),
-          ),
+          logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", evidence),
+      );
+      // Retain the ordinary watcher recovery above. Separately force a raw
+      // alias notification to overlap a real canonical post-CLI report. An
+      // unchanged alias must preserve that child and lexical publication.
+      await writeFile(template.fsPath, bad);
+      await waitFor(
+        () => renderer(alias),
+        "alias overlap starts with a bad report",
+      );
+      const aliasVersion = aliasDocument.version;
+      const aliasText = aliasDocument.getText();
+      const canonicalTask = await realpath(task.fsPath);
+      const aliasGate = join(temporary, "alias-recovery");
+      const aliasNonce = randomBytes(32).toString("hex");
+      const gateVariables = [
+        "SALTBOX_TEST_PROCESS_GATE",
+        "SALTBOX_TEST_PROCESS_GATE_NONCE",
+        "SALTBOX_TEST_PROCESS_GATE_PREFIX",
+      ];
+      const priorGate = gateVariables.map((name) => process.env[name]);
+      const beforeOverlap = journal.processes();
+      try {
+        await writeFile(aliasGate, "");
+        process.env.SALTBOX_TEST_PROCESS_GATE = aliasGate;
+        process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = aliasNonce;
+        process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX = canonicalTask;
+        await writeFile(template.fsPath, good);
+        editor.removeFile(template);
+        await waitFor(
+          () => existsSync(aliasGate + ".ready"),
+          "real canonical primary report reaches the alias overlap gate",
+        );
+        const ready = JSON.parse(await readFile(aliasGate + ".ready", "utf8"));
+        assert.equal(ready.nonce, aliasNonce);
+        assert.ok(ready.args.includes(canonicalTask));
+        const instance = fixtureGateInstance(ready, instancesLog, journal);
+        assert.equal(await fixtureRunning(instance), true);
+        // Replacement requests must run normally, rather than inherit the
+        // original child's gate or use its credential to claim completion.
+        for (const name of gateVariables) delete process.env[name];
+        editor.removeFile(alias);
+        assert.equal(
+          await fixtureRunning(instance),
+          true,
+          "unchanged alias echo preserves the exact held canonical child",
+        );
+        await rm(aliasGate, { force: true });
+        await waitFor(
+          () => !renderer(alias),
+          "overlapping alias event retains recovery",
+        );
+        assert.equal(await fixtureRunning(instance), false);
+        assert.ok(
+          journal
+            .processes()
+            .some(
+              (process) =>
+                process.token === instance.token &&
+                !beforeOverlap.some(
+                  (previous) => previous.token === process.token,
+                ),
+            ),
+          "recovery retains the observed primary identity",
+        );
+        assert.equal(aliasDocument.version, aliasVersion);
+        assert.equal(aliasDocument.getText(), aliasText);
+        assert.equal(aliasDocument.isDirty, false);
+        assert.ok(editor.providerDocuments().includes(aliasDocument));
+      } finally {
+        for (const [index, name] of gateVariables.entries()) {
+          if (priorGate[index] === undefined) delete process.env[name];
+          else process.env[name] = priorGate[index];
+        }
+        await rm(aliasGate, { force: true });
+      }
+      success(
+        "unchanged alias notification preserves the held canonical child and recovers lexical diagnostics",
       );
       await rm(alias.fsPath);
       success("canonical context events retain alias ownership");
@@ -1539,10 +1613,10 @@ export async function runDependencies(): Promise<void> {
         };
         const retention = await retainFailureEvidence(evidence);
         retainedFailureDirectory = retention.directory;
-        console.error(
-          "SALTBOX_DEPENDENCY_FAILURE " +
-            JSON.stringify(publicFailureEvidence({ ...evidence, retention })),
-        );
+        logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", {
+          ...evidence,
+          retention,
+        });
       } catch {
         // Preserve the original test rejection even if reporting fails.
       }
@@ -1557,10 +1631,7 @@ export async function runDependencies(): Promise<void> {
           phase: "after existing owner disposal",
           processFacts: await journalFailureEvidence(journal),
         };
-        console.error(
-          "SALTBOX_DEPENDENCY_FAILURE " +
-            JSON.stringify(publicFailureEvidence(evidence)),
-        );
+        logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", evidence);
         if (retainedFailureDirectory)
           await retainAfterDisposal(retainedFailureDirectory, evidence);
       } catch {

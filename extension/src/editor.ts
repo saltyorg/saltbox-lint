@@ -1358,7 +1358,6 @@ export class EditorIntegration implements vscode.Disposable {
     const key = folder.uri.toString();
     const root = this.roots.get(key);
     if (!root) return;
-    this.revokeQueries();
     const known = this.sourceOwners.get(uri.toString());
     let relative =
       known?.root === root
@@ -1389,9 +1388,17 @@ export class EditorIntegration implements vscode.Disposable {
       return;
     let fingerprint: string;
     try {
-      const stat = lstatSync(uri.fsPath, { bigint: true });
+      // Known aliases share the canonical dependency key and its observation.
+      // A retargeted alias must still invalidate the old owner instead of
+      // borrowing an unchanged fingerprint from its previous destination.
+      const filename =
+        known?.root === root &&
+        realpathSync.native(uri.fsPath) === known.filename
+          ? known.filename
+          : uri.fsPath;
+      const stat = lstatSync(filename, { bigint: true });
       const target = stat.isSymbolicLink()
-        ? statSync(uri.fsPath, { bigint: true })
+        ? statSync(filename, { bigint: true })
         : undefined;
       fingerprint = observationFingerprint(stat, target);
       const kind = this.dependencies.observationKind(key, relative);
@@ -1411,12 +1418,12 @@ export class EditorIntegration implements vscode.Disposable {
         else
           fingerprint = contentFingerprint(
             stat,
-            readFileSync(uri.fsPath),
+            readFileSync(filename),
             target,
           );
-        const after = lstatSync(uri.fsPath, { bigint: true });
+        const after = lstatSync(filename, { bigint: true });
         const afterTarget = after.isSymbolicLink()
-          ? statSync(uri.fsPath, { bigint: true })
+          ? statSync(filename, { bigint: true })
           : undefined;
         if (
           observationFingerprint(stat, target) !==
@@ -1424,11 +1431,17 @@ export class EditorIntegration implements vscode.Disposable {
         )
           fingerprint += `:unstable:${++this.nextRevision}`;
       }
+      if (
+        filename !== uri.fsPath &&
+        realpathSync.native(uri.fsPath) !== filename
+      )
+        fingerprint += `:unstable:${++this.nextRevision}`;
     } catch {
       fingerprint = "unavailable";
     }
     const affected = this.dependencies.event(key, root, relative, fingerprint);
     if (!affected) return;
+    this.revokeQueries();
     this.updateStatus();
     const discoveryControl =
       relative === ".gitignore" ||
