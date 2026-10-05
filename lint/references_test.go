@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -271,6 +272,71 @@ func TestReferencesImportBindingAndNullSourceRepresentation(t *testing.T) {
 	}
 	if report.References[1].Candidates[0].Declaration.Value.Text != "null" || !slices.Contains(report.References[1].Reasons, "literal-null-declaration-skipped-at-runtime") {
 		t.Fatal("null runtime skip not explained")
+	}
+}
+
+func TestReferencesWithCalleeBindings(t *testing.T) {
+	for _, callee := range []string{"lookup", "query", "q"} {
+		call := callee + "('role_var', '_port', role='a')"
+		for _, tc := range []struct {
+			name    string
+			binding string
+			bound   bool
+		}{
+			{"single", callee + " = caller_function", true},
+			{"multiple", "other = fn([1, 2], flag=value), " + callee + " = caller_function", true},
+			{"tuple", "(other, " + callee + ") = caller_pair", true},
+			{"unparenthesized-tuple", "other, " + callee + " = caller_pair", true},
+			{"nested-tuple", "(other, (" + callee + ", third)) = caller_pair", true},
+			{"value-only", "other = fn([" + callee + ", value], flag=third), last = fourth", false},
+			{"rhs-call", "other = " + call, false},
+			{"rhs-call-before-binding", "other = " + call + ", " + callee + " = caller_function", true},
+			{"string-value", "other = '" + callee + " = caller_function, q = query'", false},
+		} {
+			t.Run(callee+"/"+tc.name, func(t *testing.T) {
+				root := t.TempDir()
+				primary := filepath.Join(root, "roles/a/tasks/main.yml")
+				// Before, inside nested blocks, and after the binding all share the
+				// conservative scalar policy. A separate scalar stays independent.
+				input := fmt.Sprintf("- debug:\n    msg: |\n      {# {%% with %s = caller_function %%} #} {{ '{%% with %s = caller_function %%}' }}\n      {{ %s }}\n      {%% with %s %%}{%% with other = caller_value %%}{{ %s }}{%% endwith %%}{%% endwith %%}\n      {{ %s }}\n- debug:\n    msg: \"{{ %s }}\"\n", callee, callee, call, tc.binding, call, call, call)
+				writeTestSource(t, primary, input)
+				writeTestSource(t, filepath.Join(root, "roles/a/defaults/main.yml"), "a_role_port: 42\n")
+				selected, err := References(t.Context(), Options{Root: root, Paths: []string{primary}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				full, err := References(t.Context(), Options{Root: root, Paths: []string{root}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(selected.References) != strings.Count(input, call) || !reflect.DeepEqual(selected.References, full.References) {
+					t.Fatalf("selected/full references: %#v / %#v", selected.References, full.References)
+				}
+				for i, read := range selected.References {
+					wantBound := tc.bound && i < len(selected.References)-1
+					if wantBound {
+						if read.State != "dynamic" || !slices.Contains(read.Reasons, "local-callee-binding") || len(read.Candidates) != 0 {
+							t.Errorf("locally bound callee resolved: %#v", read)
+						}
+					} else if read.State != "resolved" || len(read.Candidates) != 1 || slices.Contains(read.Reasons, "local-callee-binding") {
+						t.Errorf("unbound callee lost its declaration: %#v", read)
+					}
+					if !slices.Contains(read.Reasons, "runtime-precedence-and-providers-unmodeled") {
+						t.Error("runtime uncertainty lost")
+					}
+					if read.Location.Path != "roles/a/tasks/main.yml" || read.Location.Text != call || input[read.Location.Span.Start:read.Location.Span.End] != call {
+						t.Errorf("original call location lost: %#v", read.Location)
+					}
+				}
+				if !selected.Dependencies.Complete || len(selected.Dependencies.Sources) != 1 || len(selected.Dependencies.Sources[0].Directories) == 0 {
+					t.Fatal("source-owned query lost dependencies")
+				}
+				data, err := os.ReadFile(primary)
+				if err != nil || string(data) != input {
+					t.Fatal("query changed source bytes")
+				}
+			})
+		}
 	}
 }
 

@@ -543,6 +543,35 @@ func inventoryDeclarations(node *Node, add func([]Entry)) {
 func referenceBindings(expression Expression) map[int]bool {
 	bindings := statementBindings(expression)
 	tokens := expression.Tokens
+	if expression.Kind == "statement" && len(tokens) > 0 && tokens[0].Text == "with" {
+		// With targets may be tuples. Each top-level equals sign begins a
+		// value, and the next top-level comma begins another assignment.
+		// Nested value calls/collections never introduce local bindings.
+		inValue := false
+		for i := 1; i < len(tokens); i++ {
+			switch tokens[i].Text {
+			case "=":
+				inValue = true
+			case ",":
+				inValue = false
+			case "(", "[", "{":
+				end := balancedEnd(tokens, i, len(tokens))
+				if end < 0 {
+					return bindings
+				}
+				if !inValue {
+					for target := i; target <= end; target++ {
+						bindings[target] = true
+					}
+				}
+				i = end
+			default:
+				if !inValue {
+					bindings[i] = true
+				}
+			}
+		}
+	}
 	if expression.Kind == "statement" && len(tokens) > 0 && tokens[0].Text == "import" {
 		for i := 1; i+1 < len(tokens); i++ {
 			if tokens[i].Text == "as" {
