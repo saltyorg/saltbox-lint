@@ -94,11 +94,21 @@ async function runNestedNavigation(
             .startsWith(callee + "('role_var', '_port'"),
       ),
     );
-    const references = await vscode.commands.executeCommand<vscode.Location[]>(
-      "vscode.executeReferenceProvider",
-      document.uri,
-      position,
-    );
+    let references: vscode.Location[] = [];
+    await waitFor(async () => {
+      references = await vscode.commands.executeCommand<vscode.Location[]>(
+        "vscode.executeReferenceProvider",
+        document.uri,
+        position,
+      );
+      return references.some(
+        (location) =>
+          location.uri.toString() === document.uri.toString() &&
+          document
+            .getText(location.range)
+            .startsWith(callee + "('role_var', '_port'"),
+      );
+    }, "nested references accept the current inner lookup observation");
     assert.ok(
       references.some(
         (location) =>
@@ -758,11 +768,19 @@ export async function runNavigation(): Promise<void> {
   console.log(
     "PASS real hover presents escaped comments and literal declarations with commands disabled",
   );
-  const references = await vscode.commands.executeCommand<vscode.Location[]>(
-    "vscode.executeReferenceProvider",
-    document.uri,
-    position,
-  );
+  // A visible source or context event can revoke an in-flight query.
+  // Capture the accepted reference answer, as for definitions and hover above.
+  let references: vscode.Location[] = [];
+  await waitFor(async () => {
+    references = await vscode.commands.executeCommand<vscode.Location[]>(
+      "vscode.executeReferenceProvider",
+      document.uri,
+      position,
+    );
+    return references.some(
+      (location) => location.uri.toString() === document.uri.toString(),
+    );
+  }, "real references accept a current-document read observation");
   assert.ok(
     references.some(
       (location) => location.uri.toString() === document.uri.toString(),
