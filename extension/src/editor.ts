@@ -214,7 +214,7 @@ export class EditorIntegration implements vscode.Disposable {
     )
       return {
         state: "disabled",
-        reason: "A trusted local YAML document is required.",
+        reason: "A trusted local YAML or template document is required.",
       };
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)
@@ -228,7 +228,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (!this.eligible(document))
       return {
         state: "disabled",
-        reason: "This source is not eligible. Templates remain context-only.",
+        reason: "This source is not eligible for checking.",
       };
     const key = document.uri.toString();
     if (this.pendingCheck(document, folder))
@@ -249,7 +249,10 @@ export class EditorIntegration implements vscode.Disposable {
         ? {
             state: "current",
             reason:
-              "The result matches the observed source, root and dependency revisions.",
+              "The result matches the observed source, root and dependency revisions." +
+              (this.isTemplate(document)
+                ? " Template coverage is bounded and read-only; unsupported grammar is reported as partial coverage."
+                : ""),
           }
         : {
             state: "stale",
@@ -266,7 +269,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (
       !document ||
       document.uri.scheme !== "file" ||
-      !/\.ya?ml$/i.test(document.uri.path)
+      !(/\.ya?ml$/i.test(document.uri.path) || this.isTemplate(document))
     ) {
       this.statusBar.hide();
       return;
@@ -316,16 +319,21 @@ export class EditorIntegration implements vscode.Disposable {
       !document.isClosed &&
       !this.closedTabs.has(document.uri.toString()) &&
       document.uri.scheme === "file" &&
-      ["yaml", "ansible"].includes(document.languageId) &&
-      /\.ya?ml$/i.test(document.uri.path) &&
-      !templatePath(
-        this.sourceOwners.get(document.uri.toString())?.path ??
-          document.uri.path,
-      ) &&
+      (this.isTemplate(document) ||
+        (["yaml", "ansible"].includes(document.languageId) &&
+          /\.ya?ml$/i.test(document.uri.path))) &&
       !!this.roots.get(
         vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString() ?? "",
       )
     );
+  }
+  isTemplate(document: vscode.TextDocument): boolean {
+    return templatePath(
+      this.sourceOwners.get(document.uri.toString())?.path ?? document.uri.path,
+    );
+  }
+  writable(document: vscode.TextDocument): boolean {
+    return this.eligible(document) && !this.isTemplate(document);
   }
   private rootRevision(folder: string): number {
     if (!this.rootRevisions.has(folder))
@@ -395,8 +403,11 @@ export class EditorIntegration implements vscode.Disposable {
       if (
         document.isClosed ||
         document.uri.scheme !== "file" ||
-        !["yaml", "ansible"].includes(document.languageId) ||
-        !/\.ya?ml$/i.test(document.uri.path)
+        !(
+          this.isTemplate(document) ||
+          (["yaml", "ansible"].includes(document.languageId) &&
+            /\.ya?ml$/i.test(document.uri.path))
+        )
       )
         continue;
       const folder = vscode.workspace.getWorkspaceFolder(document.uri);
@@ -443,7 +454,6 @@ export class EditorIntegration implements vscode.Disposable {
     );
     if (!root) return;
     const identity = await identify(root, document.uri.fsPath);
-    if (templatePath(identity.path)) return;
     const snapshot = {
       ...identity,
       uri: document.uri,
@@ -985,6 +995,7 @@ export class EditorIntegration implements vscode.Disposable {
       };
       actions.push(help);
     }
+    if (!this.writable(document)) return actions;
     const seen = new Set<string>();
     result.report.diagnostics.forEach((finding, index) => {
       if (
@@ -1035,6 +1046,7 @@ export class EditorIntegration implements vscode.Disposable {
     const result = this.results.document(uri.toString());
     if (
       !document ||
+      !this.writable(document) ||
       !result ||
       result.id !== reportId ||
       result.snapshot.hash !== expectedHash ||
@@ -1203,12 +1215,13 @@ export class EditorIntegration implements vscode.Disposable {
     mode: "canonical" | "lint-fixes",
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
-    if (token?.isCancellationRequested) return [];
+    if (token?.isCancellationRequested || !this.writable(document)) return [];
     const abort = new AbortController();
     const listener = token?.onCancellationRequested(() => abort.abort());
     try {
       const snapshot = await this.snapshot(document);
-      if (!snapshot || abort.signal.aborted) return [];
+      if (!snapshot || abort.signal.aborted || !this.writable(document))
+        return [];
       if (!document.isDirty && !isUtf8(await readFile(snapshot.filename))) {
         this.output.appendLine(
           `Skipped ${snapshot.path}: invalid UTF-8; editor formatting requires UTF-8.`,
@@ -1276,7 +1289,7 @@ export class EditorIntegration implements vscode.Disposable {
     const edits = await this.format(document, "lint-fixes");
     if (
       !edits.length ||
-      !this.eligible(document) ||
+      !this.writable(document) ||
       document.version !== version ||
       hash(document.getText()) !== sourceHash ||
       revision !== this.rootRevision(folder) ||
@@ -1292,7 +1305,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (
       !this.documentFolders.has(key) &&
       (document.uri.scheme !== "file" ||
-        !/\.ya?ml$/i.test(document.uri.path) ||
+        !(/\.ya?ml$/i.test(document.uri.path) || this.isTemplate(document)) ||
         !vscode.workspace.getWorkspaceFolder(document.uri))
     )
       return;
@@ -1342,13 +1355,7 @@ export class EditorIntegration implements vscode.Disposable {
   }
   saved(document: vscode.TextDocument): void {
     this.contextEvent(document.uri);
-    if (
-      /\.ya?ml$/i.test(document.uri.path) &&
-      !templatePath(
-        this.sourceOwners.get(document.uri.toString())?.path ??
-          document.uri.path,
-      )
-    )
+    if (this.eligible(document))
       this.queueFile(document.uri, true, document.version);
   }
   private contextEvent(uri: vscode.Uri): void {
@@ -1485,7 +1492,13 @@ export class EditorIntegration implements vscode.Disposable {
       this.queueCoverage(folder);
       return;
     }
-    if (/\.ya?ml$/i.test(uri.path) && !templatePath(relative))
+    if (
+      (/\.ya?ml$/i.test(uri.path) && !templatePath(relative)) ||
+      vscode.workspace.textDocuments.some(
+        (document) =>
+          document.uri.toString() === uri.toString() && this.eligible(document),
+      )
+    )
       this.queueFile(uri);
     // No completed coverage exists during startup. Any context event retains
     // the existing queue's full scan fallback, including non-YAML templates.
@@ -1514,7 +1527,17 @@ export class EditorIntegration implements vscode.Disposable {
     }
   }
   private queueFile(uri: vscode.Uri, force = false, version?: number): void {
-    if (this.disposed || uri.scheme !== "file" || !/\.ya?ml$/i.test(uri.path))
+    if (
+      this.disposed ||
+      uri.scheme !== "file" ||
+      (!/\.ya?ml$/i.test(uri.path) &&
+        !vscode.workspace.textDocuments.some(
+          (document) =>
+            document.uri.toString() === uri.toString() &&
+            this.isTemplate(document) &&
+            this.eligible(document),
+        ))
+    )
       return;
     const folder = this.roots.folder(uri);
     if (!folder || !this.roots.get(folder.uri.toString())) return;
@@ -1580,7 +1603,14 @@ export class EditorIntegration implements vscode.Disposable {
         let filename: string | undefined;
         try {
           const identity = await identify(root, uri.fsPath);
-          if (templatePath(identity.path)) continue;
+          if (
+            templatePath(identity.path) &&
+            !vscode.workspace.textDocuments.some(
+              (document) =>
+                document.uri.toString() === key && this.eligible(document),
+            )
+          )
+            continue;
           filename = identity.filename;
           const bytes = await readFile(identity.filename);
           const sourceHash = hash(bytes);

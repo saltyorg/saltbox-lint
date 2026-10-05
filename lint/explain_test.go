@@ -55,8 +55,8 @@ func TestExplainSelectionAndContext(t *testing.T) {
 			}) {
 				t.Fatal("context parse state omitted")
 			}
-			if tt.kind == Template && (len(result.ApplicablePolicies) != 0 || len(result.FixDecisions) != 0 || len(result.Unsupported) == 0) {
-				t.Fatal("template promoted into checked source")
+			if tt.kind == Template && (len(result.ApplicablePolicies) == 0 || len(result.Unsupported) == 0) {
+				t.Fatal("template read-only explanation omitted")
 			}
 			after, err := os.ReadFile(tt.filename)
 			if err != nil || !bytes.Equal(before, after) {

@@ -64,7 +64,7 @@ type queryArgument struct {
 // Full discovery supplies cross-role reads and role-name completion; explicit
 // primary admission preserves ignored and unsaved-buffer inspection.
 func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
-	result := QueryReport{SchemaVersion: 1, Operation: request.Operation, Offset: request.Offset, State: "none", Reasons: []string{}, TargetHashes: map[string]string{}, Locations: []QueryLocation{}, Declarations: []RoleDeclaration{}, Completions: []QueryCompletion{}, Coverage: QueryCoverage{Reasons: []string{"static-reads-only", "runtime-precedence-and-providers-unmodeled", "templates-context-only", "directory-discovery-excludes-ignored-sources"}}}
+	result := QueryReport{SchemaVersion: 1, Operation: request.Operation, Offset: request.Offset, State: "none", Reasons: []string{}, TargetHashes: map[string]string{}, Locations: []QueryLocation{}, Declarations: []RoleDeclaration{}, Completions: []QueryCompletion{}, Coverage: QueryCoverage{Reasons: []string{"static-reads-only", "runtime-precedence-and-providers-unmodeled", "template-runtime-and-unselected-template-reads-unmodeled", "directory-discovery-excludes-ignored-sources"}}}
 	if !slices.Contains([]string{"definition", "completion", "hover", "references"}, request.Operation) {
 		return result, fmt.Errorf("unknown query operation %q", request.Operation)
 	}
@@ -81,8 +81,22 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 		return result, err
 	}
 	source := p.Sources[identity.Path]
-	if source == nil || !p.Selected[identity.Path] || source.Kind == Template {
-		return result, fmt.Errorf("query requires a selected YAML source")
+	if source == nil || !p.Selected[identity.Path] {
+		return result, fmt.Errorf("query requires a selected source")
+	}
+	if source.Kind == Template && request.Operation == "completion" {
+		result.State = "unavailable"
+		result.Reasons = append(result.Reasons, "templates-are-read-only")
+		return result, ctx.Err()
+	}
+	if source.Kind == Template {
+		scan := scanTemplate(source)
+		result.Coverage.Reasons = append(result.Coverage.Reasons, scan.reasons...)
+		if len(scan.diagnostics) > 0 {
+			result.State = "unavailable"
+			result.Reasons = append(result.Reasons, "invalid-primary-template")
+			return result, ctx.Err()
+		}
 	}
 	// Collapse full discovery observations to the primary owner. Every read byte
 	// remains a dependency, including negative context and discovery decisions.

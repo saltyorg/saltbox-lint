@@ -94,7 +94,7 @@ func TestQueryLiteralCompletionsAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Coverage.Complete || !slices.Contains(result.Coverage.Reasons, "templates-context-only") {
+	if result.Coverage.Complete || !slices.Contains(result.Coverage.Reasons, "template-runtime-and-unselected-template-reads-unmodeled") {
 		t.Fatal("coverage claims completeness")
 	}
 	if !slices.ContainsFunc(result.Locations, func(l QueryLocation) bool { return l.Kind == "read" && l.Path == "roles/alpha/tasks/main.yml" }) {
@@ -206,7 +206,7 @@ func TestQueryOffsetsCRLFUnicodeAndAdmission(t *testing.T) {
 	if err != nil || len(result.Declarations) != 1 || result.Origin.Line != 2 {
 		t.Fatalf("CRLF Unicode snapshot: %#v %v", result, err)
 	}
-	for _, filename := range []string{filepath.Join(t.TempDir(), "outside.yml"), filepath.Join(root, "roles/alpha/templates/value.j2")} {
+	for _, filename := range []string{filepath.Join(t.TempDir(), "outside.yml")} {
 		_, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: "definition", Offset: 15})
 		if err == nil {
 			t.Fatalf("admitted %s", filename)

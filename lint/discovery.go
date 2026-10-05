@@ -21,10 +21,10 @@ func Load(ctx context.Context, opts Options) (*Project, error) {
 	if opts.ChangedSince != "" {
 		return loadChanged(ctx, opts)
 	}
-	return load(ctx, opts, false)
+	return load(ctx, opts)
 }
 
-func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
+func load(ctx context.Context, opts Options) (*Project, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 		return nil, fmt.Errorf("open source root %s: %w", root, err)
 	}
 	defer func() { _ = files.Close() }()
-	l := sourceLoader{ctx: ctx, project: p, explain: explain, files: files}
+	l := sourceLoader{ctx: ctx, project: p, files: files}
 	gitRoot, err := enclosingGitRoot(root)
 	if err != nil {
 		return nil, err
@@ -294,7 +294,6 @@ func gitAdministrativeOwner(gitRoot, administrative string) (string, error) {
 
 type sourceLoader struct {
 	files     *os.Root
-	explain   bool
 	ctx       context.Context
 	project   *Project
 	gitFiles  []string
@@ -310,7 +309,7 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if err != nil {
 		return err
 	}
-	if !supportedSource(relative) || (selected && isTemplate(relative) && !l.explain) {
+	if !supportedSource(relative) {
 		return fmt.Errorf("unsupported source target %s", absolute)
 	}
 	s := l.project.Sources[relative]
@@ -537,7 +536,7 @@ func supportedSource(name string) bool {
 }
 
 // SourceIdentity is the canonical root and root-relative slash path for one
-// explicitly named YAML source. Resolving identity may inspect path ancestors
+// explicitly named checkable source. Resolving identity may inspect path ancestors
 // and project markers, but never scans source files or invokes Git.
 type SourceIdentity struct {
 	Root string
@@ -559,7 +558,7 @@ func ResolveSourceIdentity(root, filename string) (SourceIdentity, error) {
 	if err != nil {
 		return SourceIdentity{}, err
 	}
-	if !supportedSource(relative) || isTemplate(relative) {
+	if !supportedSource(relative) {
 		return SourceIdentity{}, fmt.Errorf("unsupported source target %s", absolute)
 	}
 	return SourceIdentity{Root: resolvedRoot, Path: relative}, nil

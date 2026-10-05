@@ -34,6 +34,8 @@ This reference describes source-built, unreleased functionality. The published v
 - [role-web-contract](#role-web-contract)
 - [section-spacing](#section-spacing)
 - [svm-github-api-resource](#svm-github-api-resource)
+- [template-partial-coverage](#template-partial-coverage)
+- [template-syntax](#template-syntax)
 - [traefik-adapter-contract](#traefik-adapter-contract)
 - [traefik-api-contract](#traefik-api-contract)
 - [traefik-renderer-contract](#traefik-renderer-contract)
@@ -707,6 +709,46 @@ Violation example:
 value: '{{ svm }}'
 ```
 
+## template-partial-coverage
+
+Explain unsupported static template coverage
+
+Unsupported configuration, extension statements, expression grammar and scanner bounds receive an explicit partial-coverage warning. Supported checks do not validate runtime values, load imports or render output. Templates never receive fixes.
+
+Source kinds: template. Scope: explicit template. Automatic fix: false.
+
+Expected example:
+
+```yaml
+{{ value }}
+```
+
+Violation example:
+
+```yaml
+{% custom_extension value %}
+```
+
+## template-syntax
+
+Check supported template delimiters and blocks
+
+Explicit templates receive bounded, read-only delimiter and block checks. Literal text, quoted delimiters, comments and raw content are preserved. Unsupported expression or statement grammar is partial coverage, never a fabricated syntax error. No layout or style policy applies.
+
+Source kinds: template. Scope: explicit template. Automatic fix: false.
+
+Expected example:
+
+```yaml
+{% if enabled %}{{ value }}{% endif %}
+```
+
+Violation example:
+
+```yaml
+{% if enabled %}{{ value }}
+```
+
 ## traefik-adapter-contract
 
 Forward namespaced Traefik contracts in role includes
@@ -787,7 +829,7 @@ Consume the API contract in Traefik renderers
 
 Roles declaring Traefik use the shared Docker renderer or consume API middleware, enablement and endpoint in actual copy content or referenced templates. Actual retirement fail paths are exempt; comments and debug text do not establish rendering.
 
-Source kinds: defaults, handlers, tasks. Scope: role defaults, tasks and referenced templates. Automatic fix: false.
+Source kinds: defaults, handlers, tasks, template. Scope: role defaults, tasks and explicitly selected referenced templates. Automatic fix: false.
 
 Expected example:
 

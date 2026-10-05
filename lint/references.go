@@ -77,7 +77,7 @@ type roleSymbolIndex struct {
 }
 
 // References owns its index and observations for one invocation. Only selected
-// primary YAML sources emit reads. Context templates stay raw and unselected.
+// primary sources emit reads. Templates expose supported static reads only.
 func References(ctx context.Context, opts Options) (ReferenceReport, error) {
 	result := ReferenceReport{SchemaVersion: 1, Contract: "saltbox-role-lookups-v1", Sources: []ObservedSource{}, LoadedContext: []ObservedSource{}, References: []RoleReference{}}
 	if opts.ChangedSince != "" {
@@ -204,6 +204,9 @@ func sourceRoleReferences(source *Source) []RoleReference {
 	// whose leaf can be safe while a task, block or document ancestor is unsafe.
 	// Projected arguments inherit membership from their original YAML scalar.
 	expressions = slices.DeleteFunc(expressions, func(e Expression) bool {
+		if source.Kind == Template {
+			return false
+		}
 		if e.node == nil || e.node.Tag == "!unsafe" {
 			return true
 		}

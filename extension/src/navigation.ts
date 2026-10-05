@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { readFile } from "node:fs/promises";
-import { identify, resolveSource } from "./identity.ts";
+import { identify, resolveSource, templatePath } from "./identity.ts";
 import { SnapshotIndex, hash, type Position } from "./protocol.ts";
 import { range } from "./diagnostics.ts";
 import type {
@@ -184,6 +184,7 @@ export class Navigation implements vscode.Disposable {
     position: vscode.Position,
     token: vscode.CancellationToken,
   ): Promise<vscode.CompletionItem[]> {
+    if (templatePath(document.uri.path)) return [];
     const answer = await this.query(document, position, "completion", token);
     return (
       answer?.report.completions.map((completion) => {

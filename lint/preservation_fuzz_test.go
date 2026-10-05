@@ -50,6 +50,18 @@ func FuzzParseSource(f *testing.F) {
 			t.Fatal("raw template was interpreted")
 		}
 		fuzztest.Unchanged(t, original, template.Data)
+		scan := scanTemplate(template)
+		checkFuzzDiagnostics(t, template, scan.diagnostics)
+		for _, expression := range scan.expressions {
+			fuzztest.Span(t, data, expression.Span.Start, expression.Span.End)
+			for _, token := range expression.Tokens {
+				fuzztest.Span(t, data, token.Span.Start, token.Span.End)
+				if string(data[token.Span.Start:token.Span.End]) != token.Text {
+					t.Fatalf("template token changed representation: %+v", token)
+				}
+			}
+		}
+		fuzztest.Unchanged(t, original, template.Data)
 		if len(data) > 0 {
 			data[0] ^= 0xff
 			fuzztest.Unchanged(t, original, source.Data)

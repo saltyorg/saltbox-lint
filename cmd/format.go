@@ -101,6 +101,10 @@ func runFormat(command *cobra.Command, selection string, opts formatOptions) err
 }
 
 func planFormat(ctx context.Context, mode string, identity lint.SourceIdentity, data []byte) (plannedFormat, error) {
+	source, _ := lint.Parse(identity.Path, data)
+	if source.Kind == lint.Template {
+		return plannedFormat{status: "skipped", reason: "templates are read-only and cannot be formatted or fixed", source: source}, nil
+	}
 	if mode == "canonical" {
 		result, err := canonicalformat.Plan(ctx, identity.Path, data)
 		if err != nil {
@@ -115,7 +119,7 @@ func planFormat(ctx context.Context, mode string, identity lint.SourceIdentity, 
 	if err != nil {
 		return plannedFormat{}, err
 	}
-	source := project.Sources[identity.Path]
+	source = project.Sources[identity.Path]
 	if source == nil || !project.Selected[identity.Path] {
 		return plannedFormat{}, fmt.Errorf("selected source %q is unavailable after loading context", identity.Path)
 	}

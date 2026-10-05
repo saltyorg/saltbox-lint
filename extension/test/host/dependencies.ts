@@ -751,13 +751,17 @@ export async function runDependencies(): Promise<void> {
     const calls = invocations().length;
     await editor.check(templateDocument, true);
     assert.deepEqual(await editor.format(templateDocument, "canonical"), []);
-    assert.equal(invocations().length, calls);
-    assert.equal(editor.providerDocuments().includes(templateDocument), false);
+    assert.ok(
+      invocations().length > calls,
+      "explicit template check invokes the CLI",
+    );
+    assert.equal(editor.providerDocuments().includes(templateDocument), true);
+    assert.equal(editor.writable(templateDocument), false);
     await rename(yamlTemplate.fsPath, template.fsPath);
     await writeFile(task.fsPath, taskText);
     await pause(250);
     success(
-      "YAML-named templates refresh context and expose no check/fix/formatter provider",
+      "YAML-named templates refresh context and expose read-only checking providers",
     );
 
     await writeFile(template.fsPath, bad);

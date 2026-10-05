@@ -63,6 +63,13 @@ func newExpressionIndex(source *Source) expressionIndex {
 // Expressions scans parsed scalar values, never YAML comments or unsafe values.
 // Statement tags remain distinct from output expressions for policy consumers.
 func Expressions(source *Source) []Expression {
+	if source != nil && source.Kind == Template {
+		scan := scanTemplate(source)
+		if len(scan.diagnostics) > 0 {
+			return nil
+		}
+		return scan.expressions
+	}
 	return expressionsMatching(source, nil)
 }
 

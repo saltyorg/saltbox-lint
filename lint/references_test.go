@@ -189,8 +189,8 @@ func TestReferencesDecodedActionsAndOpaqueSources(t *testing.T) {
 	if string(data) != input {
 		t.Fatal("query changed bytes")
 	}
-	if _, err := References(t.Context(), Options{Root: root, Paths: []string{filepath.Join(root, "roles/a/templates/data.yml")}}); err == nil {
-		t.Fatal("template selected")
+	if template, err := References(t.Context(), Options{Root: root, Paths: []string{filepath.Join(root, "roles/a/templates/data.yml")}}); err != nil || len(template.References) != 1 {
+		t.Fatalf("template references: %+v %v", template, err)
 	}
 }
 

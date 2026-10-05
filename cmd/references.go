@@ -14,7 +14,7 @@ func newReferencesCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "references [paths...]",
 		Short: "Inspect static role lookup declaration candidates",
-		Long:  "Inspect role_var and role_web reads without executing Ansible/Jinja or writing sources. Resolution describes declaration candidates, never runtime values or variable precedence. Templates remain context-only. With no paths, inspect the current directory.\nExit status: 0 query generated, including unresolved reads; 2 usage, loading or reporting failure.",
+		Long:  "Inspect role_var and role_web reads without executing Ansible/Jinja or writing sources. Resolution describes declaration candidates, never runtime values or variable precedence. Explicitly selected templates expose supported static reads without edits. With no paths, inspect the current directory.\nExit status: 0 query generated, including unresolved reads; 2 usage, loading or reporting failure.",
 		RunE: func(command *cobra.Command, args []string) error {
 			if format != "human" && format != "json" {
 				return fmt.Errorf("unknown reference format %q", format)

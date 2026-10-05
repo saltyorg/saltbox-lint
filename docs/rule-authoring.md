@@ -41,7 +41,9 @@ Prove YAML/Jinja semantic and non-whitespace-token preservation. Keep comments,
 scalar styles, literal contents, line endings and already-valid formatting.
 Verify idempotence and interacting corrections. Decline uncertain changes and
 provide manual guidance. Template layout can change generated file contents;
-`.j2` templates currently supply contract context, not formatting targets.
+Explicit templates receive bounded correctness checks and static reference
+inspection. They never receive layout policies, fixes, completion edits, rename
+or formatting. See [template coverage](templates.md).
 
 ## Validate
 

@@ -1,0 +1,5 @@
+ \t literal output
+{# unsupported-looking {% ignored #}
+{% macro emit(value) %}{{ value }}{% endmacro %}
+{% call emit('}}') %}{% raw -%}{{ {% incomplete{% endraw %}{% endcall %}
+{% if enabled %}{{ value }}{% elif fallback %}fallback{% else %}none{% endif %}

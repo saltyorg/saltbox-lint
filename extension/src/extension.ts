@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   const providers = new Map<
     string,
-    { language: string; disposable: vscode.Disposable }
+    { language: string; writable: boolean; disposable: vscode.Disposable }
   >();
   const updateProviders = () => {
     const documents = new Map(
@@ -24,7 +24,12 @@ export function activate(context: vscode.ExtensionContext): void {
         .map((document) => [document.uri.toString(), document]),
     );
     for (const [key, registration] of providers) {
-      if (documents.get(key)?.languageId === registration.language) continue;
+      const document = documents.get(key);
+      if (
+        document?.languageId === registration.language &&
+        editor.writable(document) === registration.writable
+      )
+        continue;
       registration.disposable.dispose();
       providers.delete(key);
     }
@@ -42,6 +47,7 @@ export function activate(context: vscode.ExtensionContext): void {
       ];
       providers.set(key, {
         language: document.languageId,
+        writable: editor.writable(document),
         disposable: vscode.Disposable.from(
           vscode.languages.registerCodeActionsProvider(
             selector,
@@ -52,7 +58,9 @@ export function activate(context: vscode.ExtensionContext): void {
             {
               providedCodeActionKinds: [
                 vscode.CodeActionKind.QuickFix,
-                vscode.CodeActionKind.SourceFixAll.append("saltboxLint"),
+                ...(editor.writable(document)
+                  ? [vscode.CodeActionKind.SourceFixAll.append("saltboxLint")]
+                  : []),
               ],
             },
           ),
@@ -60,10 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
             provideDefinition: (document, position, token) =>
               editor.navigation.definition(document, position, token),
           }),
-          vscode.languages.registerCompletionItemProvider(selector, {
-            provideCompletionItems: (document, position, token) =>
-              editor.navigation.completion(document, position, token),
-          }),
+
           vscode.languages.registerHoverProvider(selector, {
             provideHover: (document, position, token) =>
               editor.navigation.hover(document, position, token),
@@ -72,10 +77,24 @@ export function activate(context: vscode.ExtensionContext): void {
             provideReferences: (document, position, context, token) =>
               editor.navigation.references(document, position, context, token),
           }),
-          vscode.languages.registerDocumentFormattingEditProvider(selector, {
-            provideDocumentFormattingEdits: (document, _options, token) =>
-              editor.format(document, "canonical", token),
-          }),
+          ...(editor.writable(document)
+            ? [
+                vscode.languages.registerCompletionItemProvider(selector, {
+                  provideCompletionItems: (document, position, token) =>
+                    editor.navigation.completion(document, position, token),
+                }),
+                vscode.languages.registerDocumentFormattingEditProvider(
+                  selector,
+                  {
+                    provideDocumentFormattingEdits: (
+                      document,
+                      _options,
+                      token,
+                    ) => editor.format(document, "canonical", token),
+                  },
+                ),
+              ]
+            : []),
         ),
       });
     }

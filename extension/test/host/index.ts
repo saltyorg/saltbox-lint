@@ -151,6 +151,8 @@ export async function run(): Promise<void> {
   console.log("PASS open diagnostics from bundled CLI");
   const { runNavigation } = await import("./navigation.ts");
   await runNavigation();
+  const { runTemplates } = await import("./templates.ts");
+  await runTemplates();
   await vscode.window.showTextDocument(document);
   const { runHelpStatus } = await import("./help-status.ts");
   await runHelpStatus(document);

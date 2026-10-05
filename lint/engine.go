@@ -33,7 +33,7 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 			}
 			diagnostics = append(diagnostics, rule.Check(project, source)...)
 		}
-		if project.Selected[name] {
+		if project.Selected[name] && source.Kind != Template {
 			attachStructuralFixes(source, diagnostics[first:])
 		}
 	}
@@ -46,6 +46,9 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 	for _, d := range diagnostics {
 		if !project.Selected[d.Path] {
 			continue
+		}
+		if source := project.Sources[d.Path]; source != nil && source.Kind == Template {
+			d.Fix = nil
 		}
 		key := diagnosticKey{d.Path, d.RuleID, d.Severity, d.Message, d.Expected, d.Span}
 		if slices.ContainsFunc(seen[key], func(prior Diagnostic) bool {

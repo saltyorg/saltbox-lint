@@ -10,8 +10,8 @@ import (
 // Executable metadata makes every advertised policy earn a pass and a failure.
 func TestPolicyCatalogCompleteAndExamplesExecute(t *testing.T) {
 	rules := Rules()
-	if len(rules) != 33 {
-		t.Fatalf("catalog has %d rules, want 29 migrated policies plus section spacing, two parentheses policies and when lists", len(rules))
+	if len(rules) != 35 {
+		t.Fatalf("catalog has %d rules, want 29 migrated policies plus section spacing, two parentheses policies, when lists and two template policies", len(rules))
 	}
 	seen := map[string]bool{}
 	for _, r := range rules {
@@ -33,6 +33,8 @@ func TestPolicyCatalogCompleteAndExamplesExecute(t *testing.T) {
 					path = "roles/example/defaults/main.yml"
 				}
 				switch r.ID {
+				case "template-syntax", "template-partial-coverage":
+					path = "roles/example/templates/config.j2"
 				case "docker-vars-policy":
 					path = "resources/tasks/docker/main.yml"
 				case "role-directory-name":
@@ -52,6 +54,9 @@ func TestPolicyCatalogCompleteAndExamplesExecute(t *testing.T) {
 					files = map[string]string{traefikDefaultsPath: defaults, traefikTasksPath: tasks}
 				}
 				p := traefikProject(files)
+				if len(r.Kinds) == 1 && r.Kinds[0] == Template {
+					p.Selected[path] = true
+				}
 				if !bad && r.ID == "traefik-adapter-contract" && len(traefikAdapters(p.Sources[traefikTasksPath])) != 1 {
 					t.Fatal("good example does not activate a namespaced adapter")
 				}

@@ -2,7 +2,7 @@
 
 `references` is available in source builds and remains unreleased. It reads YAML
 and local context without executing lookups, templates, modules or playbooks.
-It never writes source files. Templates remain raw context and cannot be selected.
+It never writes source files. Explicit templates expose supported static reads while remaining read-only.
 
 ```sh
 saltbox-lint references roles/example/tasks/main.yml --root .
@@ -174,13 +174,14 @@ Locations use the same original half-open UTF-8 spans, code point line/column an
 exact source text as reference inspection. Consumers must validate echoed
 identity, all target hashes, boundaries and current ownership before presenting
 results. A completion location covers only the active literal's contents.
-Completion declines dynamic calls, unsupported argument shapes, qualified
+Completion declines every template, dynamic calls, unsupported argument shapes, qualified
 external contracts and uncertain escaped/folded source representations.
 
 References can start on a recognized read or a declaration key. They return reads
 whose candidate sets include the declaration candidates at that location, rather
 than asserting which candidate Ansible will use. Coverage reasons explicitly
-retain templates, runtime providers, ignored discovery and dynamic reads.
+retain template runtime behavior, unselected template reads, runtime providers,
+ignored discovery and dynamic reads.
 The VS Code adapter observes dependencies and target bytes before accepting a
 fresh response, and omits dirty target buffers. It provides a read-only impact
 view without declaration values. There is no persistent server or answer cache.

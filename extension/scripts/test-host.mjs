@@ -74,6 +74,12 @@ if (
       "navtarget_role_port: 5678\n",
     );
   }
+  mkdirSync(resolve(root, "one/roles/readonly/templates"), { recursive: true });
+  for (const basename of ["config", "config.yaml", "config.j2"])
+    writeFileSync(
+      resolve(root, "one/roles/readonly/templates", basename),
+      " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  ",
+    );
   // Normal mode edits this buffer without changing role membership mid-test.
   // The runner owns the saved fixture for the entire host session.
   mkdirSync(resolve(root, "one/roles/example/tasks"), { recursive: true });

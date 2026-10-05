@@ -132,8 +132,10 @@ Requests use captured UTF-8 snapshots, target hashes and canonical root ownershi
 Deleted, changed or dirty dependency targets decline locations; changed source,
 context, markers and closed documents revoke pending work. Fresh requests avoid
 retaining stale answers. Nested configured roots keep their own source authority.
-Templates remain context-only. Completion, rename and formatting of templates
-are not supported.
+Opened templates, including extensionless files in conventional template
+directories, support checking, help, definition, hover and references. Completion
+edits, rename, Fix All and formatting remain unavailable. Unsupported grammar
+appears as partial coverage. See [template coverage](../docs/templates.md).
 
 ## Rule help and check status
 

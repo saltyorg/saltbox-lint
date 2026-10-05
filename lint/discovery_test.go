@@ -221,13 +221,15 @@ func TestLoadExplicitRootControlsRelativeIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadTemplatesAreContextOnly(t *testing.T) {
+func TestLoadTemplatesRequireExplicitSelection(t *testing.T) {
 	root := t.TempDir()
 	template := putFile(t, root, "roles/demo/templates/config.j2", "{% if enabled %}\n{% endif %}")
-	for _, opts := range []Options{{Paths: []string{root}}, {Paths: []string{template}}} {
-		if p, err := Load(t.Context(), opts); err == nil {
-			t.Errorf("template selection accepted: %#v", p)
-		}
+	if _, err := Load(t.Context(), Options{Paths: []string{root}}); err == nil {
+		t.Fatal("default directory selected a template")
+	}
+	p, err := Load(t.Context(), Options{Root: root, Paths: []string{template}})
+	if err != nil || !p.Selected["roles/demo/templates/config.j2"] {
+		t.Fatalf("explicit template: %v %#v", err, p)
 	}
 }
 

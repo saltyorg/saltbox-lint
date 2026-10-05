@@ -14,7 +14,7 @@ func newQueryCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "query --root ROOT --stdin-filename PATH --operation OP --offset BYTE -",
 		Short: "Inspect definitions, completions, hover or static references for an editor snapshot",
-		Long:  "Read one exact YAML snapshot from stdin and emit query schema 1. Operations are definition, completion, hover and references. Locations describe source declarations, never runtime values. Coverage remains explicitly incomplete for templates, dynamic reads and runtime providers. No sources are written.\nExit status: 0 query generated, including unresolved results; 2 usage, loading or reporting failure.",
+		Long:  "Read one exact YAML or template snapshot from stdin and emit query schema 1. Operations are definition, completion, hover and references. Templates support read-only inspection and never completion edits. Locations describe source declarations, never runtime values. Coverage remains explicitly incomplete for runtime template behavior, dynamic reads and runtime providers. No sources are written.\nExit status: 0 query generated, including unresolved results; 2 usage, loading or reporting failure.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			if args[0] != "-" || request.Filename == "" {

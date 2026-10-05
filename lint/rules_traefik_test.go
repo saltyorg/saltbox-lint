@@ -37,7 +37,9 @@ func traefikProject(files map[string]string) *Project {
 	for path, text := range files {
 		s, _ := Parse(path, []byte(text))
 		p.Sources[path] = s
-		p.Selected[path] = true
+		if s.Kind != Template {
+			p.Selected[path] = true
+		}
 	}
 	return p
 }
@@ -635,6 +637,10 @@ func TestTraefikRendererRejectsDiscardedAPIReads(t *testing.T) {
 					if selected == traefikTasksPath {
 						if !reflect.DeepEqual(ds, full) {
 							t.Fatalf("selected task diagnostics=%+v, full=%+v", ds, full)
+						}
+					} else if selected == traefikTemplatePath && len(scanTemplate(p.Sources[selected]).reasons) == 0 {
+						if len(ds) != 1 || ds[0].Path != selected || ds[0].RuleID != "traefik-renderer-contract" {
+							t.Fatalf("explicit template ownership: %+v", ds)
 						}
 					} else if len(ds) != 0 {
 						t.Fatalf("unselected primary leaked to %s: %+v", selected, ds)

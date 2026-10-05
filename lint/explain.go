@@ -42,7 +42,7 @@ type Explanation struct {
 }
 
 // Explain uses the same loader, analysis and fix planner as check. Templates
-// may be observed as raw context, but remain unsupported primary check targets.
+// are explicitly checkable and always read-only.
 func Explain(ctx context.Context, opts Options) (Explanation, error) {
 	result := Explanation{SchemaVersion: 1, ApplicablePolicies: []string{}, LoadedContext: []ObservedSource{}, FixDecisions: []FixDecision{}, Unsupported: []string{}}
 	if (len(opts.Paths) == 1) == (opts.StdinFilename != "") || len(opts.Paths) > 1 {
@@ -58,7 +58,7 @@ func Explain(ctx context.Context, opts Options) (Explanation, error) {
 		}
 	}
 	opts.IncludeAnalysis = true
-	project, err := load(ctx, opts, true)
+	project, err := load(ctx, opts)
 	if err != nil {
 		return result, err
 	}
@@ -73,8 +73,9 @@ func Explain(ctx context.Context, opts Options) (Explanation, error) {
 	result.DirectoryWouldSelect = project.discoverable[source.Path]
 	result.ExplicitSelection = "selected; explicit files override directory admission and Git ignores"
 	if source.Kind == Template {
-		result.ExplicitSelection = "unsupported; templates are context-only and cannot be checked or fixed"
-		result.Unsupported = append(result.Unsupported, "template checking and formatting are unavailable")
+		result.ExplicitSelection = "selected; template checking and navigation are read-only"
+		result.Unsupported = append(result.Unsupported, "template formatting, fixes, completion edits, rename and runtime evaluation are unavailable")
+		result.Unsupported = append(result.Unsupported, scanTemplate(source).reasons...)
 	}
 	for _, rule := range Registry().Rules {
 		if len(rule.Kinds) == 0 || slices.Contains(rule.Kinds, source.Kind) {
@@ -101,7 +102,17 @@ func Explain(ctx context.Context, opts Options) (Explanation, error) {
 func observedSource(source *Source) ObservedSource {
 	result := ObservedSource{Path: source.Path, Kind: source.Kind, ParseState: "parsed", ParseDiagnostics: []string{}}
 	if source.Kind == Template {
-		result.ParseState = "raw-context"
+		result.ParseState = "static-template"
+		scan := scanTemplate(source)
+		if len(scan.reasons) > 0 {
+			result.ParseState = "partial-template"
+		}
+		if len(scan.diagnostics) > 0 {
+			result.ParseState = "template-error"
+		}
+		for _, d := range scan.diagnostics {
+			result.ParseDiagnostics = append(result.ParseDiagnostics, d.Message)
+		}
 	}
 	if len(source.parseDiagnostics) > 0 {
 		result.ParseState = "parse-error"

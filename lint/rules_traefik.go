@@ -287,7 +287,7 @@ func traefikRenderers(p *Project, tasks []*Source) []traefikRenderer {
 				}
 				target := path.Join(s.RolePath, "templates", src.Value)
 				if template := p.Sources[target]; template != nil && template.Kind == Template {
-					renderers = append(renderers, traefikRenderer{Source: s, OutputSource: template, Kind: task.Module, Span: src.Span, Conditions: conditions, Expressions: traefikOutputExpressions(template, scanExpressions(string(template.Data))), Related: []RelatedLocation{{Path: target, Span: Span{0, len(template.Data)}, Message: "template rendered by this task"}}})
+					renderers = append(renderers, traefikRenderer{Source: s, OutputSource: template, Kind: task.Module, Span: src.Span, Conditions: conditions, Expressions: traefikOutputExpressions(template, selectedTemplateExpressions(p, template)), Related: []RelatedLocation{{Path: target, Span: Span{0, len(template.Data)}, Message: "template rendered by this task"}}})
 				} else {
 					renderers = append(renderers, traefikRenderer{Source: s, Span: src.Span, Conditions: conditions, MissingTemplate: src.Value})
 				}
@@ -626,6 +626,9 @@ func invalidTraefikRenderer(renderer traefikRenderer) []RelatedLocation {
 }
 
 func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
+	if s.Kind == Template {
+		return checkTemplateRenderer(p, s)
+	}
 	if s.Role == "" {
 		return nil
 	}
@@ -675,6 +678,12 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 	if renderer.MissingTemplate != "" {
 		d.Message = "cannot validate Traefik renderer because its template context is unavailable"
 		d.Expected = "Provide the statically named role template " + renderer.MissingTemplate + " and render the API contract there."
+	}
+	if template := renderer.OutputSource; template != nil && template.Kind == Template && p.Selected[template.Path] {
+		scan := scanTemplate(template)
+		if len(scan.reasons) == 0 && len(scan.diagnostics) == 0 && p.Selected[s.Path] {
+			return nil
+		}
 	}
 	d.Related = append(slices.Clone(renderer.Related), RelatedLocation{Path: anchor.Path, Span: declaration.Key.Span, Message: "role declares Traefik support"})
 	return []Diagnostic{d}
