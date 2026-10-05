@@ -1061,6 +1061,7 @@ export class EditorIntegration implements vscode.Disposable {
     const revision = this.queryRevision;
     const dependencyToken = this.dependencies.begin();
     let capturedSnapshot: Snapshot | undefined;
+    let querySubmitted = false;
     const current = () =>
       !!capturedSnapshot &&
       !abort.signal.aborted &&
@@ -1079,6 +1080,7 @@ export class EditorIntegration implements vscode.Disposable {
         return;
       if (!current()) return;
       const offset = snapshot.index.byteOffset(position);
+      querySubmitted = true;
       const wire = await this.queryLanes.get(operation)!.submit(
         document.uri.toString(),
         1,
@@ -1153,7 +1155,18 @@ export class EditorIntegration implements vscode.Disposable {
       // loaded still prevent late acceptance. Do not overwrite lint ownership.
       if (this.dependencies.begin() !== dependencyToken) return;
       return answer;
-    } catch {
+    } catch (error) {
+      // Missing primary context is a quiet refusal. The same filesystem code
+      // from spawning a missing executable is an operational failure instead.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (
+        !querySubmitted &&
+        (code === "ENOENT" ||
+          code === "ENOTDIR" ||
+          (error instanceof Error &&
+            error.message === "Source identity changed"))
+      )
+        return;
       // Background providers decline silently. Manual operations report only
       // a fixed message while the captured request is still current, so child
       // responses and declaration contents never reach Output or notifications.
