@@ -163,6 +163,8 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
   );
   const wrapper = join(temporary, "failure.cjs");
   const payload = "PRIVATE_CHILD_RESPONSE_VARIABLE_1234";
+  const failureMessage =
+    "Static role lookup impact failed. Check the bundled CLI and try again.";
   await writeFile(
     wrapper,
     "const {spawnSync}=require('node:child_process'); const result=spawnSync(process.argv[2],process.argv.slice(3),{stdio:'inherit',env:process.env}); if(result.error)throw result.error; process.stderr.write(" +
@@ -262,13 +264,19 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
         await adapter.navigation.definition(document, position, token.token),
         [],
       );
-      assert.deepEqual(lines, []);
+      assert.deepEqual(
+        lines.filter((line) => line === failureMessage),
+        [],
+      );
+      assert.ok(!JSON.stringify(lines).includes(payload));
       assert.deepEqual(notices, []);
       assert.equal(await adapter.navigation.impact(), undefined);
-      assert.deepEqual(lines, [
-        "Static role lookup impact failed. Check the bundled CLI and try again.",
-      ]);
-      assert.deepEqual(notices, ["Saltbox Lint: " + lines[0]]);
+      assert.deepEqual(
+        lines.filter((line) => line === failureMessage),
+        [failureMessage],
+      );
+      assert.ok(!JSON.stringify(lines).includes(payload));
+      assert.deepEqual(notices, ["Saltbox Lint: " + failureMessage]);
       const editor = await vscode.window.showTextDocument(document);
       editor.selection = new vscode.Selection(position, position);
       assert.equal(
@@ -276,8 +284,8 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
         undefined,
       );
       assert.deepEqual(notices, [
-        "Saltbox Lint: " + lines[0],
-        "Saltbox Lint: " + lines[0],
+        "Saltbox Lint: " + failureMessage,
+        "Saltbox Lint: " + failureMessage,
       ]);
       assert.ok(!JSON.stringify({ lines, notices }).includes(payload));
       Object.defineProperty(childProcess, "spawn", spawnDescriptor);
@@ -288,7 +296,13 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
       );
       const dynamic = await adapter.navigation.impact();
       assert.equal(dynamic?.state, "dynamic");
-      assert.equal(lines.length, 1);
+      // Root refreshes can also emit legitimate stale-context status lines.
+      // The query must produce no additional failure or leaked child payload.
+      assert.deepEqual(
+        lines.filter((line) => line === failureMessage),
+        [failureMessage],
+      );
+      assert.ok(!JSON.stringify(lines).includes(payload));
       assert.equal(notices.length, 2);
       await vscode.commands.executeCommand(
         "workbench.action.closeActiveEditor",
@@ -305,7 +319,13 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
       await replace(target, targetOriginal + "# dirty manual target\n");
       editor.selection = new vscode.Selection(position, position);
       assert.equal(await adapter.navigation.impact(), undefined);
-      assert.equal(lines.length, 1);
+      // Root refreshes can also emit legitimate stale-context status lines.
+      // The query must produce no additional failure or leaked child payload.
+      assert.deepEqual(
+        lines.filter((line) => line === failureMessage),
+        [failureMessage],
+      );
+      assert.ok(!JSON.stringify(lines).includes(payload));
       assert.equal(notices.length, 2);
       await replace(target, targetOriginal);
       await target.save();
