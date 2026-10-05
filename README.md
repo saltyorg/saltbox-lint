@@ -212,6 +212,20 @@ saltbox-lint check --root . --changed-since "$BASE_COMMIT" --format github
 The caller owns the base choice and checkout depth. The linter does not fetch a
 missing commit. These examples do not modify consumer repositories.
 
+## Role reference inspection
+
+`references` inspects static `role_var` and `role_web` declaration candidates,
+including cross-role locations and unresolved reasons. It is available in source
+builds and remains unreleased. It never evaluates runtime values or writes sources.
+
+```sh
+saltbox-lint references roles/example/tasks/main.yml --root .
+saltbox-lint references roles/example/tasks/main.yml --root . --format json
+```
+
+See the [reference inspection contract and JSON schema](docs/references.md) for
+candidate layers, dependency observations and conservative coverage limits.
+
 ## Rule and source explanations
 
 These commands are available in source builds and remain unreleased. The
