@@ -883,18 +883,117 @@ export async function runNavigation(): Promise<void> {
   const secondDocument = await vscode.workspace.openTextDocument(
     vscode.Uri.joinPath(roots[1].uri, "roles/navsource/tasks/main.yml"),
   );
-  await vscode.window.showTextDocument(secondDocument);
+  await vscode.window.showTextDocument(secondDocument, { preview: false });
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
+  const secondTargetURI = vscode.Uri.joinPath(
+    roots[1].uri,
+    "roles/navtarget/defaults/main.yml",
+  );
+  const secondTarget = await vscode.workspace.openTextDocument(secondTargetURI);
+  const secondTargetText = secondTarget.getText();
+  assert.equal(secondTarget.isDirty, false);
+  const secondTargetStat = lstatSync(secondTargetURI.fsPath, { bigint: true });
+  const commands = createRequire(__filename)("vscode")
+    .commands as typeof vscode.commands;
+  const executeDescriptor = Object.getOwnPropertyDescriptor(
+    commands,
+    "executeCommand",
+  )!;
+  const originalExecute = commands.executeCommand;
+  const secondPosition = secondDocument.positionAt(
+    secondDocument.getText().indexOf("_port") + 2,
+  );
+  let acceptedBeforeEdit = false;
+  let edited = false;
+  Object.defineProperty(commands, "executeCommand", {
+    ...executeDescriptor,
+    value: async (...args: Parameters<typeof originalExecute>) => {
+      const result: unknown = await Reflect.apply(
+        originalExecute,
+        commands,
+        args,
+      );
+      if (
+        !acceptedBeforeEdit &&
+        args[0] === "vscode.executeDefinitionProvider" &&
+        args[1] instanceof vscode.Uri &&
+        args[1].toString() === secondDocument.uri.toString() &&
+        args[2] instanceof vscode.Position &&
+        args[2].isEqual(secondPosition) &&
+        Array.isArray(result) &&
+        result.length === 3
+      ) {
+        // A was accepted by the actual provider before this public edit.
+        // Return A unchanged; a separate request must observe the dirty target.
+        acceptedBeforeEdit = true;
+        let observed = false;
+        const listener = vscode.workspace.onDidChangeTextDocument((event) => {
+          if (event.document === secondTarget && event.contentChanges.length)
+            observed = true;
+        });
+        try {
+          edited = true;
+          await replace(
+            secondTarget,
+            secondTargetText + "# later context edit\n",
+          );
+          assert.equal(observed, true);
+          assert.equal(secondTarget.isDirty, true);
+          console.log(
+            "SALTBOX_NAVIGATION_CONTROL accepted response before owned edit",
+          );
+        } finally {
+          listener.dispose();
+        }
+      }
+      return result;
+    },
+  });
+  try {
+    let secondLocations: Awaited<ReturnType<typeof definitions>> = [];
+    await waitFor(async () => {
+      secondLocations = await definitions(secondDocument);
+      return secondLocations.length === 3;
+    }, "second root accepts its own navigation snapshot");
+    assert.equal(secondLocations.length, 3);
+    assert.ok(
+      secondLocations.every((location) =>
+        target(location).fsPath.startsWith(roots[1].uri.fsPath),
+      ),
+    );
+    assert.equal(acceptedBeforeEdit, true);
+    assert.deepEqual(await definitions(secondDocument), []);
+  } finally {
+    Object.defineProperty(commands, "executeCommand", executeDescriptor);
+    try {
+      if (edited) {
+        await vscode.window.showTextDocument(secondTarget);
+        await vscode.commands.executeCommand("undo");
+        assert.equal(secondTarget.getText(), secondTargetText);
+        assert.equal(secondTarget.isDirty, false);
+        const restored = lstatSync(secondTargetURI.fsPath, { bigint: true });
+        assert.deepEqual(
+          [restored.ino, restored.mtimeNs, restored.ctimeNs],
+          [
+            secondTargetStat.ino,
+            secondTargetStat.mtimeNs,
+            secondTargetStat.ctimeNs,
+          ],
+        );
+        console.log(
+          "SALTBOX_NAVIGATION_CONTROL undo restored exact clean target",
+        );
+        await vscode.commands.executeCommand(
+          "workbench.action.closeActiveEditor",
+        );
+      }
+    } finally {
+      await vscode.window.showTextDocument(secondDocument);
+    }
+  }
   await waitFor(
     async () => (await definitions(secondDocument)).length === 3,
-    "second root accepts its own navigation snapshot",
-  );
-  const secondLocations = await definitions(secondDocument);
-  assert.equal(secondLocations.length, 3);
-  assert.ok(
-    secondLocations.every((location) =>
-      target(location).fsPath.startsWith(roots[1].uri.fsPath),
-    ),
+    "undo restores fresh second-root navigation acceptance",
   );
   await vscode.window.showTextDocument(document);
   const adapter = new EditorIntegration(
