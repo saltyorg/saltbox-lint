@@ -67,6 +67,9 @@ type Source struct {
 	// The admitted read identity is separate from the selected diagnostic path.
 	// Template aliases share ownership only for this invocation's same snapshot.
 	templatePath string
+	// Original admitted spellings retain lexical role configuration even after
+	// a directory alias has been resolved or a canonical editor snapshot used.
+	templateSpellings []string
 }
 
 // YAMLComments returns exact source spans for comments recognized by the YAML

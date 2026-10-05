@@ -81,6 +81,38 @@ if (
       resolve(root, "one/roles/readonly/templates", basename),
       " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  ",
     );
+  mkdirSync(resolve(root, "one/roles/readonly-directory/tasks"), {
+    recursive: true,
+  });
+  for (const basename of ["config", "config.yaml", "config.j2"])
+    writeFileSync(
+      resolve(root, "one/roles/readonly-directory/tasks", basename),
+      " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  ",
+    );
+  symlinkSync(
+    resolve(root, "one/roles/readonly-directory/tasks"),
+    resolve(root, "one/roles/readonly-directory/templates"),
+    "junction",
+  );
+  mkdirSync(resolve(root, "one/roles/template-origin/templates"), {
+    recursive: true,
+  });
+  mkdirSync(resolve(root, "one/roles/template-origin/tasks"), {
+    recursive: true,
+  });
+  writeFileSync(
+    resolve(root, "one/roles/template-origin/tasks/main.yml"),
+    "- template: {src: alias.j2, variable_start_string: '[[', dest: /config}\n",
+  );
+  writeFileSync(
+    resolve(root, "one/roles/readonly/templates/cross-role-config"),
+    "literal {{ unfinished",
+  );
+  symlinkSync(
+    resolve(root, "one/roles/readonly/templates/cross-role-config"),
+    resolve(root, "one/roles/template-origin/templates/alias.j2"),
+    "file",
+  );
   writeFileSync(
     resolve(root, "one/roles/readonly/templates/.saltbox-lint"),
     "",

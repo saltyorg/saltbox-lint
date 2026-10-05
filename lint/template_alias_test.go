@@ -208,6 +208,116 @@ func TestTemplateDirectoryAliasUsesAdmittedCanonicalOwner(t *testing.T) {
 	}
 }
 
+func TestTemplateDirectorySpellingSurvivesCanonicalParent(t *testing.T) {
+	for _, basename := range []string{"main.yml", "config", "literal.j2"} {
+		t.Run(basename, func(t *testing.T) {
+			root := t.TempDir()
+			text := "v: \"{{ value\n }}\"\n"
+			filename := putFile(t, root, "roles/demo/tasks/"+basename, text)
+			directory := templateAlias(t, root, "roles/demo/templates", filepath.Dir(filename))
+			alias := filepath.Join(directory, basename)
+			name := "roles/demo/tasks/" + basename
+			for _, opts := range []Options{
+				{Root: root, Paths: []string{alias}},
+				{Root: root, StdinFilename: alias, Stdin: []byte(text)},
+				{Root: root, StdinFilename: filename, StdinSourceFilename: alias, Stdin: []byte(text)},
+			} {
+				p, err := Load(t.Context(), opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if s := p.Sources[name]; s == nil || s.Kind != Template || !p.Selected[name] || string(s.Data) != text || RequireWritableSelection(p) == nil {
+					t.Fatalf("original directory spelling lost template protection: %+v", s)
+				}
+				for _, d := range Analyze(p, Rules()) {
+					if d.Fix != nil || d.RuleID == "jinja-layout" {
+						t.Fatalf("template received writable policy: %+v", d)
+					}
+				}
+			}
+			identity, err := ResolveSourceIdentity(root, alias)
+			if err != nil || identity.Path != name || !identity.IsTemplate() {
+				t.Fatalf("identity lost template kind: %+v %v", identity, err)
+			}
+			query, err := Query(t.Context(), QueryRequest{Root: root, Filename: alias, Source: []byte(text), Operation: "completion", Offset: 5})
+			if err != nil || query.State != "unavailable" || !slices.Contains(query.Reasons, "templates-are-read-only") {
+				t.Fatalf("query lost template kind: %+v %v", query, err)
+			}
+			query, err = Query(t.Context(), QueryRequest{Root: root, Filename: filename, SourceFilename: alias, Source: []byte(text), Operation: "completion", Offset: 5})
+			if err != nil || query.Path != name || query.State != "unavailable" || !slices.Contains(query.Reasons, "templates-are-read-only") {
+				t.Fatalf("canonical query lost extensionless template spelling: %+v %v", query, err)
+			}
+			narrow, err := Load(t.Context(), Options{Root: directory, Paths: []string{alias}})
+			if err != nil || narrow.Sources[basename].Kind != Template || narrow.Sources[basename].RolePath != "" || len(narrow.Sources) != 1 {
+				t.Fatalf("narrow alias widened context or lost template kind: %+v %v", narrow, err)
+			}
+			if basename == "main.yml" {
+				ordinary, err := Load(t.Context(), Options{Root: root, Paths: []string{root}})
+				if err != nil || ordinary.Sources[name].Kind != Tasks || !ordinary.Selected[name] {
+					t.Fatalf("default YAML discovery changed: %+v %v", ordinary, err)
+				}
+				if _, err := Load(t.Context(), Options{Root: root, Paths: []string{directory}}); err == nil || !strings.Contains(err.Error(), "no supported sources") {
+					t.Fatalf("template directory alias admitted YAML primaries: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestTemplateSnapshotCrossRoleSpellingRetainsOwnerContext(t *testing.T) {
+	root := t.TempDir()
+	text := "literal {{ unfinished"
+	filename := putFile(t, root, "roles/b/templates/config", text)
+	alias := templateAlias(t, root, "roles/a/templates/alias.j2", filename)
+	putFile(t, root, "roles/a/tasks/main.yml", "- template: {src: alias.j2, variable_start_string: '[[', dest: /config}\n")
+	opts := Options{Root: root, StdinFilename: filename, StdinSourceFilename: alias, Stdin: []byte(text), IncludeAnalysis: true}
+	p, err := Load(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := p.Sources["roles/b/templates/config"]
+	if p.Sources["roles/a/tasks/main.yml"] == nil {
+		t.Fatal("original role task context was omitted")
+	}
+	if scan := scanTemplate(s); len(scan.diagnostics) != 0 || !scan.configurationUnavailable {
+		t.Fatalf("cross-role alias fabricated default grammar: %+v", scan)
+	}
+	var owns bool
+	for _, d := range p.Dependencies.Sources[0].Files {
+		owns = owns || d.Path == "roles/a/tasks/main.yml" && d.State == "read"
+	}
+	if !owns {
+		t.Fatal("original role configuration missing from dependencies")
+	}
+	query, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, SourceFilename: alias, Source: []byte(text), Operation: "definition", Offset: 10})
+	if err != nil || query.State != "unavailable" || !slices.Contains(query.Reasons, "template-configuration-unavailable") {
+		t.Fatalf("query fabricated grammar: %+v %v", query, err)
+	}
+	explanation, err := Explain(t.Context(), opts)
+	if err != nil || explanation.Source.Path != "roles/b/templates/config" || explanation.Source.ParseState != "partial-template" {
+		t.Fatalf("explanation lost original configuration: %+v %v", explanation, err)
+	}
+	references, err := References(t.Context(), opts)
+	if err != nil || len(references.References) != 0 || references.Sources[0].ParseState != "partial-template" {
+		t.Fatalf("references fabricated grammar: %+v %v", references, err)
+	}
+	// Re-admit fresh task bytes without changing the canonical template snapshot.
+	putFile(t, root, "roles/a/tasks/main.yml", "[]\n")
+	fresh, err := Load(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scan := scanTemplate(fresh.Sources[s.Path]); len(scan.diagnostics) != 1 || scan.configurationUnavailable {
+		t.Fatalf("fresh task configuration was not observed: %+v", scan)
+	}
+	if fresh.Dependencies.Generation == p.Dependencies.Generation {
+		t.Fatal("original task change did not change dependency generation")
+	}
+	if after, err := os.ReadFile(filename); err != nil || string(after) != text {
+		t.Fatal("configuration checking changed template bytes")
+	}
+}
+
 func TestTemplateAliasBufferDoesNotReplaceYAMLContext(t *testing.T) {
 	root := t.TempDir()
 	disk := "demo_role_value: present\n"

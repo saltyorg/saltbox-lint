@@ -49,7 +49,7 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 		return nil, fmt.Errorf("open source root %s: %w", root, err)
 	}
 	defer func() { _ = files.Close() }()
-	l := sourceLoader{ctx: ctx, project: p, files: files}
+	l := sourceLoader{ctx: ctx, project: p, files: files, templateSpellings: map[string][]string{}}
 	gitRoot, err := enclosingGitRoot(root)
 	if err != nil {
 		return nil, err
@@ -106,9 +106,12 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 		if err != nil {
 			return nil, err
 		}
-		l.stdinTemplate = isTemplateFile(l.stdinPath)
+		l.stdinTemplate = isTemplateFile(opts.StdinFilename) || isTemplateFile(l.stdinPath)
+		if l.stdinTemplate {
+			l.rememberTemplateSpelling(opts.StdinFilename, l.stdinPath)
+		}
 		if opts.StdinSourceFilename != "" {
-			l.stdinSourcePath, err = absoluteTarget(opts.StdinSourceFilename)
+			l.stdinSourcePath, err = filepath.Abs(opts.StdinSourceFilename)
 			if err != nil {
 				return nil, err
 			}
@@ -116,11 +119,30 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 				return nil, err
 			}
 			l.stdinTemplate = l.stdinTemplate || isTemplateFile(l.stdinSourcePath)
+			if l.stdinTemplate {
+				l.rememberTemplateSpelling(opts.StdinSourceFilename, l.stdinPath)
+			}
 		}
 	}
 	targets := slices.Clone(opts.Paths)
 	if opts.StdinFilename != "" {
 		targets = append(targets, opts.StdinFilename)
+	}
+	// Capture explicit file capability before directory discovery can admit the
+	// same canonical path as YAML. Canonical identity never grants write rights
+	// that were absent from the caller's original template spelling.
+	for _, target := range opts.Paths {
+		absolute, err := absoluteTarget(target)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(absolute)
+		if err == nil && !info.IsDir() && isTemplateFile(target) {
+			if _, err := ownedSourcePath(root, absolute); err != nil {
+				return nil, err
+			}
+			l.rememberTemplateSpelling(target, absolute)
+		}
 	}
 	for _, target := range targets {
 		absolute, err := absoluteTarget(target)
@@ -138,7 +160,11 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 			return nil, fmt.Errorf("inspect target %s: %w", target, err)
 		}
 		if info.IsDir() {
-			err = l.directory(absolute, true)
+			// A conventional template directory remains excluded from primary
+			// discovery even when its parent spelling aliases a YAML directory.
+			if !isTemplate(filepath.Join(target, "source")) {
+				err = l.directory(absolute, true)
+			}
 		} else {
 			err = l.add(absolute, true)
 		}
@@ -335,6 +361,18 @@ type sourceLoader struct {
 	stdin              []byte
 	stdinCanonicalPath string
 	stdinTemplate      bool
+	templateSpellings  map[string][]string
+}
+
+func (l *sourceLoader) rememberTemplateSpelling(filename, absolute string) {
+	// Only lexical owners inside the admitted root can contribute context.
+	// An outside spelling may prove read-only capability, never outside reads.
+	spelling, _ := filepath.Abs(filename)
+	name, err := relativeSource(l.project.Root, spelling)
+	if err != nil {
+		name = ""
+	}
+	l.templateSpellings[absolute] = append(l.templateSpellings[absolute], name)
 }
 
 // validateStdinSource admits an original spelling solely for classification.
@@ -378,7 +416,7 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if err != nil {
 		return err
 	}
-	if !supportedSource(relative) && !isTemplateFile(absolute) {
+	if !supportedSource(relative) && !isTemplateFile(absolute) && len(l.templateSpellings[absolute]) == 0 {
 		return fmt.Errorf("unsupported source target %s", absolute)
 	}
 	s := l.project.Sources[relative]
@@ -422,6 +460,13 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 		data = bytes.Clone(l.stdin)
 	}
 	parseName := relative
+	spellings := l.templateSpellings[absolute]
+	if canonical == l.stdinCanonicalPath && l.stdinTemplate && l.stdinSourcePath != "" {
+		spellings = append(slices.Clone(spellings), l.templateSpellings[l.stdinPath]...)
+	}
+	if len(spellings) > 0 {
+		parseName = "source.j2"
+	}
 	if l.stdinSourcePath != "" && canonical == l.stdinCanonicalPath {
 		if err := l.validateStdinSource(); err != nil {
 			return nil, err
@@ -441,6 +486,8 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	if source.Kind == Template {
 		source.templateProject = l.project
 		source.templatePath = canonical
+		slices.Sort(spellings)
+		source.templateSpellings = slices.Compact(spellings)
 		_, source.Role, source.RolePath = classify(canonical)
 	}
 	return source, nil
@@ -458,7 +505,7 @@ func isTemplateFile(filename string) bool {
 // an existing leaf aliases a conventional template. It never reads contents
 // or widens the root and cannot establish outside-root role context.
 func (identity SourceIdentity) IsTemplate() bool {
-	return isTemplate(identity.Path) || isTemplateFile(filepath.Join(identity.Root, filepath.FromSlash(identity.Path)))
+	return identity.template || isTemplate(identity.Path) || isTemplateFile(filepath.Join(identity.Root, filepath.FromSlash(identity.Path)))
 }
 
 var errOutsideRoot = errors.New("outside root")
@@ -659,13 +706,18 @@ func supportedSource(name string) bool {
 // explicitly named checkable source. Resolving identity may inspect path ancestors
 // and project markers, but never scans source files or invokes Git.
 type SourceIdentity struct {
-	Root string
-	Path string
+	Root     string
+	Path     string
+	template bool
 }
 
 // ResolveSourceIdentity applies the same root, path, source-kind and symlink
 // boundaries as Load without reading the named source or discovering context.
 func ResolveSourceIdentity(root, filename string) (SourceIdentity, error) {
+	return resolveSourceIdentity(root, filename, "")
+}
+
+func resolveSourceIdentity(root, filename, sourceFilename string) (SourceIdentity, error) {
 	resolvedRoot, err := sourceRoot(Options{Root: root, StdinFilename: filename})
 	if err != nil {
 		return SourceIdentity{}, err
@@ -678,10 +730,29 @@ func ResolveSourceIdentity(root, filename string) (SourceIdentity, error) {
 	if err != nil {
 		return SourceIdentity{}, err
 	}
-	if !supportedSource(relative) && !isTemplateFile(absolute) {
+	template := isTemplateFile(filename) || isTemplateFile(absolute)
+	if sourceFilename != "" {
+		original, err := filepath.Abs(sourceFilename)
+		if err != nil {
+			return SourceIdentity{}, err
+		}
+		owner, err := ownedSourcePath(resolvedRoot, original)
+		if err != nil {
+			return SourceIdentity{}, err
+		}
+		canonical, err := ownedSourcePath(resolvedRoot, absolute)
+		if err != nil {
+			return SourceIdentity{}, err
+		}
+		if owner != canonical {
+			return SourceIdentity{}, fmt.Errorf("stdin source spelling changed owner")
+		}
+		template = template || isTemplateFile(original)
+	}
+	if !supportedSource(relative) && !template {
 		return SourceIdentity{}, fmt.Errorf("unsupported source target %s", absolute)
 	}
-	return SourceIdentity{Root: resolvedRoot, Path: relative}, nil
+	return SourceIdentity{Root: resolvedRoot, Path: relative, template: template}, nil
 }
 
 func directorySource(name string, selected bool) bool {

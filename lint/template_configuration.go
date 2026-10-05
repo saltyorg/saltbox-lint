@@ -21,6 +21,10 @@ func templateTaskConfigurationReasons(p *Project, s *Source) []string {
 	}
 	_, _, lexicalRole := classify(s.Path)
 	roles := map[string]bool{s.RolePath: true, lexicalRole: true}
+	for _, spelling := range s.templateSpellings {
+		_, _, role := classify(spelling)
+		roles[role] = true
+	}
 	// Available aliases can name the same output from another role. They add
 	// only their admitted lexical owner; unrelated roles do not supply facts.
 	for _, candidate := range p.Sources {

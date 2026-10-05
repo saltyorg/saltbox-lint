@@ -66,9 +66,12 @@ are compared through the source loader's root boundaries. Absolute paths, home
 expansion, dot traversal and a `templates/` source prefix receive partial
 coverage because their Ansible search behavior is outside this static subset.
 An admitted leaf alias retains its selected diagnostic path and the canonical
-template's in-root role context. Cross-role aliases decline unsupported task
-configuration resolution. A narrowed root never reads the canonical role's
-context outside that root.
+template's in-root role context. An original conventional template spelling
+remains read-only after directory aliases are resolved. Canonical editor
+snapshots retain the original spelling's in-root role context and task
+dependencies, including when both spellings name templates. Cross-role aliases
+decline unsupported task configuration resolution. A narrowed root never reads
+the canonical role's context outside that root.
 
 Expression and statement argument validation uses a bounded static subset.
 Unsupported collections, arithmetic, imports, extension tags and other grammar

@@ -393,8 +393,8 @@ test("snapshot check and query retain reverse template spelling while responses 
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "saltbox-template-wire-")),
   );
-  const filename = join(root, "roles/demo/defaults/main.yml");
-  const alias = join(root, "alias.j2");
+  let filename = join(root, "roles/demo/defaults/main.yml");
+  const alias = join(root, "roles/a/templates/alias.j2");
   const text = 'demo_role_value: "{{ value\n }}"\n';
   let buffer = text;
   const uri = (filename: string) => ({
@@ -490,6 +490,7 @@ test("snapshot check and query retain reverse template spelling while responses 
   );
   try {
     await mkdir(join(root, "roles/demo/defaults"), { recursive: true });
+    await mkdir(join(root, "roles/a/templates"), { recursive: true });
     await writeFile(filename, text);
     await symlink(filename, alias, "file");
     await editor.checkSnapshot(document, true, 1);
@@ -510,12 +511,35 @@ test("snapshot check and query retain reverse template spelling while responses 
       requests.map((request) => request.args[0]),
       ["check", "query"],
     );
-    const raw = Uint8Array.from([0xff, 0x00, 0x0d, 0x0a]);
-    await writeFile(filename, raw);
-    buffer = Buffer.from(raw).toString("utf8");
+    // Both spellings are templates, but the alias role still owns relevant
+    // task configuration. The original spelling must accompany both requests.
+    filename = join(root, "roles/b/templates/config");
+    await mkdir(join(root, "roles/b/templates"), { recursive: true });
+    await writeFile(filename, text);
+    await rm(alias);
+    await symlink(filename, alias, "file");
     Reflect.set(document, "version", 2);
     requests.length = 0;
     await editor.checkSnapshot(document, true, 2);
+    await editor.query(document, { line: 0, character: 25 }, "definition");
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.equal(
+        request.args[request.args.indexOf("--stdin-filename") + 1],
+        filename,
+      );
+      assert.equal(
+        request.args[request.args.indexOf("--stdin-source-filename") + 1],
+        alias,
+      );
+      assert.equal(request.input, text);
+    }
+    const raw = Uint8Array.from([0xff, 0x00, 0x0d, 0x0a]);
+    await writeFile(filename, raw);
+    buffer = Buffer.from(raw).toString("utf8");
+    Reflect.set(document, "version", 3);
+    requests.length = 0;
+    await editor.checkSnapshot(document, true, 3);
     assert.equal(requests.length, 1);
     assert.equal(
       requests[0].args[requests[0].args.indexOf("--stdin-source-filename") + 1],

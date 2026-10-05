@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -72,12 +71,12 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 	if !utf8.Valid(request.Source) || request.Offset < 0 || request.Offset > len(request.Source) || (request.Offset < len(request.Source) && !utf8.RuneStart(request.Source[request.Offset])) || (request.Offset > 0 && request.Offset < len(request.Source) && request.Source[request.Offset-1] == '\r' && request.Source[request.Offset] == '\n') {
 		return result, fmt.Errorf("query offset must be a valid UTF-8 source boundary outside CRLF")
 	}
-	identity, err := ResolveSourceIdentity(request.Root, request.Filename)
+	identity, err := resolveSourceIdentity(request.Root, request.Filename, request.SourceFilename)
 	if err != nil {
 		return result, err
 	}
 	result.Root, result.Path, result.SourceSHA256 = identity.Root, identity.Path, fmt.Sprintf("%x", sha256.Sum256(request.Source))
-	p, err := Load(ctx, Options{Root: identity.Root, Paths: []string{identity.Root}, StdinFilename: filepath.Join(identity.Root, filepath.FromSlash(identity.Path)), StdinSourceFilename: request.SourceFilename, Stdin: request.Source, IncludeAnalysis: true, referenceContext: true})
+	p, err := Load(ctx, Options{Root: identity.Root, Paths: []string{identity.Root}, StdinFilename: request.Filename, StdinSourceFilename: request.SourceFilename, Stdin: request.Source, IncludeAnalysis: true, referenceContext: true})
 	if err != nil {
 		return result, err
 	}

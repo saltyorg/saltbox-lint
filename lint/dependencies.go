@@ -82,6 +82,10 @@ func contextDirectories(s *Source, rules []Rule) []string {
 			if s.Kind == Template {
 				_, _, lexicalRole := classify(s.Path)
 				roles = append(roles, lexicalRole)
+				for _, spelling := range s.templateSpellings {
+					_, _, role := classify(spelling)
+					roles = append(roles, role)
+				}
 			}
 			for _, role := range roles {
 				if role == "" {

@@ -225,3 +225,59 @@ func TestTemplateSnapshotSpellingCommandConsumers(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplateDirectorySpellingCommandBoundaries(t *testing.T) {
+	for _, basename := range []string{"main.yml", "config", "literal.j2"} {
+		t.Run(basename, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, "roles/demo/tasks")
+			if err := os.MkdirAll(directory, 0755); err != nil {
+				t.Fatal(err)
+			}
+			filename := filepath.Join(directory, basename)
+			aliasDirectory := filepath.Join(root, "roles/demo/templates")
+			if err := os.Symlink(directory, aliasDirectory); err != nil {
+				t.Fatal(err)
+			}
+			alias := filepath.Join(aliasDirectory, basename)
+			text := "v: \"{{ value\n }}\"\n"
+			yaml := filepath.Join(root, "input.yml")
+			for _, path := range []string{filename, yaml} {
+				if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, order := range [][]string{{alias}, {yaml, alias}, {alias, yaml}, {root, alias}} {
+				args := append([]string{"check", "--root", root, "--fix"}, order...)
+				code, _, stderr := invoke(t, "", args...)
+				if code != 2 || !strings.Contains(stderr, "read-only") {
+					t.Fatalf("write preflight lost template spelling: %d %s", code, stderr)
+				}
+				for _, path := range []string{filename, yaml} {
+					after, err := os.ReadFile(path)
+					if err != nil || string(after) != text {
+						t.Fatalf("preflight changed %s", path)
+					}
+				}
+			}
+			for _, mode := range []string{"canonical", "lint-fixes"} {
+				wire, stderr, code := invokeFormat(t, text, "format", "--root", root, "--stdin-filename", alias, "--mode", mode, "-")
+				if code != 0 || wire.Path != "roles/demo/tasks/"+basename || wire.Status != "skipped" || len(wire.Edits) != 0 || wire.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(text))) {
+					t.Fatalf("format bypassed template capability: %+v %d %s", wire, code, stderr)
+				}
+			}
+			for _, command := range []string{"check", "explain", "query"} {
+				args := []string{command, "--root", root, "--stdin-filename", alias}
+				if command == "query" {
+					args = append(args, "--operation", "completion", "--offset", "5")
+				} else {
+					args = append(args, "--format", "json")
+				}
+				code, out, stderr := invoke(t, text, append(args, "-")...)
+				if code != 0 || strings.Contains(out, "jinja-layout") || strings.Contains(out, "fix_id") {
+					t.Fatalf("%s lost template capability: %d %s %s", command, code, out, stderr)
+				}
+			}
+		})
+	}
+}

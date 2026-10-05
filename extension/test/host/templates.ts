@@ -46,6 +46,9 @@ export async function runTemplates(): Promise<void> {
     ...["config", "config.yaml", "config.j2"].map((basename) =>
       vscode.Uri.joinPath(root, "roles/readonly/templates", basename),
     ),
+    ...["config", "config.yaml", "config.j2"].map((basename) =>
+      vscode.Uri.joinPath(root, "roles/readonly-directory/templates", basename),
+    ),
   ]) {
     const original = await readFile(uri.fsPath, "utf8");
     const document = await vscode.workspace.openTextDocument(uri);
@@ -277,6 +280,7 @@ export async function runTemplates(): Promise<void> {
   }
   const fullRootAdapter = new EditorIntegration(executable);
   try {
+    await runCrossRoleTemplateConfiguration(root, fullRootAdapter);
     await runExternalTemplateDeletion(
       vscode.Uri.joinPath(root, "standalone.j2"),
       fullRootAdapter,
@@ -362,9 +366,93 @@ export async function runTemplates(): Promise<void> {
     /read-only/,
   );
   assert.equal(await readFile(yaml.fsPath, "utf8"), before);
+  await assert.rejects(
+    runProcess(
+      {
+        executable,
+        cwd: root.fsPath,
+        args: [
+          "check",
+          "--root",
+          root.fsPath,
+          "--fix",
+          yaml.fsPath,
+          vscode.Uri.joinPath(
+            root,
+            "roles/readonly-directory/templates/config.yaml",
+          ).fsPath,
+        ],
+      },
+      new AbortController().signal,
+    ),
+    /read-only/,
+  );
+  assert.equal(await readFile(yaml.fsPath, "utf8"), before);
   console.log(
     "PASS installed templates check syntax/partial coverage and static navigation without formatter/FixAll/completion edits; direct CLI modes and mixed fix preflight preserve bytes",
   );
+}
+
+async function runCrossRoleTemplateConfiguration(
+  root: vscode.Uri,
+  adapter: EditorIntegration,
+): Promise<void> {
+  const alias = vscode.Uri.joinPath(
+    root,
+    "roles/template-origin/templates/alias.j2",
+  );
+  const task = vscode.Uri.joinPath(
+    root,
+    "roles/template-origin/tasks/main.yml",
+  );
+  const original = await readFile(task.fsPath, "utf8");
+  const template = await readFile(alias.fsPath, "utf8");
+  const document = await vscode.workspace.openTextDocument(alias);
+  await vscode.window.showTextDocument(document);
+  try {
+    await adapter.check(document, true);
+    const partial = () =>
+      findings(document).some(
+        (item) => diagnosticCode(item) === "template-partial-coverage",
+      );
+    const syntax = () =>
+      findings(document).some(
+        (item) => diagnosticCode(item) === "template-syntax",
+      );
+    assert.equal(adapter.status(document).state, "current");
+    assert.equal(
+      partial(),
+      true,
+      "original role configuration makes canonical-template grammar unavailable",
+    );
+    assert.equal(
+      syntax(),
+      false,
+      "task delimiter uncertainty must not fabricate default syntax errors",
+    );
+    // The closed original role task must refresh the canonical snapshot through
+    // its real filesystem event. No manual check or synthetic event follows.
+    await writeFile(task.fsPath, "[]\n");
+    await waitFor(
+      async () =>
+        adapter.status(document).state === "current" && syntax() && !partial(),
+      "original role task change refreshes the open cross-role template",
+    );
+    await writeFile(task.fsPath, original);
+    await waitFor(
+      async () =>
+        adapter.status(document).state === "current" && partial() && !syntax(),
+      "original role configuration recovery refreshes the canonical template snapshot",
+    );
+    assert.equal(await readFile(alias.fsPath, "utf8"), template);
+    assert.equal(document.getText(), template);
+    console.log(
+      "PASS cross-role template snapshot retains original role task configuration and refreshes on its real saved event",
+    );
+  } finally {
+    await writeFile(task.fsPath, original);
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  }
 }
 
 async function runExternalTemplateDeletion(

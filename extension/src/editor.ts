@@ -714,8 +714,7 @@ export class EditorIntegration implements vscode.Disposable {
                     snapshot.root,
                     "--stdin-filename",
                     snapshot.filename,
-                    ...(templatePath(snapshot.sourceFilename) &&
-                    !templatePath(snapshot.filename)
+                    ...(templatePath(snapshot.sourceFilename)
                       ? ["--stdin-source-filename", snapshot.sourceFilename]
                       : []),
                     "--format",
@@ -1198,8 +1197,7 @@ export class EditorIntegration implements vscode.Disposable {
                 snapshot.root,
                 "--stdin-filename",
                 snapshot.filename,
-                ...(templatePath(snapshot.sourceFilename) &&
-                !templatePath(snapshot.filename)
+                ...(templatePath(snapshot.sourceFilename)
                   ? ["--stdin-source-filename", snapshot.sourceFilename]
                   : []),
                 "--operation",
