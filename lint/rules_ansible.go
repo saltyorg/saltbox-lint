@@ -105,6 +105,8 @@ func sourceFirstSpan(s *Source) Span {
 	end := bytes.IndexByte(s.Data, '\n')
 	if end < 0 {
 		end = len(s.Data)
+	} else if end > 0 && s.Data[end-1] == '\r' {
+		end--
 	}
 	return Span{0, end}
 }

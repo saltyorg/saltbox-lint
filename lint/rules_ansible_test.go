@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"bytes"
 	"os"
 	"slices"
 	"strings"
@@ -118,6 +119,49 @@ func TestAnsibleTagPositions(t *testing.T) {
 }
 
 const standardHeader = "####################\n# Title: Example\n# Author(s): someone\n# URL: https://example.com\n# GNU General Public License v3.0\n---\n"
+
+func TestAnsibleFirstLineDiagnosticSpan(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		end   int
+	}{
+		{"lf", "# first\n[]\n", 7},
+		{"crlf", "# first\r\n[]\r\n", 7},
+		{"empty first line lf", "\n[]\n", 0},
+		{"empty first line crlf", "\r\n[]\r\n", 0},
+		{"no newline", "[]", 2},
+		{"empty source", "", 0},
+		{"astral first line lf", "# 😀é\n[]\n", 8},
+		{"astral first line crlf", "# 😀é\r\n[]\r\n", 8},
+		{"astral no newline", "# 😀é", 8},
+		{"terminal carriage return", "# first\r", 8},
+	} {
+		for _, policy := range []struct{ id, path string }{
+			{"role-directory-name", "roles/Bad-role/tasks/main.yml"},
+			{"ansible-source-header", "roles/example/tasks/main.yml"},
+		} {
+			t.Run(tc.name+"/"+policy.id, func(t *testing.T) {
+				project := ansibleProject(t, "saltbox", map[string]string{policy.path: tc.input})
+				source := project.Sources[policy.path]
+				before := bytes.Clone(source.Data)
+				diagnostics := Analyze(project, dockerRules(policy.id))
+				if len(diagnostics) != 1 {
+					t.Fatalf("diagnostic count = %d, want 1", len(diagnostics))
+				}
+				if got, want := diagnostics[0].Span, (Span{0, tc.end}); got != want {
+					t.Fatalf("span = %v, want %v", got, want)
+				}
+				if diagnostics[0].RuleID != policy.id || diagnostics[0].Fix != nil {
+					t.Fatal("first-line span changed policy identity or fix availability")
+				}
+				if !bytes.Equal(source.Data, before) {
+					t.Fatal("first-line diagnostic changed original source bytes")
+				}
+			})
+		}
+	}
+}
 
 func TestAnsibleSourceHeaders(t *testing.T) {
 	for _, dir := range []string{"defaults", "vars", "tasks", "handlers"} {
