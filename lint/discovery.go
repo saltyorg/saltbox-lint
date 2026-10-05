@@ -135,6 +135,17 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 	}
 	rules := Rules()
 	contextDirs := map[string]bool{}
+	for selected := range p.Selected {
+		for _, dir := range contextDirectories(p.Sources[selected], rules) {
+			contextDirs[filepath.Join(root, filepath.FromSlash(dir))] = true
+		}
+	}
+	// Owning task configuration must be admitted before template text can
+	// identify cross-role reference context. Literal default tags under a task
+	// override cannot authorize extra role reads.
+	if err := l.contextDirectories(contextDirs); err != nil {
+		return nil, err
+	}
 	if opts.referenceContext {
 		p.referenceDirectories = referenceContextDirectories(p)
 		p.referenceFiles = []string{"inventory.yaml", "inventory.yml", "vars.yaml", "vars.yml"}
@@ -155,31 +166,8 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 			}
 		}
 	}
-	for selected := range p.Selected {
-		for _, dir := range contextDirectories(p.Sources[selected], rules) {
-			contextDirs[filepath.Join(root, filepath.FromSlash(dir))] = true
-		}
-	}
-	for _, dir := range sortedKeys(contextDirs) {
-		relative, err := relativeSource(root, dir)
-		if err != nil {
-			return nil, err
-		}
-		info, err := l.stat(dir)
-		if errors.Is(err, fs.ErrNotExist) {
-			p.directories[relative] = "missing"
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("inspect context %s: %w", dir, err)
-		}
-		p.directories[relative] = "directory"
-		if !info.IsDir() {
-			p.directories[relative] = "non-directory"
-		}
-		if err := l.directory(dir, false); err != nil {
-			return nil, err
-		}
+	if err := l.contextDirectories(contextDirs); err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -188,6 +176,35 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 		p.Dependencies = dependencyRecord(p, rules)
 	}
 	return p, nil
+}
+
+func (l *sourceLoader) contextDirectories(contextDirs map[string]bool) error {
+	p, root := l.project, l.project.Root
+	for _, dir := range sortedKeys(contextDirs) {
+		relative, err := relativeSource(root, dir)
+		if err != nil {
+			return err
+		}
+		if _, observed := p.directories[relative]; observed {
+			continue
+		}
+		info, err := l.stat(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			p.directories[relative] = "missing"
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect context %s: %w", dir, err)
+		}
+		p.directories[relative] = "directory"
+		if !info.IsDir() {
+			p.directories[relative] = "non-directory"
+		}
+		if err := l.directory(dir, false); err != nil {
+			return err
+		}
+	}
+	return l.ctx.Err()
 }
 
 // preflightGitControls checks the actual common administrative directory, which
@@ -341,6 +358,9 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	if absolute == l.stdinPath {
 		source, _ := Parse(parseName, l.stdin)
 		source.Path = relative
+		if source.Kind == Template {
+			source.templateProject = l.project
+		}
 		return source, nil
 	}
 	data, err := l.readFile(absolute)
@@ -349,6 +369,9 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	}
 	source, _ := parseOwnedSource(parseName, data)
 	source.Path = relative
+	if source.Kind == Template {
+		source.templateProject = l.project
+	}
 	return source, nil
 }
 

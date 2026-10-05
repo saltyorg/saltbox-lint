@@ -116,6 +116,11 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 			result.Reasons = append(result.Reasons, "invalid-primary-template")
 			return result, ctx.Err()
 		}
+		if scan.configurationUnavailable {
+			result.State = "unavailable"
+			result.Reasons = append(result.Reasons, "template-configuration-unavailable")
+			return result, ctx.Err()
+		}
 	}
 	index := newRoleSymbolIndex(p)
 	if len(source.parseDiagnostics) > 0 {

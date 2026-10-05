@@ -283,13 +283,14 @@ func traefikRenderers(p *Project, tasks []*Source) []traefikRenderer {
 			case "community.docker.docker_container", "docker_container":
 				value = task.argument("labels")
 			case "template":
-				src := task.argument("src")
-				if src == nil {
+				if reason := templateTaskSourceReason(task); reason != "" {
+					renderers = append(renderers, traefikRenderer{Source: s, Kind: task.Module, Span: task.ModuleSpan, Conditions: conditions, Unavailable: []string{reason}})
 					continue
 				}
+				src := task.argument("src")
 				target := path.Join(s.RolePath, "templates", src.Value)
 				if template := p.Sources[target]; template != nil && template.Kind == Template {
-					scan := scanTemplate(template)
+					scan := scanProjectTemplate(p, template)
 					renderer := traefikRenderer{Source: s, OutputSource: template, Kind: task.Module, Span: src.Span, Conditions: conditions, Expressions: traefikOutputExpressions(template, scan.expressions), Unavailable: templateContractReasons(scan), Related: []RelatedLocation{{Path: target, Span: Span{0, len(template.Data)}, Message: "template rendered by this task"}}}
 					if len(scan.diagnostics) > 0 {
 						renderer.Invalid = []RelatedLocation{{Path: target, Span: scan.diagnostics[0].Span, Message: "renderer contains invalid Jinja syntax"}}
@@ -685,7 +686,7 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 }
 
 func traefikTaskRendererDiagnostics(p *Project, facts *traefikRoleFacts, renderer traefikRenderer) []Diagnostic {
-	if template := renderer.OutputSource; template != nil && template.Kind == Template && p.Selected[template.Path] && len(renderer.Unavailable) == 0 && len(invalidTraefikRenderer(renderer)) == 0 {
+	if template := renderer.OutputSource; template != nil && template.Kind == Template && p.Selected[template.Path] && (len(renderer.Unavailable) == 0 || len(facts.invalidTasks) > 0) && len(invalidTraefikRenderer(renderer)) == 0 {
 		return nil
 	}
 	return traefikRendererDiagnostics(facts, renderer)

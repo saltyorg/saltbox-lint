@@ -10,9 +10,10 @@ import (
 // templateScan inspects original bytes only. It has no renderer or edit provider.
 // Reasons describe grammar outside its bounded delimiter/block checks.
 type templateScan struct {
-	expressions []Expression
-	diagnostics []Diagnostic
-	reasons     []string
+	expressions              []Expression
+	diagnostics              []Diagnostic
+	reasons                  []string
+	configurationUnavailable bool
 }
 type templateDelimiters struct{ starts, ends [3]string }
 type templateBlock struct {
@@ -22,7 +23,16 @@ type templateBlock struct {
 }
 
 func scanTemplate(s *Source) templateScan {
+	return scanProjectTemplate(s.templateProject, s)
+}
+
+func scanProjectTemplate(p *Project, s *Source) templateScan {
 	result := templateScan{}
+	if reasons := templateTaskConfigurationReasons(p, s); len(reasons) > 0 {
+		result.reasons = reasons
+		result.configurationUnavailable = true
+		return result
+	}
 	diagnosticLimit := false
 	partial := func(reason string) { result.reasons = append(result.reasons, reason) }
 	failure := func(span Span, message string) {
@@ -47,6 +57,7 @@ func scanTemplate(s *Source) templateScan {
 	delimiters, offset, reason := templateConfiguration(text)
 	if reason != "" {
 		partial(reason)
+		result.configurationUnavailable = true
 		return result
 	}
 	node := &Node{Kind: "string", Value: text, Span: Span{0, len(text)}}
@@ -511,9 +522,11 @@ func templateConfiguration(text string) (templateDelimiters, int, string) {
 	return d, end + 1, ""
 }
 
-func checkTemplateSyntax(_ *Project, s *Source) []Diagnostic { return scanTemplate(s).diagnostics }
-func checkTemplateCoverage(_ *Project, s *Source) []Diagnostic {
-	scan := scanTemplate(s)
+func checkTemplateSyntax(p *Project, s *Source) []Diagnostic {
+	return scanProjectTemplate(p, s).diagnostics
+}
+func checkTemplateCoverage(p *Project, s *Source) []Diagnostic {
+	scan := scanProjectTemplate(p, s)
 	if len(scan.reasons) == 0 {
 		return nil
 	}
@@ -532,7 +545,7 @@ func checkTemplateRenderer(p *Project, s *Source) []Diagnostic {
 		if renderer.OutputSource != s {
 			continue
 		}
-		if len(renderer.Unavailable) > 0 || len(invalidTraefikRenderer(renderer)) > 0 {
+		if len(renderer.Unavailable) > 0 && len(facts.invalidTasks) == 0 || len(invalidTraefikRenderer(renderer)) > 0 {
 			return nil
 		}
 		for _, d := range traefikRendererDiagnostics(facts, renderer) {

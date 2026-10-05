@@ -37,6 +37,16 @@ active line-statement/comment prefixes return `template-partial-coverage` with
 an explicit reason. The scanner does not fall back to default delimiters after
 an unsupported header. `None` line prefixes keep ordinary tag scanning.
 
+An owning template task with any explicit variable, block or comment delimiter
+argument receives partial coverage, including arguments equal to the defaults.
+The scanner does not combine task overrides with header options. Conflicting
+owners, dynamic template task sources, unknown arguments and invalid owning
+task YAML also prevent delimiter, reference and renderer-consumption claims.
+These reasons appear in `explain`, reference-source records and navigation
+coverage. Task configuration is read before template tags can select cross-role
+reference context. Unrelated tasks and ordinary task variables do not supply
+delimiter arguments.
+
 Expression and statement argument validation uses a bounded static subset.
 Unsupported collections, arithmetic, imports, extension tags and other grammar
 receive partial coverage rather than fabricated syntax errors. Unknown extension

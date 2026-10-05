@@ -61,6 +61,9 @@ type Source struct {
 	lineStarts       []int
 	yamlComments     []Span
 	sourceIndex      *yamlindex.Index
+	// Loaded templates retain their context owner, not cached derived facts.
+	// Admission is rechecked against current tasks on every scan.
+	templateProject *Project
 }
 
 // YAMLComments returns exact source spans for comments recognized by the YAML

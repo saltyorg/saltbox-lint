@@ -26,6 +26,7 @@ type ObservedSource struct {
 	Kind             Kind     `json:"source_kind"`
 	ParseState       string   `json:"parse_state"`
 	ParseDiagnostics []string `json:"parse_diagnostics"`
+	CoverageReasons  []string `json:"coverage_reasons,omitempty"`
 }
 type Explanation struct {
 	SchemaVersion        int              `json:"schema_version"`
@@ -104,6 +105,7 @@ func observedSource(source *Source) ObservedSource {
 	if source.Kind == Template {
 		result.ParseState = "static-template"
 		scan := scanTemplate(source)
+		result.CoverageReasons = slices.Clone(scan.reasons)
 		if len(scan.reasons) > 0 {
 			result.ParseState = "partial-template"
 		}
