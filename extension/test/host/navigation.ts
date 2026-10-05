@@ -7,6 +7,7 @@ import {
   writeFileSync,
   lstatSync,
   rmdirSync,
+  realpathSync,
 } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -508,14 +509,56 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
       vscode.workspace.getWorkspaceFolder(document.uri)!.uri,
       "roles/navtarget/defaults/main.yml",
     );
+    const contextBytes = await contextPromises.readFile(context.fsPath);
+    const sourceFilename = realpathSync.native(document.uri.fsPath);
+    const childProcess = createRequire(__filename)(
+      "node:child_process",
+    ) as typeof import("node:child_process");
+    const spawnDescriptor = Object.getOwnPropertyDescriptor(
+      childProcess,
+      "spawn",
+    )!;
+    const originalSpawn = childProcess.spawn;
+    const contextJoins: Promise<void>[] = [];
+    let responseClosed = false;
     let delivered = false;
     step = "context event during response validation";
+    Object.defineProperty(childProcess, "spawn", {
+      ...spawnDescriptor,
+      value: (...args: Parameters<typeof originalSpawn>) => {
+        const child = Reflect.apply(originalSpawn, childProcess, args);
+        const [file, argv] = args;
+        if (
+          file === process.env.SALTBOX_TEST_INSTALLED_CLI_PATH &&
+          Array.isArray(argv) &&
+          argv[0] === "query" &&
+          argv.includes("references") &&
+          argv.includes(sourceFilename)
+        )
+          contextJoins.push(
+            new Promise<void>((resolve) => {
+              child.once("close", () => {
+                responseClosed = true;
+                resolve();
+              });
+            }),
+          );
+        return child;
+      },
+    });
     Object.defineProperty(contextPromises, "readFile", {
       ...readDescriptor,
       value: async (...args: Parameters<typeof originalRead>) => {
         const bytes = await Reflect.apply(originalRead, contextPromises, args);
-        if (!delivered && args[0] === context.fsPath) {
+        if (responseClosed && !delivered && args[0] === context.fsPath) {
           delivered = true;
+          await contextPromises.writeFile(
+            context.fsPath,
+            Buffer.concat([
+              contextBytes,
+              Buffer.from("# changed query context\n"),
+            ]),
+          );
           adapter.refresh([context]);
         }
         return bytes;
@@ -523,6 +566,11 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
     });
     try {
       assert.equal(await impact(), undefined);
+      assert.equal(
+        contextJoins.length,
+        1,
+        "the exact query owns the response gate",
+      );
       assert.equal(delivered, true, "real target validation reaches the event");
       assert.equal(
         vscode.window.activeTextEditor?.document.uri.toString(),
@@ -530,6 +578,13 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
       );
     } finally {
       Object.defineProperty(contextPromises, "readFile", readDescriptor);
+      Object.defineProperty(childProcess, "spawn", spawnDescriptor);
+      try {
+        if (delivered)
+          await contextPromises.writeFile(context.fsPath, contextBytes);
+      } finally {
+        await Promise.all(contextJoins);
+      }
     }
     const promises = createRequire(__filename)(
       "node:fs/promises",
