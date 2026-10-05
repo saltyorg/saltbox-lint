@@ -1,8 +1,81 @@
 import * as vscode from "vscode";
+import { realpathSync } from "node:fs";
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type { EditorIntegration } from "../../src/editor.ts";
 import { hash } from "../../src/protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
+
+export function watchAliasTemplate(template: vscode.Uri) {
+  const registeredAt = new Date().toISOString();
+  const filename = realpathSync.native(template.fsPath);
+  const events: {
+    kind: string;
+    uri: string;
+    canonical?: string;
+    identity: "expected" | "changed" | "unavailable";
+    capturedAt: string;
+  }[] = [];
+  let count = 0;
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(
+      vscode.Uri.file(dirname(template.fsPath)),
+      basename(template.fsPath),
+    ),
+  );
+  const record = (kind: string, uri: vscode.Uri) => {
+    let observed: string | undefined;
+    try {
+      observed = realpathSync.native(uri.fsPath);
+    } catch {
+      try {
+        observed = join(
+          realpathSync.native(dirname(uri.fsPath)),
+          basename(uri.fsPath),
+        );
+      } catch {
+        // The exact RelativePattern delivered this public event. Preserve it
+        // even if its canonical identity cannot be observed after deletion.
+      }
+    }
+    count++;
+    events.push({
+      kind,
+      uri: uri.toString(),
+      canonical: observed && vscode.Uri.file(observed).toString(),
+      identity:
+        observed === filename
+          ? "expected"
+          : observed
+            ? "changed"
+            : "unavailable",
+      capturedAt: new Date().toISOString(),
+    });
+    if (events.length > 32) events.shift();
+  };
+  const subscriptions = [
+    watcher.onDidCreate((uri) => record("create", uri)),
+    watcher.onDidChange((uri) => record("change", uri)),
+    watcher.onDidDelete((uri) => record("delete", uri)),
+  ];
+  return {
+    snapshot: () => ({
+      registeredAt,
+      capturedAt: new Date().toISOString(),
+      timing:
+        "public watcher facts after assertion rejection; not exact deadline state",
+      template: template.toString(),
+      canonicalTemplate: vscode.Uri.file(filename).toString(),
+      count,
+      truncated: count > events.length,
+      events: events.map((event) => ({ ...event })),
+    }),
+    dispose: () => {
+      for (const subscription of subscriptions) subscription.dispose();
+      watcher.dispose();
+    },
+  };
+}
 
 function observed<T>(read: () => T) {
   try {

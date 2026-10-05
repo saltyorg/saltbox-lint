@@ -1,4 +1,4 @@
-import { aliasFailureFacts } from "./alias-failure.ts";
+import { aliasFailureFacts, watchAliasTemplate } from "./alias-failure.ts";
 import {
   failureReason,
   journalFailureEvidence,
@@ -12,7 +12,7 @@ import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -95,6 +95,7 @@ export async function runDependencies(): Promise<void> {
   let failed = false;
   let capturedFailure = false;
   let retainedFailureDirectory: string | undefined;
+  let aliasTemplateEvents: ReturnType<typeof watchAliasTemplate> | undefined;
   let cleanupStatus: { pid: number; token: string; running: boolean }[] = [];
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");
@@ -414,26 +415,54 @@ export async function runDependencies(): Promise<void> {
       ),
       "mixed selected batch must contain closed primaries",
     );
+    const batchRoot = await realpath(roots[0].uri.fsPath);
     let count = invocations().length;
     await writeFile(batchGate, "");
+    const batchNonce = randomBytes(32).toString("hex");
+    const batchPaths = [
+      "roles/example/defaults/main.yml",
+      "roles/example/tasks/main.yml",
+      "roles/unrelated/defaults/main.yml",
+    ];
     process.env.SALTBOX_TEST_PROCESS_GATE = batchGate;
-    await Promise.all([
-      writeFile(
-        defaults.fsPath,
-        defaultsGood + 'example_batch_value: "{{ value\n }}"\n',
-      ),
-      writeFile(
-        unrelatedUri.fsPath,
-        unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
-      ),
-    ]);
-    // Deliver both events together so the real queue forms one mixed batch.
+    process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = batchNonce;
+    process.env.SALTBOX_TEST_PROCESS_GATE_PATHS = JSON.stringify(batchPaths);
+    // Actual writes and public notifications share one synchronous cohort.
+    // Real watchers remain active, without snapshotting a partially joined batch.
+    writeFileSync(
+      defaults.fsPath,
+      defaultsGood + 'example_batch_value: "{{ value\n }}"\n',
+    );
+    writeFileSync(
+      unrelatedUri.fsPath,
+      unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+    );
     editor.removeFile(defaults);
     editor.removeFile(unrelatedUri);
     await waitFor(
       () => existsSync(batchGate + ".ready"),
       "mixed selected batch must hold its already-computed output",
     );
+    const batchReady = JSON.parse(await readFile(batchGate + ".ready", "utf8"));
+    assert.equal(batchReady.nonce, batchNonce);
+    assert.deepEqual(batchReady.args, [
+      "check",
+      "--root",
+      batchRoot,
+      "--format",
+      "json",
+      "--include-analysis",
+      "--",
+      ...batchPaths,
+    ]);
+    const batchInstance = fixtureGateInstance(
+      batchReady,
+      instancesLog,
+      journal,
+    );
+    assert.deepEqual(batchInstance.args, batchReady.args);
+    assert.equal(await fixtureRunning(batchInstance), true);
+    assert.equal(invocations().slice(count).length, 1);
     assert.ok(
       invocations()
         .slice(count)
@@ -449,7 +478,13 @@ export async function runDependencies(): Promise<void> {
     editor.removeFile(lateTemplate);
     editor.removeFile(template);
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
+    delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
     await rm(batchGate);
+    await waitFor(
+      async () => !(await fixtureRunning(batchInstance)),
+      "mixed selected batch releases its exact held child",
+    );
     await waitFor(
       () =>
         findings(defaults).some(
@@ -892,6 +927,7 @@ export async function runDependencies(): Promise<void> {
       const aliasDocument = await vscode.workspace.openTextDocument(alias);
       await vscode.window.showTextDocument(aliasDocument, { preview: false });
       await editor.check(aliasDocument, true);
+      aliasTemplateEvents = watchAliasTemplate(template);
       logFailureEvidence("SALTBOX_INITIAL_ALIAS_FACTS", {
         schemaVersion: 1,
         phase: "initial alias admission before template mutation",
@@ -929,6 +965,7 @@ export async function runDependencies(): Promise<void> {
             schemaVersion: 1,
             phase: "initial alias assertion rejected before disposal",
             originalError: failureReason(error),
+            canonicalTemplateEvents: aliasTemplateEvents!.snapshot(),
             aliasFacts,
             processFacts,
             cleanup: "not yet observed",
@@ -962,6 +999,7 @@ export async function runDependencies(): Promise<void> {
             schemaVersion: 1,
             phase: "alias assertion rejected before disposal",
             originalError: failureReason(error),
+            canonicalTemplateEvents: aliasTemplateEvents!.snapshot(),
             aliasFacts,
             processFacts,
             cleanup: "not yet observed",
@@ -1668,6 +1706,7 @@ export async function runDependencies(): Promise<void> {
     }
     throw error;
   } finally {
+    aliasTemplateEvents?.dispose();
     editor.dispose();
     if (failed) {
       try {
