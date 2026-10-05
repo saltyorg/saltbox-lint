@@ -198,6 +198,20 @@ func sourceRoleReferences(source *Source) []RoleReference {
 			expressions = append(expressions, query.expressions(defaultDeclaration{Value: task.projectedArguments[key]})...)
 		}
 	}
+	// All reads pass the same source-owned scalar admission before bindings or
+	// calls are considered. RuntimeExpressions also supplies implicit conditions,
+	// whose leaf can be safe while a task, block or document ancestor is unsafe.
+	// Projected arguments inherit membership from their original YAML scalar.
+	expressions = slices.DeleteFunc(expressions, func(e Expression) bool {
+		if e.node == nil || e.node.Tag == "!unsafe" {
+			return true
+		}
+		origin := e.node
+		if origin.scalarOrigin != nil {
+			origin = origin.scalarOrigin
+		}
+		return len(query.index.scalarOrders[origin]) == 0
+	})
 	bound := map[*Node]map[string]bool{}
 	for _, e := range expressions {
 		for i := range referenceBindings(e) {
