@@ -2,6 +2,9 @@ import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { symlinkSync, unlinkSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createRequire } from "node:module";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { EditorIntegration } from "../../src/editor.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
 
@@ -39,6 +42,279 @@ async function waitFor(predicate: () => Promise<boolean>, message: string) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   assert.fail(message);
+}
+async function runNestedNavigation(
+  document: vscode.TextDocument,
+  original: string,
+) {
+  for (const callee of ["lookup", "query", "q"]) {
+    const nested =
+      "# 😀é\r\n- debug:\r\n    msg: |\r\n      {{ " +
+      callee +
+      "('role_var', '_outer', role=" +
+      callee +
+      "('role_var', '_port', role='navtarget')) }}\r\n";
+    await replace(document, nested);
+    await waitFor(
+      async () => (await definitions(document)).length === 3,
+      "nested literal lookup resolves independently of outer dynamic call",
+    );
+    const start = nested.indexOf("_port"),
+      position = document.positionAt(start + 2);
+    const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+      "vscode.executeHoverProvider",
+      document.uri,
+      position,
+    );
+    assert.ok(
+      hovers.some((hover) =>
+        hover.contents.some(
+          (content) =>
+            typeof content === "object" &&
+            "value" in content &&
+            content.value.includes("Literal&nbsp;source&nbsp;representation"),
+        ),
+      ),
+    );
+    assert.ok(
+      hovers.some(
+        (hover) =>
+          hover.range &&
+          document
+            .getText(hover.range)
+            .startsWith(callee + "('role_var', '_port'"),
+      ),
+    );
+    const references = await vscode.commands.executeCommand<vscode.Location[]>(
+      "vscode.executeReferenceProvider",
+      document.uri,
+      position,
+    );
+    assert.ok(
+      references.some(
+        (location) =>
+          location.uri.toString() === document.uri.toString() &&
+          document
+            .getText(location.range)
+            .startsWith(callee + "('role_var', '_port'"),
+      ),
+    );
+    assert.deepEqual(await definitions(document, "_outer"), []);
+    const outer = document.positionAt(nested.indexOf("_outer") + 2);
+    assert.deepEqual(
+      await vscode.commands.executeCommand<vscode.Location[]>(
+        "vscode.executeReferenceProvider",
+        document.uri,
+        outer,
+      ),
+      [],
+    );
+    const outerItems =
+      await vscode.commands.executeCommand<vscode.CompletionList>(
+        "vscode.executeCompletionItemProvider",
+        document.uri,
+        outer,
+      );
+    assert.ok(
+      !outerItems.items.some((item) =>
+        item.detail?.includes("source declaration"),
+      ),
+    );
+    await replace(document, nested.replace("'_port'", "'_po'"));
+    const before = document.getText();
+    const list = await vscode.commands.executeCommand<vscode.CompletionList>(
+      "vscode.executeCompletionItemProvider",
+      document.uri,
+      document.positionAt(before.indexOf("_po") + 3),
+    );
+    const item = list.items.find(
+      (item) =>
+        item.label === "_port" && item.detail?.includes("source declaration"),
+    );
+    assert.ok(item?.textEdit);
+    assert.equal(document.getText(item.textEdit.range), "_po");
+    const edit = new vscode.WorkspaceEdit();
+    edit.set(document.uri, [item.textEdit]);
+    assert.equal(await vscode.workspace.applyEdit(edit), true);
+    assert.equal(document.getText(), nested);
+    await vscode.commands.executeCommand("undo");
+    assert.equal(document.getText(), before);
+    await replace(document, nested.replace("'navtarget'", "'navt'"));
+    const roles = await vscode.commands.executeCommand<vscode.CompletionList>(
+      "vscode.executeCompletionItemProvider",
+      document.uri,
+      document.positionAt(document.getText().indexOf("navt") + 4),
+    );
+    assert.ok(
+      roles.items.some(
+        (item) =>
+          item.label === "navtarget" &&
+          item.textEdit &&
+          document.getText(item.textEdit.range) === "navt",
+      ),
+    );
+  }
+  await replace(document, original);
+}
+async function runManualImpactFailure(document: vscode.TextDocument) {
+  const original = document.getText();
+  const temporary = await mkdtemp(
+    join(tmpdir(), "saltbox-navigation-failure-"),
+  );
+  const wrapper = join(temporary, "failure.cjs");
+  const payload = "PRIVATE_CHILD_RESPONSE_VARIABLE_1234";
+  await writeFile(
+    wrapper,
+    "const {spawnSync}=require('node:child_process'); const result=spawnSync(process.argv[2],process.argv.slice(3),{stdio:'inherit',env:process.env}); if(result.error)throw result.error; process.stderr.write(" +
+      JSON.stringify(payload) +
+      ");process.exit(2);\n",
+  );
+  const childProcess = createRequire(__filename)(
+    "node:child_process",
+  ) as typeof import("node:child_process");
+  const spawnDescriptor = Object.getOwnPropertyDescriptor(
+    childProcess,
+    "spawn",
+  )!;
+  const spawn = childProcess.spawn;
+  const outputDescriptor = Object.getOwnPropertyDescriptor(
+    vscode.window,
+    "createOutputChannel",
+  )!;
+  const noticeDescriptor = Object.getOwnPropertyDescriptor(
+    vscode.window,
+    "showErrorMessage",
+  )!;
+  const createOutput = vscode.window.createOutputChannel;
+  const lines: string[] = [],
+    notices: string[] = [];
+  const joins: Promise<void>[] = [];
+  let adapter: EditorIntegration | undefined;
+  try {
+    Object.defineProperty(vscode.window, "createOutputChannel", {
+      ...outputDescriptor,
+      value: (...args: Parameters<typeof createOutput>) => {
+        const channel = Reflect.apply(
+          createOutput,
+          vscode.window,
+          args,
+        ) as vscode.OutputChannel;
+        return new Proxy(channel, {
+          get(target, key) {
+            if (key === "appendLine")
+              return (line: string) => {
+                lines.push(line);
+                target.appendLine(line);
+              };
+            const value: unknown = Reflect.get(target, key);
+            return typeof value === "function"
+              ? (value.bind(target) as unknown)
+              : value;
+          },
+        });
+      },
+    });
+    Object.defineProperty(vscode.window, "showErrorMessage", {
+      ...noticeDescriptor,
+      value: (message: string) => {
+        notices.push(message);
+        return Promise.resolve(undefined);
+      },
+    });
+    Object.defineProperty(childProcess, "spawn", {
+      ...spawnDescriptor,
+      value: function (this: unknown, ...args: Parameters<typeof spawn>) {
+        const [file, argv, options] = args;
+        if (Array.isArray(argv) && argv[0] === "query") {
+          const child = spawn(
+            process.execPath,
+            [wrapper, file, ...argv],
+            options,
+          );
+          joins.push(
+            new Promise<void>((resolve) =>
+              child.once("close", () => resolve()),
+            ),
+          );
+          return child;
+        }
+        return Reflect.apply(spawn, this, args);
+      },
+    });
+    adapter = new EditorIntegration(
+      process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!,
+    );
+    const position = document.positionAt(
+      document.getText().indexOf("_port") + 2,
+    );
+    const token = new vscode.CancellationTokenSource();
+    try {
+      assert.deepEqual(
+        await adapter.navigation.definition(document, position, token.token),
+        [],
+      );
+      assert.deepEqual(lines, []);
+      assert.deepEqual(notices, []);
+      assert.equal(await adapter.navigation.impact(), undefined);
+      assert.deepEqual(lines, [
+        "Static role lookup impact failed. Check the bundled CLI and try again.",
+      ]);
+      assert.deepEqual(notices, ["Saltbox Lint: " + lines[0]]);
+      const editor = await vscode.window.showTextDocument(document);
+      editor.selection = new vscode.Selection(position, position);
+      assert.equal(
+        await vscode.commands.executeCommand("saltboxLint.showImpact"),
+        undefined,
+      );
+      assert.deepEqual(notices, [
+        "Saltbox Lint: " + lines[0],
+        "Saltbox Lint: " + lines[0],
+      ]);
+      assert.ok(!JSON.stringify({ lines, notices }).includes(payload));
+      Object.defineProperty(childProcess, "spawn", spawnDescriptor);
+      await replace(document, original.replace("'_port'", "dynamic_suffix"));
+      editor.selection = new vscode.Selection(
+        document.positionAt(document.getText().indexOf("dynamic_suffix") + 2),
+        document.positionAt(document.getText().indexOf("dynamic_suffix") + 2),
+      );
+      const dynamic = await adapter.navigation.impact();
+      assert.equal(dynamic?.state, "dynamic");
+      assert.equal(lines.length, 1);
+      assert.equal(notices.length, 2);
+      await vscode.commands.executeCommand(
+        "workbench.action.closeActiveEditor",
+      );
+      await replace(document, original);
+      await vscode.window.showTextDocument(document);
+      const target = await vscode.workspace.openTextDocument(
+        vscode.Uri.joinPath(
+          vscode.workspace.workspaceFolders![0].uri,
+          "roles/navtarget/defaults/main.yml",
+        ),
+      );
+      const targetOriginal = target.getText();
+      await replace(target, targetOriginal + "# dirty manual target\n");
+      editor.selection = new vscode.Selection(position, position);
+      assert.equal(await adapter.navigation.impact(), undefined);
+      assert.equal(lines.length, 1);
+      assert.equal(notices.length, 2);
+      await replace(target, targetOriginal);
+      await target.save();
+    } finally {
+      token.dispose();
+    }
+  } finally {
+    adapter?.dispose();
+    Object.defineProperty(childProcess, "spawn", spawnDescriptor);
+    Object.defineProperty(
+      vscode.window,
+      "createOutputChannel",
+      outputDescriptor,
+    );
+    Object.defineProperty(vscode.window, "showErrorMessage", noticeDescriptor);
+    await Promise.all(joins);
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
 export async function runNavigation(): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
@@ -148,6 +424,8 @@ export async function runNavigation(): Promise<void> {
   await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
   await vscode.window.showTextDocument(document);
   const original = document.getText();
+  await runNestedNavigation(document, original);
+  await runManualImpactFailure(document);
   await replace(document, original.replace("'_port'", "'_po'"));
   const before = document.getText();
   const list = await vscode.commands.executeCommand<vscode.CompletionList>(

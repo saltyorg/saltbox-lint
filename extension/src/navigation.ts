@@ -46,7 +46,7 @@ export async function validateNavigation(
   text: string,
   index: SnapshotIndex,
   uri: vscode.Uri,
-): Promise<NavigationAnswer> {
+): Promise<NavigationAnswer | undefined> {
   const snapshots = new Map<
     string,
     { text: string; index: SnapshotIndex; uri: vscode.Uri }
@@ -54,10 +54,23 @@ export async function validateNavigation(
   snapshots.set(report.path, { text, index, uri });
   for (const [target, digest] of Object.entries(report.target_hashes)) {
     if (target === report.path) {
-      if (digest !== hash(text)) throw new Error("Stale primary query target");
+      if (digest !== hash(text)) return;
       continue;
     }
-    const filename = await resolveSource(report.root, target);
+    let filename: string;
+    try {
+      filename = await resolveSource(report.root, target);
+    } catch (error) {
+      // A removed or retargeted source no longer belongs to this observation.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (
+        code === "ENOENT" ||
+        code === "ENOTDIR" ||
+        (error instanceof Error && error.message === "Source identity changed")
+      )
+        return;
+      throw error;
+    }
     const targetURI = vscode.Uri.file(filename);
     const buffers = vscode.workspace.textDocuments.filter(
       (doc) =>
@@ -66,13 +79,20 @@ export async function validateNavigation(
         (doc.uri.toString() === targetURI.toString() ||
           path.resolve(doc.uri.fsPath) === filename),
     );
-    const bytes = await readFile(filename);
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(filename);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return;
+      throw error;
+    }
     if (
       !isUtf8(bytes) ||
       hash(bytes) !== digest ||
       buffers.some((doc) => doc.isDirty || hash(doc.getText()) !== digest)
     )
-      throw new Error("Stale query target");
+      return;
     // Aliases are checked by canonical identity in addition to their lexical URI.
     for (const document of vscode.workspace.textDocuments) {
       if (
@@ -87,7 +107,7 @@ export async function validateNavigation(
       } catch {
         continue;
       }
-      if (canonical === filename) throw new Error("Dirty query target alias");
+      if (canonical === filename) return;
     }
     const source = bytes.toString("utf8");
     snapshots.set(target, {
@@ -144,6 +164,7 @@ export class Navigation implements vscode.Disposable {
       position: Position,
       operation: QueryOperation,
       token?: vscode.CancellationToken,
+      manual?: boolean,
     ) => Promise<NavigationAnswer | undefined>,
   ) {}
   async definition(
@@ -246,6 +267,8 @@ export class Navigation implements vscode.Disposable {
       editor.document,
       editor.selection.active,
       "references",
+      undefined,
+      true,
     );
     if (!answer) return;
     const content = [

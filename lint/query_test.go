@@ -217,3 +217,70 @@ func TestQueryOffsetsCRLFUnicodeAndAdmission(t *testing.T) {
 		t.Fatal("rename admitted")
 	}
 }
+
+func TestQueryNestedLiteralLookup(t *testing.T) {
+	root, primary := referenceFixture(t)
+	for _, outer := range []string{"lookup", "query", "q"} {
+		for _, inner := range []string{"lookup", "query", "q"} {
+			for _, operation := range []string{"definition", "hover", "references", "completion"} {
+				t.Run(outer+"/"+inner+"/"+operation, func(t *testing.T) {
+					source := "# 😀é\r\n- debug:\r\n    msg: |\r\n      {{ " + outer + "('role_var', '_outer', role=" + inner + "('role_var', '_name', role='alpha')) }}\r\n"
+					start := strings.Index(source, "_name")
+					indexed, err := References(t.Context(), Options{Root: root, Paths: []string{primary}, StdinFilename: primary, Stdin: []byte(source)})
+					if err != nil {
+						t.Fatal(err)
+					}
+					var expected *RoleReference
+					for i := range indexed.References {
+						read := &indexed.References[i]
+						if read.State == "resolved" && slices.Contains(read.Suffixes, "_name") {
+							expected = read
+						}
+					}
+					if expected == nil {
+						t.Fatal("reference index lost resolved inner lookup")
+					}
+					result, err := Query(t.Context(), QueryRequest{Root: root, Filename: primary, Source: []byte(source), Operation: operation, Offset: start + 2})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if result.State != "resolved" || len(result.Declarations) != 1 || result.Declarations[0].Name != "alpha_name" || result.Origin == nil || *result.Origin != expected.Location {
+						t.Fatalf("nested lookup disagrees with reference index: %#v", result)
+					}
+					if result.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(source))) {
+						t.Fatal("nested snapshot hash changed")
+					}
+					key := result.Declarations[0].Key
+					data, err := os.ReadFile(filepath.Join(root, key.Path))
+					if err != nil || string(data[key.Span.Start:key.Span.End]) != key.Text || result.TargetHashes[key.Path] != fmt.Sprintf("%x", sha256.Sum256(data)) {
+						t.Fatal("nested target span or hash changed")
+					}
+					if operation == "completion" {
+						found := false
+						for _, item := range result.Completions {
+							if item.Label != "_name" {
+								continue
+							}
+							found = true
+							if item.Location.Span != (DecisionSpan{Start: start, End: start + 5}) || item.Location.Text != "_name" || item.Text != "_name" || source[item.Location.Span.Start-1] != '\'' || source[item.Location.Span.End] != '\'' {
+								t.Fatalf("nested completion edits outside literal: %#v", item)
+							}
+						}
+						if !found {
+							t.Fatal("missing inner suffix completion")
+						}
+					}
+					if operation == "references" && !slices.ContainsFunc(result.Locations, func(location QueryLocation) bool {
+						return location.Kind == "read" && location.Span == expected.Location.Span
+					}) {
+						t.Fatal("references lost inner read span")
+					}
+					outerResult, err := Query(t.Context(), QueryRequest{Root: root, Filename: primary, Source: []byte(source), Operation: operation, Offset: strings.Index(source, "_outer") + 2})
+					if err != nil || outerResult.State != "dynamic" || len(outerResult.Declarations) != 0 || len(outerResult.Completions) != 0 || len(outerResult.Locations) != 0 {
+						t.Fatalf("outer dynamic call changed: %#v %v", outerResult, err)
+					}
+				})
+			}
+		}
+	}
+}

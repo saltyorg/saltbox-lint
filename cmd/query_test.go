@@ -85,3 +85,30 @@ func TestQueryCommandExactSnapshot(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryCommandNestedLiteralLookup(t *testing.T) {
+	root, err := filepath.Abs("../lint/testdata/references")
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := filepath.Join(root, "roles/alpha/tasks/main.yml")
+	for _, callee := range []string{"lookup", "query", "q"} {
+		for _, operation := range []string{"definition", "hover", "references", "completion"} {
+			t.Run(callee+"/"+operation, func(t *testing.T) {
+				source := "# 😀é\r\n- debug:\r\n    msg: |\r\n      {{ " + callee + "('role_var', '_outer', role=" + callee + "('role_var', '_name', role='alpha')) }}\r\n"
+				var out, errors bytes.Buffer
+				code := Run(t.Context(), []string{"query", "--root", root, "--stdin-filename", primary, "--operation", operation, "--offset", strconv.Itoa(strings.Index(source, "_name") + 2), "-"}, Streams{In: strings.NewReader(source), Out: &out, Err: &errors}, "test")
+				var result lint.QueryReport
+				if code != 0 || errors.Len() != 0 || json.Unmarshal(out.Bytes(), &result) != nil || result.State != "resolved" || len(result.Declarations) != 1 || result.Declarations[0].Name != "alpha_name" {
+					t.Fatalf("nested query CLI: %d %s %s", code, out.String(), errors.String())
+				}
+				if result.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(source))) {
+					t.Fatal("nested CLI source hash changed")
+				}
+				if operation == "completion" && len(result.Completions) == 0 {
+					t.Fatal("nested CLI completion missing")
+				}
+			})
+		}
+	}
+}

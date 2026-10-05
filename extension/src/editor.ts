@@ -88,8 +88,9 @@ export class EditorIntegration implements vscode.Disposable {
     ["references", new Scheduler()],
   ]);
   private queryRevision = 0;
-  readonly navigation = new Navigation((document, position, operation, token) =>
-    this.query(document, position, operation, token),
+  readonly navigation = new Navigation(
+    (document, position, operation, token, manual) =>
+      this.query(document, position, operation, token, manual),
   );
   private revokeQueries(): void {
     this.queryRevision++;
@@ -1052,19 +1053,22 @@ export class EditorIntegration implements vscode.Disposable {
     position: { line: number; character: number },
     operation: QueryOperation,
     token?: vscode.CancellationToken,
+    manual = false,
   ): Promise<NavigationAnswer | undefined> {
     if (token?.isCancellationRequested) return;
     const abort = new AbortController();
     const listener = token?.onCancellationRequested(() => abort.abort());
     const revision = this.queryRevision;
     const dependencyToken = this.dependencies.begin();
+    let capturedSnapshot: Snapshot | undefined;
+    const current = () =>
+      !!capturedSnapshot &&
+      !abort.signal.aborted &&
+      revision === this.queryRevision &&
+      this.current(document, capturedSnapshot);
     try {
       const snapshot = await this.snapshot(document);
-      const current = () =>
-        !!snapshot &&
-        !abort.signal.aborted &&
-        revision === this.queryRevision &&
-        this.current(document, snapshot);
+      capturedSnapshot = snapshot;
       if (!snapshot || !current()) return;
       if (
         !document.isDirty &&
@@ -1132,6 +1136,7 @@ export class EditorIntegration implements vscode.Disposable {
         snapshot.index,
         document.uri,
       );
+      if (!answer) return;
       const observed = await observeAnalysis(
         report.dependencies,
         new Set([snapshot.path]),
@@ -1149,8 +1154,23 @@ export class EditorIntegration implements vscode.Disposable {
       if (this.dependencies.begin() !== dependencyToken) return;
       return answer;
     } catch {
-      // Navigation failure declines a location. Never log source values or a
-      // child response, and never turn a read-only query into a source change.
+      // Background providers decline silently. Manual operations report only
+      // a fixed message while the captured request is still current, so child
+      // responses and declaration contents never reach Output or notifications.
+      if (
+        manual &&
+        !abort.signal.aborted &&
+        revision === this.queryRevision &&
+        this.dependencies.begin() === dependencyToken &&
+        this.eligible(document) &&
+        (!capturedSnapshot || current())
+      )
+        this.error(
+          new Error(
+            "Static role lookup impact failed. Check the bundled CLI and try again.",
+          ),
+          true,
+        );
       return;
     } finally {
       listener?.dispose();

@@ -126,8 +126,11 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 	for i := range reads {
 		read := &reads[i]
 		if read.Location.Path == identity.Path && request.Offset >= read.Location.Span.Start && request.Offset < read.Location.Span.End {
-			selected = read
-			break
+			// Nested recognized calls resolve independently. Select the smallest
+			// enclosing source span without changing any indexed location.
+			if selected == nil || read.Location.Span.End-read.Location.Span.Start < selected.Location.Span.End-selected.Location.Span.Start {
+				selected = read
+			}
 		}
 	}
 	if selected != nil {
