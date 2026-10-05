@@ -5,7 +5,8 @@ import {
   unlinkSync,
   mkdirSync,
   writeFileSync,
-  rmSync,
+  lstatSync,
+  rmdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -352,7 +353,7 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
     await rm(temporary, { recursive: true, force: true });
   }
 }
-async function runManualMarkerRefresh(document: vscode.TextDocument) {
+export async function runManualMarkerRefresh(document: vscode.TextDocument) {
   const workspace = createRequire(__filename)("vscode")
     .workspace as typeof vscode.workspace;
   const descriptor = Object.getOwnPropertyDescriptor(
@@ -364,6 +365,18 @@ async function runManualMarkerRefresh(document: vscode.TextDocument) {
     vscode.workspace.getWorkspaceFolder(document.uri)!.uri.fsPath,
     ".saltbox-lint",
   );
+  const removeMarker = (missingAllowed = false) => {
+    try {
+      const stat = lstatSync(marker);
+      // The fixture owns a single file, link or empty directory. Never walk
+      // the parent-target junction while restoring this entry.
+      if (stat.isDirectory() && !stat.isSymbolicLink()) rmdirSync(marker);
+      else unlinkSync(marker);
+    } catch (error) {
+      if (!missingAllowed || (error as NodeJS.ErrnoException).code !== "ENOENT")
+        throw error;
+    }
+  };
   let adapter: EditorIntegration | undefined;
   // Hold this adapter's marker notifications throughout each manual command.
   // Its real marker probes and canonical-root admission still read the disk.
@@ -406,16 +419,42 @@ async function runManualMarkerRefresh(document: vscode.TextDocument) {
       );
     return answer;
   };
+  const failures: Error[] = [];
+  let replacement = "initial";
+  let step = "initial admission";
+  const failure = (error: unknown): Error => {
+    let kind: string;
+    try {
+      const stat = lstatSync(marker);
+      kind = stat.isSymbolicLink()
+        ? "symlink"
+        : stat.isDirectory()
+          ? "directory"
+          : stat.isFile()
+            ? "file"
+            : "other";
+    } catch (probe) {
+      const code = (probe as NodeJS.ErrnoException).code;
+      kind = code === "ENOENT" ? "missing" : `unavailable(${code})`;
+    }
+    return new Error(
+      `manual marker ${step}: replacement=${replacement} marker=${kind}`,
+      { cause: error },
+    );
+  };
   try {
     await waitFor(
       async () => !!(await impact()),
       "manual marker control starts eligible",
     );
-    for (const replacement of ["removed", "symlink", "directory"]) {
-      rmSync(marker);
+    for (replacement of ["removed", "symlink", "directory"]) {
+      step = "remove regular marker";
+      removeMarker();
+      step = "install replacement";
       if (replacement === "symlink")
         symlinkSync(join(marker, ".."), marker, "junction");
       if (replacement === "directory") mkdirSync(marker);
+      step = "reject replacement";
       assert.equal(
         await impact(),
         undefined,
@@ -425,8 +464,11 @@ async function runManualMarkerRefresh(document: vscode.TextDocument) {
         vscode.window.activeTextEditor?.document.uri.toString(),
         document.uri.toString(),
       );
-      rmSync(marker, { recursive: true, force: true });
+      step = "remove replacement";
+      removeMarker(true);
+      step = "restore regular marker";
       writeFileSync(marker, "");
+      step = "accept restored marker";
       assert.ok(
         await impact(),
         `first manual impact accepts restored marker after ${replacement} without watcher delivery`,
@@ -446,6 +488,7 @@ async function runManualMarkerRefresh(document: vscode.TextDocument) {
       release = resolve;
     });
     const originalText = document.getText();
+    step = "edit during marker refresh";
     Object.defineProperty(promises, "lstat", {
       ...lstatDescriptor,
       value: async (...args: Parameters<typeof originalLstat>) => {
@@ -476,12 +519,23 @@ async function runManualMarkerRefresh(document: vscode.TextDocument) {
       Object.defineProperty(promises, "lstat", lstatDescriptor);
       await replace(document, originalText);
     }
+  } catch (error) {
+    failures.push(failure(error));
   } finally {
-    rmSync(marker, { recursive: true, force: true });
-    writeFileSync(marker, "");
-    adapter.dispose();
-    await vscode.window.showTextDocument(document);
+    step = "cleanup restore marker";
+    try {
+      removeMarker(true);
+      writeFileSync(marker, "");
+    } catch (error) {
+      failures.push(failure(error));
+    } finally {
+      adapter.dispose();
+      await vscode.window.showTextDocument(document);
+    }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "manual marker body and cleanup failed");
 }
 export async function runNavigation(): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;

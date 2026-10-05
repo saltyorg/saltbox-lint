@@ -6,7 +6,147 @@ import { performance } from "node:perf_hooks";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { runProcess } from "../../src/process.ts";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
+import { build } from "esbuild";
+
+test("a no-input request succeeds when its child closes stdin before returning output", async () => {
+  const bundled = await build({
+    entryPoints: ["src/process.ts"],
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "cjs",
+    plugins: [
+      {
+        name: "closed-stdin-child",
+        setup(builder) {
+          builder.onResolve({ filter: /^node:child_process$/ }, () => ({
+            path: "spawn",
+            namespace: "closed-stdin-child",
+          }));
+          builder.onLoad(
+            { filter: /.*/, namespace: "closed-stdin-child" },
+            () => ({
+              contents: "export const spawn = globalThis.processIO.spawn",
+              loader: "js",
+            }),
+          );
+        },
+      },
+    ],
+  });
+  const module = { exports: {} as { runProcess: typeof runProcess } };
+  const joins: Promise<void>[] = [];
+  const observations: {
+    stdin: string;
+    error?: string;
+    code?: number | null;
+  }[] = [];
+  runInNewContext(bundled.outputFiles[0].text, {
+    module,
+    exports: module.exports,
+    require: createRequire(import.meta.url),
+    process,
+    Buffer,
+    TextDecoder,
+    setTimeout,
+    clearTimeout,
+    processIO: {
+      spawn(
+        file: string,
+        args: string[],
+        options: Parameters<typeof spawn>[2],
+      ) {
+        const stdio = options!.stdio as ["pipe" | "ignore", "pipe", "pipe"];
+        const child = spawn(file, args, {
+          ...options,
+          stdio: [...stdio, "ipc"],
+        });
+        const observation: (typeof observations)[number] = { stdin: stdio[0] };
+        observations.push(observation);
+        const finish = () => child.send("finish", () => {});
+        if (child.stdin) {
+          const input = child.stdin;
+          const end = input.end;
+          // The child's ready output proves fd 0 is closed. Delay only the
+          // public stream operation until this exact state, without a sleep.
+          Object.defineProperty(input, "end", {
+            value: (...args: unknown[]) => {
+              child.stdout!.once("data", () => {
+                Reflect.apply(end, input, args);
+              });
+              return input;
+            },
+          });
+          input.on("error", (error: NodeJS.ErrnoException) => {
+            observation.error = error.code;
+            finish();
+          });
+        } else child.stdout!.once("data", finish);
+        joins.push(
+          new Promise<void>((resolve) => {
+            child.once("close", (code) => {
+              observation.code = code;
+              resolve();
+            });
+          }),
+        );
+        return child;
+      },
+    },
+  });
+  const abort = new AbortController();
+  const request = {
+    executable: process.execPath,
+    cwd: process.cwd(),
+    args: [
+      "-e",
+      'require("node:fs").closeSync(0);process.on("message",()=>process.exit(0));process.stdout.write("v1\\n");',
+    ],
+  };
+  try {
+    assert.equal(
+      await module.exports.runProcess(request, abort.signal),
+      "v1\n",
+    );
+    await Promise.all(joins);
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0].stdin, "ignore");
+    assert.equal(observations[0].code, 0);
+    await assert.rejects(
+      module.exports.runProcess(
+        { ...request, input: "source snapshot" },
+        abort.signal,
+      ),
+      (error: NodeJS.ErrnoException) => error.code === "EPIPE",
+    );
+    await Promise.all(joins);
+    assert.equal(observations[1].stdin, "pipe");
+    assert.equal(observations[1].error, "EPIPE");
+  } finally {
+    abort.abort();
+    await Promise.all(joins);
+  }
+});
 const base = { executable: process.execPath, cwd: process.cwd() };
+test("an explicit empty source snapshot still receives piped EOF", async () => {
+  assert.equal(
+    await runProcess(
+      {
+        ...base,
+        args: [
+          "-e",
+          'process.stdin.on("end",()=>process.stdout.write("empty snapshot"));process.stdin.resume();',
+        ],
+        input: "",
+      },
+      new AbortController().signal,
+    ),
+    "empty snapshot",
+  );
+});
 test("process sends exact UTF8 snapshot and argv without a shell", async () => {
   const result = await runProcess(
     {

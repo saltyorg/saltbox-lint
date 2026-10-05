@@ -20,7 +20,9 @@ export function runProcess(
       shell: false,
       windowsHide: true,
       detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
+      // Commands without a source snapshot need no parent-owned input pipe.
+      // A fast child may close stdin before even an empty end reaches it.
+      stdio: [request.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       env: { ...process.env, SALTBOX_LINT_EDITOR_PROCESS: "1" },
     });
     const output: Buffer[] = [];
@@ -50,7 +52,7 @@ export function runProcess(
     child.on("error", (error) => {
       failure ??= error;
     });
-    child.stdin.on("error", (error) => {
+    child.stdin?.on("error", (error) => {
       failure ??= error;
       killTree();
     });
@@ -61,8 +63,8 @@ export function runProcess(
         killTree();
       } else chunks.push(data);
     };
-    child.stdout.on("data", (data) => collect(output, data));
-    child.stderr.on("data", (data) => collect(errors, data));
+    child.stdout!.on("data", (data) => collect(output, data));
+    child.stderr!.on("data", (data) => collect(errors, data));
     // 'exit' precedes 'close': kill remaining descendants before waiting for their pipes.
     child.once("exit", killTree);
     child.once("close", (code) => {
@@ -85,7 +87,7 @@ export function runProcess(
         }
       }
     });
-    child.stdin.end(request.input ?? "", "utf8");
+    child.stdin?.end(request.input ?? "", "utf8");
     if (signal.aborted) abort();
   });
 }

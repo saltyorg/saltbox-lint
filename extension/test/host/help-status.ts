@@ -3,6 +3,99 @@ import assert from "node:assert/strict";
 import { EditorIntegration } from "../../src/editor.ts";
 import type { CheckStatus } from "../../src/editor.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import { helpChildMatcher } from "./help-child.ts";
+
+async function explainWithEvidence(id: string): Promise<vscode.MarkdownString> {
+  const product = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
+  const installedAPI = createRequire(
+    join(product.extensionPath, "package.json"),
+  )("vscode") as typeof vscode;
+  const window = installedAPI.window;
+  const noticeDescriptor = Object.getOwnPropertyDescriptor(
+    window,
+    "showErrorMessage",
+  )!;
+  const showError = window.showErrorMessage;
+  const childProcess = createRequire(__filename)(
+    "node:child_process",
+  ) as typeof import("node:child_process");
+  const spawnDescriptor = Object.getOwnPropertyDescriptor(
+    childProcess,
+    "spawn",
+  )!;
+  const spawn = childProcess.spawn;
+  const matches = helpChildMatcher(
+    join(
+      product.extensionUri.fsPath,
+      "bin",
+      "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+    ),
+  );
+  const errors: string[] = [];
+  const children: {
+    args: string[];
+    pid?: number;
+    stdinError?: string;
+    spawnError?: string;
+    exit?: { code: number | null; signal: string | null };
+  }[] = [];
+  const joins: Promise<void>[] = [];
+  try {
+    Object.defineProperty(window, "showErrorMessage", {
+      ...noticeDescriptor,
+      value: function (this: unknown, ...args: Parameters<typeof showError>) {
+        errors.push(args[0]);
+        return Reflect.apply(showError, this, args) as unknown;
+      },
+    });
+    Object.defineProperty(childProcess, "spawn", {
+      ...spawnDescriptor,
+      value: function (this: unknown, ...args: Parameters<typeof spawn>) {
+        const child = Reflect.apply(spawn, this, args) as ReturnType<
+          typeof spawn
+        >;
+        const [file, argv] = args;
+        if (Array.isArray(argv) && matches(file, argv)) {
+          const observation: (typeof children)[number] = {
+            args: [...argv],
+            pid: child.pid,
+          };
+          children.push(observation);
+          child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+            observation.stdinError = error.code ?? error.name;
+          });
+          child.on("error", (error: NodeJS.ErrnoException) => {
+            observation.spawnError = error.code ?? error.name;
+          });
+          joins.push(
+            new Promise<void>((resolve) => {
+              child.once("close", (code, signal) => {
+                observation.exit = { code, signal };
+                resolve();
+              });
+            }),
+          );
+        }
+        return child;
+      },
+    });
+    const markdown = await vscode.commands.executeCommand<
+      vscode.MarkdownString | undefined
+    >("saltboxLint.explainRule", id);
+    await Promise.all(joins);
+    assert.ok(
+      markdown,
+      `installed help returned no Markdown: ${JSON.stringify({ errors, children })}`,
+    );
+    return markdown;
+  } finally {
+    Object.defineProperty(window, "showErrorMessage", noticeDescriptor);
+    Object.defineProperty(childProcess, "spawn", spawnDescriptor);
+    await Promise.all(joins);
+  }
+}
 
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
@@ -104,10 +197,7 @@ export async function runHelpStatus(
     diagnostic.code.target.toString(),
     "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#jinja-layout",
   );
-  const markdown = await vscode.commands.executeCommand<vscode.MarkdownString>(
-    "saltboxLint.explainRule",
-    "jinja-layout",
-  );
+  const markdown = await explainWithEvidence("jinja-layout");
   assert.ok(
     markdown.value.includes(
       new vscode.MarkdownString().appendText(

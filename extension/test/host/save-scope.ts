@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { EditorIntegration } from "../../src/editor.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,6 +55,47 @@ export async function runSaveScope(): Promise<void> {
     existsSync(log)
       ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
       : [];
+  const workspace = createRequire(__filename)("vscode")
+    .workspace as typeof vscode.workspace;
+  const watcherDescriptor = Object.getOwnPropertyDescriptor(
+    workspace,
+    "createFileSystemWatcher",
+  )!;
+  const createWatcher = workspace.createFileSystemWatcher;
+  let held: Map<string, (() => void)[]> | undefined;
+  Object.defineProperty(workspace, "createFileSystemWatcher", {
+    ...watcherDescriptor,
+    value: (...args: Parameters<typeof createWatcher>) => {
+      const watcher = createWatcher(...args);
+      return new Proxy(watcher, {
+        get(target, key) {
+          const value: unknown = Reflect.get(target, key);
+          if (["onDidCreate", "onDidChange"].includes(String(key))) {
+            const event = value as vscode.Event<vscode.Uri>;
+            return (
+              listener: (uri: vscode.Uri) => unknown,
+              thisArg?: unknown,
+              disposables?: vscode.Disposable[],
+            ) =>
+              event.call(
+                target,
+                (uri) => {
+                  const callbacks = held?.get(uri.toString());
+                  if (callbacks)
+                    callbacks.push(() => listener.call(thisArg, uri));
+                  else listener.call(thisArg, uri);
+                },
+                undefined,
+                disposables,
+              );
+          }
+          return typeof value === "function"
+            ? (value.bind(target) as unknown)
+            : value;
+        },
+      });
+    },
+  });
   const editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
   const subscriptions = [
     vscode.workspace.onDidChangeTextDocument((event) => {
@@ -87,6 +129,11 @@ export async function runSaveScope(): Promise<void> {
           ).some((finding) => diagnosticCode(finding) === "jinja-layout"),
         ),
       "startup should publish saved findings for each marked root",
+    );
+    Object.defineProperty(
+      workspace,
+      "createFileSystemWatcher",
+      watcherDescriptor,
     );
     await run("one startup saved scan per marked root", async () => {
       assert.equal(
@@ -332,14 +379,35 @@ export async function runSaveScope(): Promise<void> {
         const first = vscode.Uri.joinPath(roots[0].uri, "closed-one.yml");
         const second = vscode.Uri.joinPath(roots[0].uri, "closed-two.yml");
         await writeFile(log, "");
-        await Promise.all(
-          [first, second].map((uri) =>
-            vscode.workspace.fs.writeFile(
-              uri,
-              Buffer.from('value: "{{ closed\n }}"\n'),
+        held = new Map([
+          [first.toString(), []],
+          [second.toString(), []],
+        ]);
+        try {
+          await Promise.all(
+            [first, second].map((uri) =>
+              vscode.workspace.fs.writeFile(
+                uri,
+                Buffer.from('value: "{{ closed\n }}"\n'),
+              ),
             ),
-          ),
-        );
+          );
+          await waitFor(
+            () =>
+              [...held!.values()].every((callbacks) => callbacks.length > 0),
+            "both actual closed-file watcher notifications captured",
+          );
+          assert.equal(
+            invocations().length,
+            0,
+            "held events cannot launch checks",
+          );
+        } finally {
+          const release = held!;
+          held = undefined;
+          for (const callbacks of release.values())
+            for (const callback of callbacks) callback();
+        }
         await waitFor(
           () => findings(first).length > 0 && findings(second).length > 0,
           "closed changed files diagnosed",
@@ -714,6 +782,12 @@ export async function runSaveScope(): Promise<void> {
       },
     );
   } finally {
+    held = undefined;
+    Object.defineProperty(
+      workspace,
+      "createFileSystemWatcher",
+      watcherDescriptor,
+    );
     subscriptions.forEach((subscription) => subscription.dispose());
     editor.dispose();
     delete process.env.SALTBOX_TEST_PROCESS_LOG;
