@@ -692,11 +692,11 @@ export async function runNavigation(): Promise<void> {
   const document = await vscode.workspace.openTextDocument(sourceURI);
   const editor = await vscode.window.showTextDocument(document);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
-  await waitFor(
-    async () => (await definitions(document)).length === 3,
-    "real definitions resolve all declaration layers",
-  );
-  const locations = await definitions(document);
+  let locations: Awaited<ReturnType<typeof definitions>> = [];
+  await waitFor(async () => {
+    locations = await definitions(document);
+    return locations.length === 3;
+  }, "real definitions resolve all declaration layers");
   assert.equal(locations.length, 3);
   for (const location of locations) {
     const declaration = await vscode.workspace.openTextDocument(
@@ -713,8 +713,9 @@ export async function runNavigation(): Promise<void> {
   const position = document.positionAt(document.getText().indexOf("_port") + 2);
   // Opening declaration documents starts their real background checks. Wait
   // for navigation to accept a stable observation after those visible events.
+  let hovers: vscode.Hover[] = [];
   await waitFor(async () => {
-    const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+    hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
       "vscode.executeHoverProvider",
       document.uri,
       position,
@@ -728,11 +729,6 @@ export async function runNavigation(): Promise<void> {
       ),
     );
   }, "real hover accepts a stable source and target observation");
-  const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
-    "vscode.executeHoverProvider",
-    document.uri,
-    position,
-  );
   const contents = hovers
     .flatMap((hover) => hover.contents)
     .filter(
