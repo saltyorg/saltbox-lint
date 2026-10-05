@@ -64,6 +64,9 @@ type Source struct {
 	// Loaded templates retain their context owner, not cached derived facts.
 	// Admission is rechecked against current tasks on every scan.
 	templateProject *Project
+	// The admitted read identity is separate from the selected diagnostic path.
+	// Template aliases share ownership only for this invocation's same snapshot.
+	templatePath string
 }
 
 // YAMLComments returns exact source spans for comments recognized by the YAML

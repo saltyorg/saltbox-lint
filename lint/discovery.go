@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -101,6 +102,11 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 			return nil, err
 		}
 		l.stdin = opts.Stdin
+		l.stdinCanonicalPath, err = l.stdinIdentity()
+		if err != nil {
+			return nil, err
+		}
+		l.stdinTemplate = isTemplateFile(l.stdinPath)
 	}
 	targets := slices.Clone(opts.Paths)
 	if opts.StdinFilename != "" {
@@ -310,12 +316,33 @@ func gitAdministrativeOwner(gitRoot, administrative string) (string, error) {
 }
 
 type sourceLoader struct {
-	files     *os.Root
-	ctx       context.Context
-	project   *Project
-	gitFiles  []string
-	stdinPath string
-	stdin     []byte
+	files              *os.Root
+	ctx                context.Context
+	project            *Project
+	gitFiles           []string
+	stdinPath          string
+	stdin              []byte
+	stdinCanonicalPath string
+	stdinTemplate      bool
+}
+
+func (l *sourceLoader) stdinIdentity() (string, error) {
+	canonical, err := ownedSourcePath(l.project.Root, l.stdinPath)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return canonical, err
+	}
+	// New unsaved files have a logical identity. An existing dangling alias
+	// has no admitted target and cannot supply canonical ownership.
+	relative, relativeErr := relativeSource(l.project.Root, l.stdinPath)
+	if relativeErr != nil {
+		return "", relativeErr
+	}
+	if info, statErr := l.files.Lstat(filepath.FromSlash(relative)); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", err
+	} else if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return "", statErr
+	}
+	return relative, nil
 }
 
 func (l *sourceLoader) add(absolute string, selected bool) error {
@@ -349,28 +376,39 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	if err := l.ctx.Err(); err != nil {
 		return nil, err
 	}
-	parseName := relative
-	if !isTemplate(relative) && isTemplateFile(absolute) {
-		// Preserve the admitted path, but decline role ownership inferred from
-		// outside the root. This also keeps template bytes out of YAML parsing.
-		parseName = "source.j2"
-	}
+	var data []byte
+	var canonical string
+	var err error
 	if absolute == l.stdinPath {
-		source, _ := Parse(parseName, l.stdin)
-		source.Path = relative
-		if source.Kind == Template {
-			source.templateProject = l.project
+		data = bytes.Clone(l.stdin)
+		canonical, err = l.stdinIdentity()
+		if err == nil && canonical != l.stdinCanonicalPath {
+			err = fmt.Errorf("source identity changed for %s", absolute)
 		}
-		return source, nil
+	} else {
+		data, canonical, err = l.readFileIdentity(absolute)
 	}
-	data, err := l.readFile(absolute)
 	if err != nil {
 		return nil, err
+	}
+	if absolute != l.stdinPath && l.stdinTemplate && canonical == l.stdinCanonicalPath && (isTemplate(relative) || isTemplate(canonical) || isTemplateFile(absolute)) {
+		// One template buffer supplies all admitted spellings of that output.
+		// This is invocation-local and never overlays unrelated equal contents.
+		data = bytes.Clone(l.stdin)
+	}
+	parseName := relative
+	if isTemplate(canonical) {
+		parseName = canonical
+	} else if !isTemplate(relative) && isTemplateFile(absolute) {
+		// A narrowed root must not recover role context from outside the root.
+		parseName = "source.j2"
 	}
 	source, _ := parseOwnedSource(parseName, data)
 	source.Path = relative
 	if source.Kind == Template {
 		source.templateProject = l.project
+		source.templatePath = canonical
+		_, source.Role, source.RolePath = classify(canonical)
 	}
 	return source, nil
 }
@@ -419,25 +457,29 @@ func (l *sourceLoader) stat(absolute string) (os.FileInfo, error) {
 }
 
 func (l *sourceLoader) readFile(absolute string) ([]byte, error) {
+	data, _, err := l.readFileIdentity(absolute)
+	return data, err
+}
+
+func (l *sourceLoader) readFileIdentity(absolute string) ([]byte, string, error) {
 	name, err := ownedSourcePath(l.project.Root, absolute)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	name = filepath.FromSlash(name)
-	info, err := l.files.Stat(name)
+	info, err := l.files.Stat(filepath.FromSlash(name))
 	if err != nil {
-		return nil, fmt.Errorf("inspect source %s: %w", absolute, err)
+		return nil, "", fmt.Errorf("inspect source %s: %w", absolute, err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("source is not a regular file: %s", absolute)
+		return nil, "", fmt.Errorf("source is not a regular file: %s", absolute)
 	}
 	// Root confines the actual read even if a resolved parent is replaced
 	// after admission. This is an observation, not atomic result acceptance.
-	data, err := l.files.ReadFile(name)
+	data, err := l.files.ReadFile(filepath.FromSlash(name))
 	if err != nil {
-		return nil, fmt.Errorf("read source %s: %w", absolute, err)
+		return nil, "", fmt.Errorf("read source %s: %w", absolute, err)
 	}
-	return data, nil
+	return data, name, nil
 }
 
 func (l *sourceLoader) directory(dir string, selected bool) error {

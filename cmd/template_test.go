@@ -137,3 +137,39 @@ func TestTemplateCanonicalAliasFormatterAndMixedPreflight(t *testing.T) {
 		t.Fatal("alias template bytes changed")
 	}
 }
+
+func TestTemplateAliasCommandsRetainConfigurationAndPath(t *testing.T) {
+	root := t.TempDir()
+	templates := filepath.Join(root, "roles/demo/templates")
+	tasks := filepath.Join(root, "roles/demo/tasks")
+	for _, directory := range []string{templates, tasks} {
+		if err := os.MkdirAll(directory, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	text := "literal {{ lookup('role_var', '_value', role='foreign') }}\r\n  {{ unfinished"
+	canonical := filepath.Join(templates, "config.yaml")
+	task := filepath.Join(tasks, "main.yml")
+	for filename, contents := range map[string]string{canonical: text, task: "- template: {src: config.yaml, variable_start_string: '[[', dest: /config}\n"} {
+		if err := os.WriteFile(filename, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(root, "alias.yaml")
+	if err := os.Symlink(canonical, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"check", "explain", "references"} {
+		code, output, stderr := invoke(t, "", command, "--root", root, "--format", "json", alias)
+		wantCode := 0
+		if command == "check" {
+			wantCode = 1
+		}
+		if code != wantCode || !strings.Contains(output, "alias.yaml") || !strings.Contains(output, "task delimiter overrides") || strings.Contains(output, "unterminated Jinja") || strings.Contains(output, "fix_id") {
+			t.Fatalf("alias %s: %d %s %s", command, code, output, stderr)
+		}
+	}
+	if after, err := os.ReadFile(canonical); err != nil || string(after) != text {
+		t.Fatal("alias commands changed template bytes")
+	}
+}

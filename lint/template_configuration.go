@@ -16,13 +16,23 @@ import (
 // variable, condition, module default or include is evaluated here. Defaults
 // ancestry is retained only to decline configuration that could change grammar.
 func templateTaskConfigurationReasons(p *Project, s *Source) []string {
-	if p == nil || s.RolePath == "" {
+	if p == nil {
 		return nil
+	}
+	_, _, lexicalRole := classify(s.Path)
+	roles := map[string]bool{s.RolePath: true, lexicalRole: true}
+	// Available aliases can name the same output from another role. They add
+	// only their admitted lexical owner; unrelated roles do not supply facts.
+	for _, candidate := range p.Sources {
+		if sameTemplateIdentity(candidate, s) {
+			_, _, role := classify(candidate.Path)
+			roles[role] = true
+		}
 	}
 	var reasons []string
 	for _, name := range sortedKeys(p.Sources) {
 		owner := p.Sources[name]
-		if owner.RolePath != s.RolePath || owner.Kind != Tasks && owner.Kind != Handlers {
+		if owner.RolePath == "" || !roles[owner.RolePath] || owner.Kind != Tasks && owner.Kind != Handlers {
 			continue
 		}
 		if len(owner.parseDiagnostics) > 0 {
@@ -71,19 +81,28 @@ func templateTaskConfigurationReasons(p *Project, s *Source) []string {
 func templateTaskOwnsSource(p *Project, owner, selected *Source, src string) (bool, string) {
 	unknown := "template configuration is unavailable: unsupported template task source resolution"
 	target := path.Join(owner.RolePath, "templates", src)
-	if target == selected.Path {
+	if target == selected.Path && selected.templatePath == "" {
 		return true, ""
 	}
 	resolved, err := ownedSourcePath(p.Root, filepath.Join(p.Root, filepath.FromSlash(target)))
 	if errors.Is(err, fs.ErrNotExist) {
+		if sameTemplateIdentity(p.Sources[target], selected) {
+			return false, "template configuration is unavailable: admitted task source is now missing"
+		}
 		return false, ""
 	}
 	if err != nil || !strings.HasPrefix(resolved, owner.RolePath+"/templates/") {
 		return false, unknown
 	}
-	selectedPath, err := ownedSourcePath(p.Root, filepath.Join(p.Root, filepath.FromSlash(selected.Path)))
-	if err != nil {
-		return false, unknown
+	if admitted := p.Sources[target]; admitted != nil && admitted.templatePath != "" && resolved != admitted.templatePath {
+		return false, "template configuration is unavailable: task source identity changed since admission"
+	}
+	selectedPath := templateSourcePath(selected)
+	if selected.templatePath == "" {
+		selectedPath, err = ownedSourcePath(p.Root, filepath.Join(p.Root, filepath.FromSlash(selected.Path)))
+		if err != nil {
+			return false, unknown
+		}
 	}
 	return resolved == selectedPath, ""
 }

@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"bytes"
 	"slices"
 	"strings"
 	"unicode"
@@ -536,20 +537,22 @@ func checkTemplateCoverage(p *Project, s *Source) []Diagnostic {
 // checkTemplateRenderer gives the selected template ownership of its existing
 // YAML renderer finding. When both sources are selected, emit it only here.
 func checkTemplateRenderer(p *Project, s *Source) []Diagnostic {
-	if s.RolePath == "" {
+	if s.RolePath == "" || selectedTemplateOwner(p, s) != s {
 		return nil
 	}
 	var result []Diagnostic
 	facts := analyzeTraefikRole(p, s)
 	for _, renderer := range facts.renderers {
-		if renderer.OutputSource != s {
+		if !sameTemplateSource(renderer.OutputSource, s) {
 			continue
 		}
 		if len(renderer.Unavailable) > 0 && len(facts.invalidTasks) == 0 || len(invalidTraefikRenderer(renderer)) > 0 {
 			return nil
 		}
 		for _, d := range traefikRendererDiagnostics(facts, renderer) {
-			d.Related = slices.DeleteFunc(d.Related, func(location RelatedLocation) bool { return location.Path == s.Path })
+			d.Related = slices.DeleteFunc(d.Related, func(location RelatedLocation) bool {
+				return sameTemplateSource(p.Sources[location.Path], s)
+			})
 			d.Related = append(d.Related, RelatedLocation{Path: d.Path, Span: d.Span, Message: "template referenced by this task"})
 			d.Path = s.Path
 			d.Span = Span{0, len(s.Data)}
@@ -559,6 +562,34 @@ func checkTemplateRenderer(p *Project, s *Source) []Diagnostic {
 		break
 	}
 	return result
+}
+
+func templateSourcePath(s *Source) string {
+	if s.templatePath != "" {
+		return s.templatePath
+	}
+	return s.Path
+}
+
+// Identity comes from the confined read, never file contents alone. Unequal
+// buffers at aliases of one file cannot transfer source-owned diagnostics.
+func sameTemplateSource(a, b *Source) bool {
+	return sameTemplateIdentity(a, b) && bytes.Equal(a.Data, b.Data)
+}
+
+func sameTemplateIdentity(a, b *Source) bool {
+	return a != nil && b != nil && a.Kind == Template && b.Kind == Template && templateSourcePath(a) == templateSourcePath(b)
+}
+
+// Prefer the first selected spelling deterministically; unselected canonical
+// context is never a diagnostic primary. All spellings stay read-only.
+func selectedTemplateOwner(p *Project, source *Source) *Source {
+	for _, name := range sortedKeys(p.Selected) {
+		if p.Selected[name] && sameTemplateSource(p.Sources[name], source) {
+			return p.Sources[name]
+		}
+	}
+	return nil
 }
 
 // Assignment belongs at tag depth zero. A keyword inside a capture filter

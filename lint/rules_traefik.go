@@ -686,7 +686,7 @@ func checkTraefikRendererContract(p *Project, s *Source) []Diagnostic {
 }
 
 func traefikTaskRendererDiagnostics(p *Project, facts *traefikRoleFacts, renderer traefikRenderer) []Diagnostic {
-	if template := renderer.OutputSource; template != nil && template.Kind == Template && p.Selected[template.Path] && (len(renderer.Unavailable) == 0 || len(facts.invalidTasks) > 0) && len(invalidTraefikRenderer(renderer)) == 0 {
+	if template := renderer.OutputSource; template != nil && template.Kind == Template && selectedTemplateOwner(p, template) != nil && (len(renderer.Unavailable) == 0 || len(facts.invalidTasks) > 0) && len(invalidTraefikRenderer(renderer)) == 0 {
 		return nil
 	}
 	return traefikRendererDiagnostics(facts, renderer)

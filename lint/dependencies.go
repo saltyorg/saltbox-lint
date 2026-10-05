@@ -78,9 +78,17 @@ func contextDirectories(s *Source, rules []Rule) []string {
 	for _, need := range contextRequirements(s, rules) {
 		switch need {
 		case OwningRole:
-			if s.RolePath != "" {
+			roles := []string{s.RolePath}
+			if s.Kind == Template {
+				_, _, lexicalRole := classify(s.Path)
+				roles = append(roles, lexicalRole)
+			}
+			for _, role := range roles {
+				if role == "" {
+					continue
+				}
 				for _, kind := range []string{"defaults", "tasks", "handlers", "vars", "templates"} {
-					dirs[path.Join(s.RolePath, kind)] = true
+					dirs[path.Join(role, kind)] = true
 				}
 			}
 		case SharedDocker:

@@ -580,8 +580,8 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 		t.Fatalf("alias template root = %q, want %q", p.Root, canonicalRoot)
 	}
 	source := p.Sources["unrelated.yml"]
-	if source == nil || source.Kind != Template || source.Path != "unrelated.yml" || source.Role != "" || source.RolePath != "" || len(p.Sources) != 1 {
-		t.Fatal("alias template identity changed or writability expanded")
+	if source == nil || source.Kind != Template || source.Path != "unrelated.yml" || source.Role != "demo" || source.RolePath != "roles/demo" || p.Sources["roles/demo/defaults/main.yml"] == nil {
+		t.Fatal("alias template identity or admitted canonical context lost")
 	}
 	if err := RequireWritableSelection(p); err == nil {
 		t.Fatal("alias template became writable")

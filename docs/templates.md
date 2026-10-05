@@ -56,6 +56,10 @@ module contracts to that namespace. Conventional role-relative source aliases
 are compared through the source loader's root boundaries. Absolute paths, home
 expansion, dot traversal and a `templates/` source prefix receive partial
 coverage because their Ansible search behavior is outside this static subset.
+An admitted leaf alias retains its selected diagnostic path and the canonical
+template's in-root role context. Cross-role aliases decline unsupported task
+configuration resolution. A narrowed root never reads the canonical role's
+context outside that root.
 
 Expression and statement argument validation uses a bounded static subset.
 Unsupported collections, arithmetic, imports, extension tags and other grammar
@@ -71,6 +75,10 @@ providers remain unresolved. A supported selected template can own an existing
 Traefik renderer finding when a task names it statically. Selecting both the task
 and template reports that violation once at the template. YAML-only selections
 retain their existing contract ownership.
+Selecting several aliases of the same admitted template reports its renderer
+violation at the first selected path in lexical order. An unsaved template
+buffer supplies that output's admitted aliases for the current invocation.
+Equal file contents alone never establish ownership.
 
 Both `format --mode canonical` and `format --mode lint-fixes` return a skipped
 plan with no template edits. `check --fix` rejects every selection containing a
