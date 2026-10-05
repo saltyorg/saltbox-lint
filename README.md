@@ -492,10 +492,11 @@ Local and native Go checks use current tracked and nonignored untracked project
 sources through `tools/go-check.mjs`. Go applies the current target and build
 constraints; nested modules, vendor, testdata and hidden directories keep their
 normal Go boundaries. Installed developer dependencies do not add packages to
-vet, lint or tests. The tidiness check runs in a temporary copy of the same
-current source files, including embedded assets and local module replacements,
-and removes that copy after success or failure. It reports genuine `go.mod` and
-`go.sum` differences without rewriting the originals. Published source uses its
+vet, lint or tests. The tidiness check copies current source files, embedded
+assets, local module replacements and existing module boundary files into a
+temporary directory. It removes that directory after success or failure and
+reports genuine `go.mod` and `go.sum` differences without rewriting the
+originals. Published source uses its
 `SOURCE-PROVENANCE.json` input inventory when no project Git inputs are available.
 These development checks reuse the release probe's process ownership helper;
 Windows requires PowerShell 7 to launch commands in its kill-on-close Job.

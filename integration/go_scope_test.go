@@ -18,7 +18,7 @@ import (
 
 func TestGoChecksUseCurrentProjectPackages(t *testing.T) {
 	f := newGoScopeFixture(t)
-	f.write(".gitignore", "dependency/\n")
+	f.write(".gitignore", "dependency/\nignored-module/go.mod\n")
 	f.write("tracked/source.go", "package tracked\nconst Value = 1\n")
 	f.runOK("git", "add", ".")
 	// Use current bytes and discover new packages before staging them.
@@ -34,6 +34,8 @@ func TestGoChecksUseCurrentProjectPackages(t *testing.T) {
 	}
 	f.write("nested/go.mod", "module example.test/nested\n\ngo 1.27.1\n")
 	f.write("nested/source.go", "package nested\n")
+	f.write("ignored-module/go.mod", "module example.test/ignored-module\n\ngo 1.27.1\n")
+	f.write("ignored-module/source.go", "package ignored\nimport _ \"example.invalid/nested\"\n")
 	f.write("conditional/source.go", "//go:build scopefixture\n\npackage conditional\n")
 	f.write("foreign/source.go", "//go:build "+otherGOOS()+"\n\npackage foreign\n")
 	f.write("tracked/deleted.go", "package tracked\n")
@@ -89,7 +91,7 @@ func TestGoChecksUseCurrentProjectPackages(t *testing.T) {
 
 func TestGoTidinessUsesCurrentSourceWithoutInstalledDependencies(t *testing.T) {
 	f := newGoScopeFixture(t)
-	f.write(".gitignore", "dependency/\n")
+	f.write(".gitignore", "dependency/\nignored-module/go.mod\n")
 	f.write("go.mod", "module example.test/scope\n\ngo 1.27.1\n\nrequire example.test/local v0.0.0\n\nreplace example.test/local => ./local\n")
 	f.write("local/go.mod", "module example.test/local\n\ngo 1.27.1\n")
 	f.write("local/source.go", "package local\n")
@@ -98,6 +100,8 @@ func TestGoTidinessUsesCurrentSourceWithoutInstalledDependencies(t *testing.T) {
 	f.write("asset with spaces.txt", "current embedded contents\n")
 	f.runOK("git", "add", ".")
 	f.write("dependency/tool/source.go", "package tool\nimport _ \"example.invalid/missing\"\n")
+	f.write("ignored-module/go.mod", "module example.test/ignored-module\n\ngo 1.27.1\n")
+	f.write("ignored-module/source.go", "package ignored\nimport _ \"example.invalid/nested\"\n")
 	before := f.state()
 	original, err := f.run("go", "mod", "tidy", "-diff")
 	if err == nil || !strings.Contains(string(original), "example.invalid/missing") {
@@ -160,9 +164,18 @@ func TestGoSourceArchiveScope(t *testing.T) {
 	}
 	f.checkOK("go", "test")
 	f.checkOK("tidy")
+	// A client error must not masquerade as an absent repository and silently
+	// fall back to the archive inventory.
+	config := os.Getenv("GIT_CONFIG_GLOBAL")
+	writeFile(t, config, []byte("[\n"))
+	out, err := f.check("go", "test")
+	if err == nil || !strings.Contains(string(out), "bad config") {
+		t.Fatalf("Git client failure must remain visible: %v\n%s", err, out)
+	}
+	writeFile(t, config, nil)
 	// Provenance paths must not escape the source tree.
 	f.write("SOURCE-PROVENANCE.json", `{"inputs":{"../outside.go":"`+strings.Repeat("0", 64)+`"}}`)
-	out, err := f.check("tidy")
+	out, err = f.check("tidy")
 	if err == nil || !strings.Contains(string(out), "escapes the module") {
 		t.Fatalf("source archive escape must fail: %v\n%s", err, out)
 	}

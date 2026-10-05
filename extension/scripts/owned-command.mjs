@@ -3,13 +3,20 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { groupHasLiveMembers } from "./owned-group.mjs";
 
-// Build checks and release probes own only their command and its descendants. Keep the
-// deadline active until captured stdio closes. Inherited output belongs to the
+// Build checks and release probes own their command and its descendants. Keep
+// the deadline active until captured stdio closes. Inherited output belongs to the
 // owned child, so blocked writes and consumer errors cannot strand this owner.
 export function ownedCommand(
   command,
   args,
-  { phase, timeoutMs, signal, returnExitCode = false, ...options },
+  {
+    phase,
+    timeoutMs,
+    signal,
+    returnExitCode = false,
+    maxOutputBytes = 1024 * 1024,
+    ...options
+  },
 ) {
   return new Promise((resolveResult, reject) => {
     const windows = process.platform === "win32";
@@ -99,9 +106,14 @@ export function ownedCommand(
       if (!closed || !groupGone) return;
       const { code, signal } = closed;
       if (failure) finish(failure);
-      else if (code !== 0 && !(returnExitCode && code !== null))
-        finish(new Error(`${identity}: exited ${code ?? signal}\n${stderr}`));
-      else finish();
+      else if (code !== 0 && !(returnExitCode && code !== null)) {
+        const error = new Error(
+          `${identity}: exited ${code ?? signal}\n${stderr}`,
+        );
+        error.exitCode = code;
+        error.stderr = stderr;
+        finish(error);
+      } else finish();
     };
     const observeGroup = async () => {
       // SIGKILL queues termination. Observe the owned group's disappearance
@@ -167,9 +179,12 @@ export function ownedCommand(
           }, timeoutMs);
     const collect = (data, stream) => {
       outputBytes += Buffer.byteLength(data);
-      // Preserve spawnSync's previous default capture bound.
-      if (outputBytes > 1024 * 1024) {
-        failure ??= new Error(`${identity}: output exceeds 1 MiB`);
+      // Release callers retain their original bound. Source discovery opts in
+      // to a larger explicit bound and never consumes a truncated result.
+      if (outputBytes > maxOutputBytes) {
+        const bound =
+          maxOutputBytes === 1024 * 1024 ? "1 MiB" : `${maxOutputBytes} bytes`;
+        failure ??= new Error(`${identity}: output exceeds ${bound}`);
         cleanup();
         return;
       }

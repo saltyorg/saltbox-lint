@@ -411,6 +411,30 @@ test("owned checks retain exit codes and join owner-cancelled descendants", asyn
   }
 });
 
+test("source capture preserves NUL records and fails on overflow", async () => {
+  const bytes = "go.mod\0source with spaces.go\0source\nnewline.go\0";
+  assert.equal(
+    await ownedCommand(
+      process.execPath,
+      ["-e", `process.stdout.write(${JSON.stringify(bytes)})`],
+      { phase: "source records control", maxOutputBytes: 4096 },
+    ),
+    bytes,
+  );
+  await assert.rejects(
+    ownedCommand(
+      process.execPath,
+      ["-e", 'process.stdout.write(Buffer.alloc(2048, "x"))'],
+      {
+        phase: "source overflow control",
+        maxOutputBytes: 1024,
+        returnExitCode: true,
+      },
+    ),
+    /source overflow control: .*output exceeds 1024 bytes/s,
+  );
+});
+
 test("staging deadline names its command and closes the owned builder tree", async () => {
   const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-build-"));
   const filename = join(directory, "builder.json");

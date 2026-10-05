@@ -1,5 +1,4 @@
 // Local and native checks share the current project source boundary.
-import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -22,20 +21,16 @@ process.on("SIGINT", forwardSignal);
 process.on("SIGTERM", forwardSignal);
 
 function capture(command, args) {
-  const result = spawnSync(command, args, {
+  return ownedCommand(command, args, {
+    phase: "project Go source discovery",
     cwd: root,
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
+    signal: interruption.signal,
+    maxOutputBytes: 16 * 1024 * 1024,
+    env: { ...process.env, LC_ALL: "C" },
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    process.stderr.write(result.stderr);
-    throw new Error(`${command} exited with ${result.status ?? result.signal}`);
-  }
-  return result.stdout;
 }
 
-function sourceFiles() {
+async function sourceFiles() {
   const gitArgs = [
     "ls-files",
     "--cached",
@@ -47,8 +42,20 @@ function sourceFiles() {
   if (existsSync("SOURCE-PROVENANCE.json") && !existsSync(".git")) {
     // An unpacked archive may itself live in an ignored directory of another
     // checkout. Prefer Git whenever this module actually has Git source inputs.
-    const git = spawnSync("git", gitArgs, { cwd: root, encoding: "utf8" });
-    const candidates = git.status === 0 ? git.stdout.split("\0") : [];
+    let candidates;
+    try {
+      candidates = (await capture("git", gitArgs)).split("\0");
+    } catch (error) {
+      // A missing repository may use the published inventory. Command errors,
+      // owner cancellation and cleanup failures must never trigger fallback.
+      const noRepository =
+        error.exitCode === 128 &&
+        error.stderr?.startsWith("fatal: not a git repository");
+      const noGit =
+        error.cause?.code === "ENOENT" && error.cause?.path === "git";
+      if (!noRepository && !noGit) throw error;
+      candidates = [];
+    }
     if (candidates.includes("go.mod")) files = candidates;
     else {
       const { inputs } = JSON.parse(readFileSync("SOURCE-PROVENANCE.json"));
@@ -65,8 +72,8 @@ function sourceFiles() {
         );
       files = Object.keys(inputs);
     }
-  } else files = capture("git", gitArgs).split("\0");
-  return [...new Set(files)]
+  } else files = (await capture("git", gitArgs)).split("\0");
+  const selected = [...new Set(files)]
     .filter(Boolean)
     .sort()
     .filter((file) => {
@@ -81,9 +88,21 @@ function sourceFiles() {
         throw error;
       }
     });
+  // An existing ignored go.mod still defines a real module boundary. Preserve
+  // that context in tidy's snapshot when project Go files lie below it.
+  const inputs = new Set(selected);
+  for (const file of selected) {
+    if (!file.endsWith(".go")) continue;
+    const folders = file.split("/").slice(0, -1);
+    for (let count = 1; count <= folders.length; count++) {
+      const marker = `${folders.slice(0, count).join("/")}/go.mod`;
+      if (existsSync(marker)) inputs.add(marker);
+    }
+  }
+  return [...inputs].sort();
 }
 
-function packages(files) {
+async function packages(files) {
   const directories = new Set();
   for (const file of files) {
     if (!file.endsWith(".go")) continue;
@@ -105,7 +124,7 @@ function packages(files) {
     throw new Error("No project Go source directories found");
   // Go applies GOOS/GOARCH and build tags. Every record ends with NUL plus
   // go list's newline, so filenames never become shell words or line records.
-  const output = capture("go", [
+  const output = await capture("go", [
     "list",
     "-e",
     "-f",
@@ -154,11 +173,11 @@ try {
   const [command, ...args] = process.argv.slice(2);
   if (!command)
     throw new Error("Usage: node tools/go-check.mjs tidy | COMMAND ARGS...");
-  const files = sourceFiles();
+  const files = await sourceFiles();
   process.exitCode =
     command === "tidy"
       ? await tidy(files)
-      : await run(command, [...args, ...packages(files)]);
+      : await run(command, [...args, ...(await packages(files))]);
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
