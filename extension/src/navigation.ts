@@ -3,7 +3,12 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { readFile } from "node:fs/promises";
-import { identify, resolveSource, templatePath } from "./identity.ts";
+import {
+  identify,
+  resolveSource,
+  templatePath,
+  unavailableSource,
+} from "./identity.ts";
 import { SnapshotIndex, hash, type Position } from "./protocol.ts";
 import { range } from "./diagnostics.ts";
 import { aliasCurrent, type ObservedAlias } from "./observations.ts";
@@ -114,10 +119,8 @@ export async function validateNavigation(
       } else filename = await resolveSource(report.root, target);
     } catch (error) {
       // A removed or retargeted source no longer belongs to this observation.
-      const code = (error as NodeJS.ErrnoException).code;
       if (
-        code === "ENOENT" ||
-        code === "ENOTDIR" ||
+        unavailableSource(error) ||
         (error instanceof Error && error.message === "Source identity changed")
       )
         return;

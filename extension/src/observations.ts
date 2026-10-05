@@ -1,5 +1,5 @@
 import { lstat, readFile, stat, realpath } from "node:fs/promises";
-import { identify } from "./identity.ts";
+import { identify, unavailableSource } from "./identity.ts";
 import type { BigIntStats } from "node:fs";
 import * as path from "node:path";
 import {
@@ -81,8 +81,7 @@ export async function aliasCurrent(
     );
   } catch (error) {
     if (
-      (error as NodeJS.ErrnoException).code === "ENOENT" ||
-      (error as NodeJS.ErrnoException).code === "ENOTDIR" ||
+      unavailableSource(error) ||
       (error instanceof Error &&
         error.message === "Invalid Saltbox Lint response")
     )

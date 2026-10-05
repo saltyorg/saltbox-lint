@@ -450,7 +450,7 @@ test("snapshot check and query retain reverse template spelling while responses 
   ) => operation(new AbortController().signal);
   const editor = Object.assign(
     Object.create(module.exports.EditorIntegration.prototype) as {
-      checkSnapshot(
+      check(
         document: TextDocument,
         manual: boolean,
         version: number,
@@ -473,19 +473,34 @@ test("snapshot check and query retain reverse template spelling while responses 
       documentRevisions: new WeakMap(),
       nextRevision: 0,
       queryRevision: 1,
+      relatedRevision: 0,
       failures: new Map(),
-      roots: { ready: async () => {}, get: () => root, watchSource() {} },
+      pendingFiles: new Map(),
+      fileFingerprints: new Map(),
+      pendingDiskReload: new Set(),
+      missingFiles: new Map(),
+      roots: {
+        ready: async () => {},
+        refresh: async () => {},
+        get: () => root,
+        watchSource() {},
+        forgetSource() {},
+      },
       dependencies: {
         begin: () => 0,
         revision: () => 0,
         admissionRevision: () => 0,
+        remove() {},
       },
+      results: { close() {}, invalidateRelated: () => new Set<string>() },
+      collection: { delete() {} },
       eligibilityChanged: { fire() {} },
       publish() {},
       updateStatus() {},
       error() {},
-      lint: { submit },
-      queryLanes: new Map([["definition", { submit }]]),
+      lint: { submit, cancel() {} },
+      formatting: { cancel() {} },
+      queryLanes: new Map([["definition", { submit, cancelAll() {} }]]),
     },
   );
   try {
@@ -493,7 +508,7 @@ test("snapshot check and query retain reverse template spelling while responses 
     await mkdir(join(root, "roles/a/templates"), { recursive: true });
     await writeFile(filename, text);
     await symlink(filename, alias, "file");
-    await editor.checkSnapshot(document, true, 1);
+    await editor.check(document, true, 1);
     await editor.query(document, { line: 0, character: 25 }, "definition");
     assert.equal(requests.length, 2);
     for (const request of requests) {
@@ -520,7 +535,7 @@ test("snapshot check and query retain reverse template spelling while responses 
     await symlink(filename, alias, "file");
     Reflect.set(document, "version", 2);
     requests.length = 0;
-    await editor.checkSnapshot(document, true, 2);
+    await editor.check(document, true, 2);
     await editor.query(document, { line: 0, character: 25 }, "definition");
     assert.equal(requests.length, 2);
     for (const request of requests) {
@@ -539,7 +554,7 @@ test("snapshot check and query retain reverse template spelling while responses 
     buffer = Buffer.from(raw).toString("utf8");
     Reflect.set(document, "version", 3);
     requests.length = 0;
-    await editor.checkSnapshot(document, true, 3);
+    await editor.check(document, true, 3);
     assert.equal(requests.length, 1);
     assert.equal(
       requests[0].args[requests[0].args.indexOf("--stdin-source-filename") + 1],

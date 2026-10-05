@@ -6,6 +6,16 @@ export interface Identity {
   filename: string;
   path: string;
 }
+// Identity refusal is distinct from an unexpected filesystem or CLI failure.
+export class SourceIdentityError extends Error {}
+export function unavailableSource(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return (
+    error instanceof SourceIdentityError ||
+    code === "ENOENT" ||
+    code === "ENOTDIR"
+  );
+}
 export async function canonicalRoot(
   folder: string,
   override: string,
@@ -27,7 +37,13 @@ export async function identify(
     );
   }
   const relative = path.relative(root, canonical).split(path.sep).join("/");
-  sourcePath(relative);
+  try {
+    sourcePath(relative);
+  } catch {
+    throw new SourceIdentityError(
+      "Source is outside the configured source root",
+    );
+  }
   return { root, filename: canonical, path: relative };
 }
 export async function resolveSource(

@@ -11,7 +11,13 @@ import { readFile, stat } from "node:fs/promises";
 import { lstatSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { identify, resolveSource, templatePath } from "./identity.ts";
+import {
+  identify,
+  resolveSource,
+  templatePath,
+  SourceIdentityError,
+  unavailableSource,
+} from "./identity.ts";
 import type { Identity } from "./identity.ts";
 import { hash, parseCheck, parseFormat, SnapshotIndex } from "./protocol.ts";
 import type {
@@ -67,6 +73,9 @@ interface PendingCheck {
   dependencyRevision: number;
   work: Promise<void>;
 }
+interface SourceOwner extends Identity {
+  physical?: boolean;
+}
 function textEdits(edits: EditorEdit[]): vscode.TextEdit[] {
   return edits.map((edit) => vscode.TextEdit.replace(range(edit), edit.text));
 }
@@ -110,7 +119,7 @@ export class EditorIntegration implements vscode.Disposable {
     number
   >();
   private readonly documentFolders = new Map<string, string>();
-  private readonly sourceOwners = new Map<string, Identity>();
+  private readonly sourceOwners = new Map<string, SourceOwner>();
   private readonly canonicalRoots = new Map<string, string>();
   private readonly closedTabs = new Set<string>();
   private readonly pendingRefresh = new Set<string>();
@@ -371,7 +380,7 @@ export class EditorIntegration implements vscode.Disposable {
   }
   private rememberSource(
     document: vscode.TextDocument,
-    identity: Identity,
+    identity: SourceOwner,
   ): void {
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
@@ -386,12 +395,52 @@ export class EditorIntegration implements vscode.Disposable {
         identity.path,
       );
     }
-    this.sourceOwners.set(document.uri.toString(), identity);
+    const previous = this.sourceOwners.get(document.uri.toString());
+    this.sourceOwners.set(document.uri.toString(), {
+      ...identity,
+      physical:
+        identity.physical ??
+        (previous?.filename === identity.filename
+          ? previous.physical
+          : undefined),
+    });
     this.roots.watchSource(document.uri, identity);
     this.eligibilityChanged.fire();
     const canonical = vscode.Uri.file(identity.filename);
     if (canonical.toString() !== document.uri.toString())
       this.publish(canonical);
+  }
+  private withdrawSource(document: vscode.TextDocument): void {
+    const key = document.uri.toString();
+    const owner = this.sourceOwners.get(key);
+    if (!owner) return;
+    const folder = this.documentFolders.get(key) ?? "";
+    this.documentRevisions.set(document, ++this.nextRevision);
+    this.relatedRevision++;
+    this.revokeQueries();
+    this.lint.cancel(key);
+    this.formatting.cancel(key);
+    this.roots.forgetSource(key);
+    this.failures.delete(key);
+    this.results.close(key, vscode.Uri.file(owner.filename).toString());
+    this.collection.delete(document.uri);
+    this.sourceOwners.delete(key);
+    this.documentFolders.delete(key);
+    this.fileFingerprints.delete(key);
+    this.pendingDiskReload.delete(key);
+    this.missingFiles.delete(key);
+    this.pendingFiles.delete(key);
+    if (
+      ![...this.sourceOwners.values()].some(
+        (other) => other.root === owner.root && other.path === owner.path,
+      )
+    )
+      this.dependencies.remove(folder, owner.path);
+    for (const uri of this.results.invalidateRelated())
+      this.publish(vscode.Uri.parse(uri));
+    this.publish(vscode.Uri.file(owner.filename));
+    this.eligibilityChanged.fire();
+    this.updateStatus();
   }
   // A local alias can hide both the template directory and the file extension.
   // Resolve its bounded identity before granting checking capabilities. Ordinary
@@ -415,10 +464,46 @@ export class EditorIntegration implements vscode.Disposable {
     const documentRevision = this.documentRevision(document);
     const root = await this.root(folder);
     if (!root) return false;
-    let identity: Identity;
+    const current = () =>
+      !this.disposed &&
+      vscode.workspace.isTrusted &&
+      !document.isClosed &&
+      !this.closedTabs.has(document.uri.toString()) &&
+      document.version === expectedVersion &&
+      documentRevision === this.documentRevision(document) &&
+      rootRevision === this.rootRevision(key) &&
+      this.roots.get(key) === root;
+    let identity: SourceOwner;
     try {
       identity = await identify(root, document.uri.fsPath);
+      // An ordinary new YAML leaf may have a logical identity before it is
+      // saved. Previously owned sources and all templates need a live file.
+      try {
+        if (!(await stat(document.uri.fsPath)).isFile())
+          throw new SourceIdentityError("Source is not a regular file");
+        identity.physical = true;
+      } catch (error) {
+        const previous = this.sourceOwners.get(document.uri.toString());
+        if (
+          (error as NodeJS.ErrnoException).code === "ENOENT" &&
+          !this.isTemplate(document) &&
+          !templatePath(identity.path) &&
+          !templatePath(identity.filename) &&
+          ["yaml", "ansible"].includes(document.languageId) &&
+          /\.ya?ml$/i.test(document.uri.path) &&
+          (!previous ||
+            (previous.physical === false &&
+              previous.filename === identity.filename))
+        )
+          identity.physical = false;
+        else throw error;
+      }
     } catch (error) {
+      if (!current()) return false;
+      if (unavailableSource(error)) {
+        this.withdrawSource(document);
+        return false;
+      }
       // Unknown plaintext candidates outside the configured root or with no
       // accessible identity are declined quietly, like ordinary plaintext.
       if (
@@ -431,17 +516,7 @@ export class EditorIntegration implements vscode.Disposable {
         return false;
       throw error;
     }
-    if (
-      this.disposed ||
-      !vscode.workspace.isTrusted ||
-      document.isClosed ||
-      this.closedTabs.has(document.uri.toString()) ||
-      document.version !== expectedVersion ||
-      documentRevision !== this.documentRevision(document) ||
-      rootRevision !== this.rootRevision(key) ||
-      this.roots.get(key) !== root
-    )
-      return false;
+    if (!current()) return false;
     if (
       !templatePath(identity.filename) &&
       !templatePath(identity.path) &&
@@ -451,10 +526,16 @@ export class EditorIntegration implements vscode.Disposable {
         /\.ya?ml$/i.test(document.uri.path)
       )
     ) {
-      this.sourceOwners.delete(document.uri.toString());
-      this.roots.forgetSource(document.uri.toString());
+      this.withdrawSource(document);
       return false;
     }
+    const previous = this.sourceOwners.get(document.uri.toString());
+    if (
+      previous &&
+      (previous.root !== identity.root ||
+        previous.filename !== identity.filename)
+    )
+      this.withdrawSource(document);
     this.documentFolders.set(document.uri.toString(), key);
     this.rememberSource(document, identity);
     return true;
@@ -515,7 +596,20 @@ export class EditorIntegration implements vscode.Disposable {
       vscode.workspace.getWorkspaceFolder(document.uri)!,
     );
     if (!root) return;
-    const identity = await identify(root, document.uri.fsPath);
+    let identity: Identity;
+    try {
+      identity = await identify(root, document.uri.fsPath);
+    } catch (error) {
+      if (!unavailableSource(error)) throw error;
+      if (
+        version === document.version &&
+        documentRevision === this.documentRevision(document) &&
+        rootRevision === this.rootRevision(folder) &&
+        this.roots.get(folder) === root
+      )
+        this.withdrawSource(document);
+      return;
+    }
     const snapshot = {
       ...identity,
       sourceFilename: document.uri.fsPath,
@@ -643,7 +737,29 @@ export class EditorIntegration implements vscode.Disposable {
       this.documentRevision(document) !== revision
     )
       return;
-    if (!(await this.admit(document, version))) return;
+    const sourceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    const sourceRootRevision = sourceFolder
+      ? this.rootRevision(sourceFolder.uri.toString())
+      : undefined;
+    try {
+      if (!(await this.admit(document, version))) return;
+    } catch (error) {
+      if (
+        document.version === version &&
+        this.documentRevision(document) === revision &&
+        sourceFolder &&
+        this.rootRevision(sourceFolder.uri.toString()) === sourceRootRevision &&
+        this.eligible(document)
+      ) {
+        this.failures.set(document.uri.toString(), {
+          token: this.statusToken(document),
+          message: error instanceof Error ? error.message : String(error),
+        });
+        this.updateStatus();
+        this.error(error, manual);
+      }
+      return;
+    }
     if (!this.eligible(document)) return;
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
