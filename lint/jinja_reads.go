@@ -98,27 +98,33 @@ func markParameterBindings(tokens []Token, open int, bindings map[int]bool) {
 	if close < 0 {
 		return
 	}
-	inDefault := false
-	for index := open + 1; index < close; index++ {
+	markAssignmentBindings(tokens, open+1, close, bindings)
+}
+
+// Assignment targets precede the equals sign in each top-level comma segment.
+// Both parameter defaults and with values may contain balanced delimiters.
+func markAssignmentBindings(tokens []Token, start, end int, bindings map[int]bool) {
+	inValue := false
+	for index := start; index < end; index++ {
 		token := tokens[index]
 		switch token.Text {
 		case "=":
-			inDefault = true
+			inValue = true
 		case ",":
-			inDefault = false
+			inValue = false
 		case "(", "[", "{":
-			end := balancedEnd(tokens, index, close)
-			if end < 0 {
+			close := balancedEnd(tokens, index, end)
+			if close < 0 {
 				return
 			}
-			if !inDefault {
-				for binding := index; binding <= end; binding++ {
+			if !inValue {
+				for binding := index; binding <= close; binding++ {
 					bindings[binding] = true
 				}
 			}
-			index = end
+			index = close
 		default:
-			if !inDefault {
+			if !inValue {
 				bindings[index] = true
 			}
 		}

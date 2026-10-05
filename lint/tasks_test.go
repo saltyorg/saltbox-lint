@@ -70,6 +70,38 @@ func TestTaskActionArgumentPrecedence(t *testing.T) {
 	}
 }
 
+func TestTaskMappingArgumentEntriesPreserveEffectiveKeys(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  []string
+	}{
+		{"- action: {module: set_fact, args: {name: nested}}\n  args: {public: false, name: fallback}\n", []string{"name=nested", "public=false"}},
+		{"- local_action: {module: set_fact, name: direct, args: {module: value, args: nested}}\n", []string{"args=nested", "module=value", "name=direct"}},
+		{"- action: {module: set_fact name=scalar, name: direct}\n  args: {name: fallback, public: false}\n", []string{"public=false"}},
+		{"- action: {module: set_fact, args: 'name=scalar'}\n  args: {name: fallback}\n", nil},
+		{"- action: \"set_fact name='broken\"\n  args: {name: fallback}\n", nil},
+		{"- set_fact: {module: value, args: nested}\n", []string{"args=nested", "module=value"}},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			s, ds := Parse("tasks/main.yml", []byte(tc.input))
+			if len(ds) != 0 {
+				t.Fatal(ds)
+			}
+			task := TasksIn(s)[0]
+			var got []string
+			for _, entry := range task.mappingArgumentEntries() {
+				got = append(got, entry.Key.Value+"="+entry.Value.Value)
+				if task.argument(entry.Key.Value) != entry.Value || string(s.Data[entry.Key.Span.Start:entry.Key.Span.End]) != entry.Key.Value || string(s.Data[entry.Value.Span.Start:entry.Value.Span.End]) != entry.Value.Value {
+					t.Fatal("mapping lost effective value or original nodes")
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("arguments=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTaskScalarArgumentsDecodeBeforeAssignment(t *testing.T) {
 	for _, tc := range []struct {
 		tail, value string

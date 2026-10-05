@@ -275,6 +275,125 @@ func TestReferencesImportBindingAndNullSourceRepresentation(t *testing.T) {
 	}
 }
 
+func TestReferencesSetFactMappingArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name, task string
+	}{
+		{"module", "- ansible.builtin.set_fact:\n    # declared fact\n    'a_role_port': 42\n    cacheable: true\n"},
+		{"action", "- action:\n    module: ansible.builtin.set_fact\n    args:\n      # declared fact\n      'a_role_port': 42\n      cacheable: true\n"},
+		{"local-action", "- local_action:\n    module: set_fact\n    args:\n      # declared fact\n      'a_role_port': 42\n"},
+		{"task-args", "- set_fact:\n  args:\n    # declared fact\n    'a_role_port': 42\n"},
+		{"scalar-action-task-args", "- action: ansible.builtin.set_fact\n  args:\n    # declared fact\n    'a_role_port': 42\n"},
+		{"nested-overrides", "- action:\n    module: set_fact a_role_port=10\n    a_role_port: 20\n    args:\n      # declared fact\n      'a_role_port': 42\n  args:\n    a_role_port: 30\n"},
+		{"module-overrides-task-args", "- set_fact:\n    # declared fact\n    'a_role_port': 42\n  args:\n    a_role_port: 30\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			primary := filepath.Join(root, "roles/a/tasks/main.yml")
+			input := tc.task + "- debug:\n    msg: \"{{ lookup('role_var', '_port', role='a') }}\"\n"
+			writeTestSource(t, primary, input)
+			selected, err := References(t.Context(), Options{Root: root, Paths: []string{primary}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			full, err := References(t.Context(), Options{Root: root, Paths: []string{root}})
+			if err != nil || !reflect.DeepEqual(selected.References, full.References) {
+				t.Fatalf("selected/full differ: %v", err)
+			}
+			if len(selected.References) != 1 || selected.References[0].State != "resolved" || len(selected.References[0].Candidates) != 1 {
+				t.Fatalf("effective set_fact mapping omitted: %#v", selected.References)
+			}
+			declaration := selected.References[0].Candidates[0].Declaration
+			if declaration.Provenance != "set-fact" || declaration.Key.Text != "'a_role_port'" || declaration.Value.Text != "42" || len(declaration.Comments) != 1 {
+				t.Fatalf("effective declaration or comments lost: %#v", declaration)
+			}
+			for _, location := range []ReferenceLocation{declaration.Key, declaration.Value, declaration.Comments[0], selected.References[0].Location} {
+				if location.Path != "roles/a/tasks/main.yml" || input[location.Span.Start:location.Span.End] != location.Text {
+					t.Fatalf("original location lost: %#v", location)
+				}
+			}
+			data, err := os.ReadFile(primary)
+			if err != nil || string(data) != input || !selected.Dependencies.Complete {
+				t.Fatal("source preservation or dependencies lost")
+			}
+		})
+	}
+}
+
+func TestReferencesFromImportAliases(t *testing.T) {
+	for _, callee := range []string{"lookup", "query", "q"} {
+		call := callee + "('role_var', '_port', role='a')"
+		for _, tc := range []struct {
+			name, imports string
+			bound         bool
+		}{
+			{"renamed-source", callee + " as helper", false},
+			{"alias", "helper as " + callee, true},
+			{"unrenamed", callee, true},
+			{"multiple-renamed", "first as second, " + callee + " as helper, last", false},
+			{"multiple-alias", "first as second, helper as " + callee + ", last", true},
+			{"multiple-unrenamed", "first as second, " + callee + ", last", true},
+			{"context", callee + " as helper with context", false},
+			{"without-context", callee + " as helper without context", false},
+			{"renamed-and-alias", callee + " as helper, other as " + callee, true},
+		} {
+			t.Run(callee+"/"+tc.name, func(t *testing.T) {
+				root := t.TempDir()
+				primary := filepath.Join(root, "roles/a/tasks/main.yml")
+				input := fmt.Sprintf("- debug:\n    msg: |\n      {# {%% from 'helpers.j2' import helper as %s %%} #}\n      {{ \"import helper as %s\" }}\n      {{ %s }}\n      {%% from 'import as %s.j2' import %s %%}\n      {{ %s }}\n- debug:\n    msg: \"{{ %s }}\"\n", callee, callee, call, callee, tc.imports, call, call)
+				writeTestSource(t, primary, input)
+				writeTestSource(t, filepath.Join(root, "roles/a/defaults/main.yml"), "a_role_port: 42\n")
+				selected, err := References(t.Context(), Options{Root: root, Paths: []string{primary}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				full, err := References(t.Context(), Options{Root: root, Paths: []string{root}})
+				if err != nil || len(selected.References) != 3 || !reflect.DeepEqual(selected.References, full.References) {
+					t.Fatalf("selected/full references: %#v / %#v, %v", selected.References, full.References, err)
+				}
+				for i, read := range selected.References {
+					bound := tc.bound && i < 2
+					if bound {
+						if read.State != "dynamic" || len(read.Candidates) != 0 || !slices.Contains(read.Reasons, "local-callee-binding") {
+							t.Errorf("local import resolved: %#v", read)
+						}
+					} else if read.State != "resolved" || len(read.Candidates) != 1 || slices.Contains(read.Reasons, "local-callee-binding") {
+						t.Errorf("builtin source name lost: %#v", read)
+					}
+					if input[read.Location.Span.Start:read.Location.Span.End] != call || !slices.Contains(read.Reasons, "runtime-precedence-and-providers-unmodeled") {
+						t.Fatal("call span or runtime uncertainty lost")
+					}
+				}
+				data, err := os.ReadFile(primary)
+				if err != nil || string(data) != input || !selected.Dependencies.Complete {
+					t.Fatal("source preservation or dependencies lost")
+				}
+			})
+		}
+	}
+}
+
+func TestReferencesFromImportSourceExpression(t *testing.T) {
+	for _, callee := range []string{"lookup", "query", "q"} {
+		t.Run(callee, func(t *testing.T) {
+			root := t.TempDir()
+			primary := filepath.Join(root, "roles/a/tasks/main.yml")
+			call := callee + "('role_var', '_port', role='a')"
+			writeTestSource(t, primary, fmt.Sprintf("- debug:\n    msg: \"{%% from %s import other as helper %%}{{ %s }}\"\n", call, call))
+			writeTestSource(t, filepath.Join(root, "roles/a/defaults/main.yml"), "a_role_port: 42\n")
+			report, err := References(t.Context(), Options{Root: root, Paths: []string{primary}})
+			if err != nil || len(report.References) != 2 {
+				t.Fatalf("references: %#v, %v", report.References, err)
+			}
+			for _, read := range report.References {
+				if read.State != "resolved" || len(read.Candidates) != 1 || slices.Contains(read.Reasons, "local-callee-binding") {
+					t.Fatalf("source expression treated as binding: %#v", read)
+				}
+			}
+		})
+	}
+}
+
 func TestReferencesWithCalleeBindings(t *testing.T) {
 	for _, callee := range []string{"lookup", "query", "q"} {
 		call := callee + "('role_var', '_port', role='a')"

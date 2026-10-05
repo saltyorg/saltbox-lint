@@ -140,6 +140,40 @@ func (t Task) argument(key string) *Node {
 	}
 	return t.Node.Get("args").Get(key)
 }
+
+// mappingArgumentEntries retains original key/value nodes for effective mapping
+// arguments. Scalar projections still decide precedence through argument, but
+// cannot supply original YAML keys. Legacy action metadata is not an argument.
+func (t Task) mappingArgumentEntries() []Entry {
+	if t.unknownArguments {
+		return nil
+	}
+	legacy := t.Node.Get("action") == t.Arguments || t.Node.Get("local_action") == t.Arguments
+	mappings := []*Node{t.Node.Get("args"), t.Arguments}
+	if legacy {
+		mappings = append(mappings, t.Arguments.Get("args"))
+	}
+	entries := make(map[string]Entry)
+	for _, mapping := range mappings {
+		if mapping == nil || mapping.Kind != "mapping" {
+			continue
+		}
+		for _, entry := range mapping.Entries {
+			if legacy && mapping == t.Arguments && (entry.Key.Value == "module" || entry.Key.Value == "args") {
+				continue
+			}
+			if entry.Value == t.argument(entry.Key.Value) {
+				entries[entry.Key.Value] = entry
+			}
+		}
+	}
+	var result []Entry
+	for _, key := range sortedKeys(entries) {
+		result = append(result, entries[key])
+	}
+	return result
+}
+
 func (t Task) includeFile() string {
 	if t.Module != "include_tasks" {
 		return ""

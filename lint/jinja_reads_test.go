@@ -21,7 +21,10 @@ func TestVariableReadsDistinguishesBindingsFromDefaultExpressions(t *testing.T) 
 		{"{% import source as value %}", []string{"source"}},
 		{"{% from source import value as alias, other %}", []string{"source"}},
 		{"{% macro value(arg, second=source, third=fn(value, [other])) %}", []string{"source", "value", "other"}},
+		{"{% macro value(arg=fn([source, other], flag={'key': third}), last=fourth) %}", []string{"source", "other", "third", "fourth"}},
+		{"{% macro value(arg='last=source, other=value', last=fourth) %}", []string{"fourth"}},
 		{"{% call(value, other) fn(source) %}", []string{"source"}},
+		{"{% call(value=fn([source, other], flag=third), last=fourth) fn(fifth) %}", []string{"source", "other", "third", "fourth", "fifth"}},
 		{"{% filter value(arg=source) %}", []string{"source"}},
 		{"{{ fn(arg=source) }}", []string{"source"}},
 	} {

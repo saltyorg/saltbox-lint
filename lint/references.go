@@ -326,9 +326,9 @@ func newRoleSymbolIndex(p *Project) roleSymbolIndex {
 			if task.Vars != nil && task.Vars.Kind == "mapping" {
 				add(task.Vars.Entries, "task-vars", task.Node.Span)
 			}
-			if task.Module == "set_fact" && task.Arguments != nil && task.Arguments.Kind == "mapping" {
+			if task.Module == "set_fact" {
 				var entries []Entry
-				for _, entry := range task.Arguments.Entries {
+				for _, entry := range task.mappingArgumentEntries() {
 					if entry.Key.Value != "cacheable" {
 						entries = append(entries, entry)
 					}
@@ -543,36 +543,41 @@ func inventoryDeclarations(node *Node, add func([]Entry)) {
 func referenceBindings(expression Expression) map[int]bool {
 	bindings := statementBindings(expression)
 	tokens := expression.Tokens
-	if expression.Kind == "statement" && len(tokens) > 0 && tokens[0].Text == "with" {
+	if expression.Kind != "statement" || len(tokens) == 0 {
+		return bindings
+	}
+	if tokens[0].Text == "with" {
 		// With targets may be tuples. Each top-level equals sign begins a
 		// value, and the next top-level comma begins another assignment.
 		// Nested value calls/collections never introduce local bindings.
-		inValue := false
+		markAssignmentBindings(tokens, 1, len(tokens), bindings)
+	}
+	if tokens[0].Text == "from" {
+		// Read exclusion marks both source names and aliases. Only the alias
+		// is locally bound when renamed; an unrenamed import binds its name.
 		for i := 1; i < len(tokens); i++ {
-			switch tokens[i].Text {
-			case "=":
-				inValue = true
-			case ",":
-				inValue = false
-			case "(", "[", "{":
-				end := balancedEnd(tokens, i, len(tokens))
-				if end < 0 {
-					return bindings
-				}
-				if !inValue {
-					for target := i; target <= end; target++ {
-						bindings[target] = true
-					}
-				}
-				i = end
-			default:
-				if !inValue {
-					bindings[i] = true
-				}
+			if tokens[i].Kind != "name" || tokens[i].Text != "import" {
+				continue
 			}
+			for j := i + 1; j < len(tokens); j++ {
+				delete(bindings, j)
+			}
+			for j := i + 1; j < len(tokens); j++ {
+				if tokens[j].Text == "with" || tokens[j].Text == "without" {
+					break
+				}
+				if tokens[j].Kind != "name" {
+					continue
+				}
+				if j+2 < len(tokens) && tokens[j+1].Text == "as" {
+					j += 2
+				}
+				bindings[j] = true
+			}
+			break
 		}
 	}
-	if expression.Kind == "statement" && len(tokens) > 0 && tokens[0].Text == "import" {
+	if tokens[0].Text == "import" {
 		for i := 1; i+1 < len(tokens); i++ {
 			if tokens[i].Text == "as" {
 				bindings[i+1] = true
