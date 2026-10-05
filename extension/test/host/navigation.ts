@@ -8,6 +8,7 @@ import {
   lstatSync,
   rmdirSync,
   realpathSync,
+  readFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -825,20 +826,44 @@ export async function runNavigation(): Promise<void> {
   console.log(
     "PASS real completion edits only active quoted literal with undo; same-role, dynamic and missing context stay explicit",
   );
-  // Keep the manual control's context writes beside the existing target-save
-  // acceptance checks, after the source-only completion and undo assertions.
-  await runManualImpactFailure(document);
-  await runManualMarkerRefresh(document);
   const targetURI = vscode.Uri.joinPath(
     roots[0].uri,
     "roles/navtarget/defaults/main.yml",
   );
-  const targetDocument = await vscode.workspace.openTextDocument(targetURI),
-    targetOriginal = targetDocument.getText();
+  const targetBytes = readFileSync(targetURI.fsPath);
+  // Keep the manual control's context writes beside the existing target-save
+  // acceptance checks, after the source-only completion and undo assertions.
+  await runManualImpactFailure(document);
+  await runManualMarkerRefresh(document);
+  const openedTarget = await vscode.workspace.openTextDocument(targetURI);
+  assert.equal(openedTarget.isDirty, false);
+  assert.equal(readFileSync(targetURI.fsPath).equals(targetBytes), true);
+  // The preceding control restored disk bytes after an external context write.
+  // Resolve this owned clean buffer from disk before the editor-save control.
+  await vscode.window.showTextDocument(openedTarget, { preview: false });
+  assert.equal(
+    vscode.window.activeTextEditor?.document.uri.toString(),
+    targetURI.toString(),
+  );
+  await vscode.commands.executeCommand("workbench.action.files.revert");
+  assert.equal(openedTarget.isDirty, false);
+  assert.equal(Buffer.from(openedTarget.getText()).equals(targetBytes), true);
+  assert.equal(readFileSync(targetURI.fsPath).equals(targetBytes), true);
+  await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  const targetDocument = await vscode.workspace.openTextDocument(targetURI);
+  assert.equal(targetDocument.isDirty, false);
+  assert.equal(Buffer.from(targetDocument.getText()).equals(targetBytes), true);
+  assert.equal(readFileSync(targetURI.fsPath).equals(targetBytes), true);
+  await vscode.window.showTextDocument(document);
+  const targetOriginal = targetDocument.getText();
   await replace(targetDocument, targetOriginal + "# unsaved context\n");
+  assert.equal(targetDocument.isDirty, true);
   assert.deepEqual(await definitions(document), []);
   await replace(targetDocument, targetOriginal);
-  await targetDocument.save();
+  assert.equal(await targetDocument.save(), true);
+  assert.equal(targetDocument.isDirty, false);
+  assert.equal(Buffer.from(targetDocument.getText()).equals(targetBytes), true);
+  assert.equal(readFileSync(targetURI.fsPath).equals(targetBytes), true);
   await waitFor(
     async () => (await definitions(document)).length === 3,
     "saved target restores declarations",
