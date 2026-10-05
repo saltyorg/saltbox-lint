@@ -8,7 +8,11 @@ import (
 
 // FormattingEdits returns only the existing verified Jinja layout and section
 // spacing fixes. It does not discover files or promote manual previews to edits.
+// Template sources are read-only and return an error without layout planning.
 func FormattingEdits(source *Source) ([]Edit, error) {
+	if source != nil && source.Kind == Template {
+		return nil, fmt.Errorf("templates are read-only and cannot be formatted or fixed")
+	}
 	diagnostics, edits := layoutFindings(source)
 	edits = append(edits, FormattingSectionEdits(source)...)
 	edits, err := orderedEdits(edits)

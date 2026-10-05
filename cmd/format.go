@@ -101,14 +101,9 @@ func runFormat(command *cobra.Command, selection string, opts formatOptions) err
 }
 
 func planFormat(ctx context.Context, mode string, identity lint.SourceIdentity, data []byte) (plannedFormat, error) {
-	readOnly := identity.IsTemplate()
-	parseName := identity.Path
-	if readOnly {
-		parseName = "source.j2"
-	}
-	source, _ := lint.Parse(parseName, data)
-	source.Path = identity.Path
-	if readOnly {
+	if identity.IsTemplate() {
+		source, _ := lint.Parse("source.j2", data)
+		source.Path = identity.Path
 		return plannedFormat{status: "skipped", reason: "templates are read-only and cannot be formatted or fixed", source: source}, nil
 	}
 	if mode == "canonical" {
@@ -125,7 +120,7 @@ func planFormat(ctx context.Context, mode string, identity lint.SourceIdentity, 
 	if err != nil {
 		return plannedFormat{}, err
 	}
-	source = project.Sources[identity.Path]
+	source := project.Sources[identity.Path]
 	if source == nil || !project.Selected[identity.Path] {
 		return plannedFormat{}, fmt.Errorf("selected source %q is unavailable after loading context", identity.Path)
 	}

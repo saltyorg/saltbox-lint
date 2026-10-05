@@ -22,6 +22,8 @@ func TestTemplateScanner(t *testing.T) {
 		{"trim-like custom ending", "#jinja2:block_end_string:'-}}'\n{% raw-}}{{ literal{% endraw-}}", "", ""},
 		{"Unicode raw ending", "{% raw %}{{ literal{%\u00a0endraw\u00a0%}", "", ""},
 		{"trim", "{%- if a +%}\t{{- value -}}{#- ignore -#}{%+ endif -%}", "", ""},
+		{"output plus before bare end", "{{ value +}}", "", "expression grammar"},
+		{"output minus before trim end", "{{ value --}}", "", "expression grammar"},
 		{"custom", "#jinja2:variable_start_string:'[[',variable_end_string:']]',block_start_string:'<%',block_end_string:'%>',comment_start_string:'<#',comment_end_string:'#>',trim_blocks:False\r\n<% if yes %>[[ ']]' ]]<# ignored <% #><% endif %>", "", ""},
 		{"missing end", "{% if a %}literal", "missing endif", ""},
 		{"mismatched block", "{% if a %}{% endfor %}", "unexpected endfor", ""},
@@ -80,6 +82,63 @@ func TestTemplateScanner(t *testing.T) {
 						t.Fatalf("original token mapping: %+v", token)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestTemplateBodyTokensPreserveEndAdjacentArithmetic(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, last, partial string
+	}{
+		{"bare end", "é\r\n{{ value}}", "value", ""},
+		{"actual trim", "é\r\n{{- value-}}", "value", ""},
+		{"plus", "é\r\n{{ value +}}", "+", "expression grammar"},
+		{"minus before trim", "é\r\n{{ value --}}", "-", "expression grammar"},
+		{"leading plus", "{{+value}}", "value", "expression grammar"},
+		{"custom bare end", "#jinja2:variable_end_string:']]'\n{{ value]]", "value", ""},
+		{"custom trim-like end", "#jinja2:variable_end_string:'-}}'\n{{ value-}}", "value", ""},
+		{"custom plus end", "#jinja2:variable_end_string:'+}}'\n{{ value +}}", "value", ""},
+		{"custom plus before end", "#jinja2:variable_end_string:'+}}'\n{{ value ++}}", "+", "expression grammar"},
+		{"custom minus before trim", "#jinja2:variable_end_string:'-}}'\n{{ value ---}}", "-", "expression grammar"},
+		{"custom self-overlap end", "#jinja2:variable_end_string:'aaa'\n{{ value +aaaa", "+", "expression grammar"},
+		{"default ending inside custom body", "#jinja2:variable_end_string:']]'\n{{ value +}}]]", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(tc.input)
+			source, _ := Parse("value.j2", data)
+			scan := scanTemplate(source)
+			if tc.last == "" {
+				if len(scan.diagnostics) == 0 {
+					t.Fatal("custom tag body silently accepted an unmatched default ending")
+				}
+				return
+			}
+			if len(scan.diagnostics) != 0 || len(scan.expressions) != 1 {
+				t.Fatalf("expressions=%+v diagnostics=%+v", scan.expressions, scan.diagnostics)
+			}
+			tokens := scan.expressions[0].Tokens
+			if len(tokens) == 0 || tokens[len(tokens)-1].Text != tc.last {
+				t.Fatalf("lost end-adjacent token %q: %+v", tc.last, tokens)
+			}
+			if tc.name == "leading plus" && tokens[0].Text != "+" {
+				t.Fatal("lost first body token as a synthetic opening control")
+			}
+			for _, token := range tokens {
+				if string(source.Data[token.Span.Start:token.Span.End]) != token.Text {
+					t.Fatalf("token source bytes differ: %+v", token)
+				}
+			}
+			reasons := strings.Join(scan.reasons, ";")
+			if tc.partial == "" && reasons != "" || tc.partial != "" && !strings.Contains(reasons, tc.partial) {
+				t.Fatalf("partial=%q want=%q", reasons, tc.partial)
+			}
+			state := "static-template"
+			if tc.partial != "" {
+				state = "partial-template"
+			}
+			if observedSource(source).ParseState != state || !bytes.Equal(data, source.Data) {
+				t.Fatal("coverage state or original bytes changed")
 			}
 		})
 	}

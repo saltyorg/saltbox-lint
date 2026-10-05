@@ -9,6 +9,63 @@ import (
 	"testing"
 )
 
+func TestTemplateSharedFormattingAndVerificationDecline(t *testing.T) {
+	for _, tc := range []struct{ parsePath, path string }{
+		{"value.j2", "value.j2"},
+		{"roles/demo/templates/config.yaml", "roles/demo/templates/config.yaml"},
+		{"value.j2", "alias.yaml"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			path := tc.path
+			data := []byte(" \t{{ value\r\n }}  ")
+			source, _ := Parse(tc.parsePath, data)
+			// Physical aliases retain template kind with a logical YAML identity.
+			source.Path = path
+			edits, err := FormattingEdits(source)
+			if err == nil || !strings.Contains(err.Error(), "read-only") || len(edits) != 0 {
+				t.Errorf("template formatting edits=%+v err=%v", edits, err)
+			}
+			if diagnostics, edits := layoutFindings(source); len(diagnostics) != 0 || len(edits) != 0 {
+				t.Errorf("template layout planned: %+v %+v", diagnostics, edits)
+			}
+			if len(FormattingSectionEdits(source)) != 0 {
+				t.Error("template section edits planned")
+			}
+			start := bytes.Index(data, []byte("\r\n"))
+			edit := Edit{Span: Span{start, start + 3}, Text: " "}
+			validation := newWhitespaceValidation(source)
+			if validation.allows(edit) || validation.verifiedCandidate(applyEdits(data, []Edit{edit})) || verifiedCandidate(source, data) {
+				t.Error("YAML preservation verifier admitted template bytes")
+			}
+			project := &Project{Sources: map[string]*Source{path: source}, Selected: map[string]bool{path: true}}
+			var decisions []FixDecision
+			changes, err := planFixes(project, []Diagnostic{{Path: path, RuleID: "jinja-layout", Fix: &Fix{Edits: []Edit{edit}}}}, &decisions)
+			if err != nil || len(changes) != 0 || len(decisions) != 1 || decisions[0].State == "available" {
+				t.Errorf("template fix availability: %+v %+v %v", changes, decisions, err)
+			}
+			if _, _, ok := buildStructuralChange(source, []string{"jinja-conditional-length"}); ok {
+				t.Error("structural planner admitted a template")
+			}
+			if tc.parsePath == path {
+				if edits, err := PlannedFixEdits(Change{Path: path, Before: data, After: applyEdits(data, []Edit{edit})}); err == nil || len(edits) != 0 {
+					t.Error("fix projection admitted a fabricated template change")
+				}
+			}
+			if !bytes.Equal(data, source.Data) {
+				t.Fatal("shared helpers changed template bytes")
+			}
+		})
+	}
+	if edits, err := FormattingEdits(nil); err != nil || len(edits) != 0 {
+		t.Fatalf("empty-source formatting changed: %+v %v", edits, err)
+	}
+	source := jinjaSource(t, "value: \"{{ value\n }}\"\n")
+	edits, err := FormattingEdits(source)
+	if err != nil || len(edits) == 0 || !verifiedCandidate(source, applyEdits(source.Data, edits)) {
+		t.Fatalf("YAML formatting lost verified edits: %+v %v", edits, err)
+	}
+}
+
 func TestPlanFixesRejectsConflictsAndSemanticEdits(t *testing.T) {
 	p := layoutProject(t, "v: \"{{ a\n | f('a  b') }}\" # keep  spaces\n")
 	for _, edits := range [][]Edit{

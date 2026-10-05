@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +33,7 @@ func TestTemplateCommandReadOnlyBoundaries(t *testing.T) {
 	}
 	for _, mode := range []string{"canonical", "lint-fixes"} {
 		wire, stderr, code := invokeFormat(t, templateText, "format", "--root", root, "--mode", mode, "--stdin-filename", template, "-")
-		if code != 0 || wire.Status != "skipped" || len(wire.Edits) != 0 || !strings.Contains(wire.Reason, "read-only") {
+		if code != 0 || wire.Path != "literal.j2" || wire.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(templateText))) || wire.Status != "skipped" || len(wire.Edits) != 0 || !strings.Contains(wire.Reason, "read-only") {
 			t.Fatalf("direct template format %s: %+v %s %d", mode, wire, stderr, code)
 		}
 	}
@@ -113,7 +115,7 @@ func TestTemplateCanonicalAliasFormatterAndMixedPreflight(t *testing.T) {
 	}
 	for _, mode := range []string{"canonical", "lint-fixes"} {
 		wire, stderr, code := invokeFormat(t, input, "format", "--root", root, "--mode", mode, "--stdin-filename", alias, "-")
-		if code != 0 || wire.Path != "alias.yaml" || wire.Status != "skipped" || len(wire.Edits) != 0 {
+		if code != 0 || wire.Path != "alias.yaml" || wire.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(input))) || wire.Status != "skipped" || len(wire.Edits) != 0 {
 			t.Fatalf("canonical alias format: %+v %s %d", wire, stderr, code)
 		}
 	}

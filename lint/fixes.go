@@ -144,6 +144,9 @@ func planFixes(project *Project, diagnostics []Diagnostic, decisions *[]FixDecis
 // ordered edits against its original snapshot. PlanFixes remains the authority
 // that selects, combines and verifies the change.
 func PlannedFixEdits(change Change) ([]Edit, error) {
+	if kind, _, _ := classify(change.Path); kind == Template {
+		return nil, fmt.Errorf("templates are read-only and cannot be formatted or fixed")
+	}
 	if len(change.fixRules) > 0 {
 		source, _ := Parse(change.Path, change.Before)
 		verified, _, ok := buildStructuralChange(source, change.fixRules)
@@ -169,6 +172,9 @@ type whitespaceValidation struct {
 
 func newWhitespaceValidation(s *Source) whitespaceValidation {
 	validation := whitespaceValidation{source: s, sections: map[Edit]bool{}}
+	if s.Kind == Template {
+		return validation
+	}
 	for _, gap := range sectionGaps(s) {
 		validation.sections[gap.Edit] = true
 	}
@@ -218,6 +224,9 @@ func verifiedCandidate(before *Source, after []byte) bool {
 
 func (v whitespaceValidation) verifiedCandidate(after []byte) bool {
 	before := v.source
+	if before.Kind == Template {
+		return false
+	}
 	candidate, ds := Parse(before.Path, after)
 	if len(ds) > 0 || len(before.parseDiagnostics) > 0 || len(candidate.Documents) != len(before.Documents) {
 		return false

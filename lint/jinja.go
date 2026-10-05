@@ -299,85 +299,8 @@ func scanExpressions(text string) []Expression {
 			i++
 		}
 		opening := Span{start, i}
-		var closing Span
-		var tokens []Token
-		var stack []byte
-		complete := false
-		for i < len(text) {
-			if len(stack) == 0 && (strings.HasPrefix(text[i:], close) || ((text[i] == '-' || text[i] == '+') && strings.HasPrefix(text[i+1:], close))) {
-				closing.Start = i
-				if text[i] == '-' || text[i] == '+' {
-					i++
-				}
-				i += 2
-				closing.End = i
-				complete = true
-				break
-			}
-			if space(text[i]) {
-				i++
-				continue
-			}
-			a := i
-			k := "punctuation"
-			if text[i] == '\'' || text[i] == '"' {
-				k = "string"
-				quote := text[i]
-				i++
-				closed := false
-				for i < len(text) {
-					if text[i] == '\\' {
-						i += min(2, len(text)-i)
-						continue
-					}
-					if text[i] == quote {
-						i++
-						closed = true
-						break
-					}
-					i++
-				}
-				if !closed {
-					tokens = append(tokens, Token{k, text[a:i], Span{a, i}})
-					break
-				}
-			} else if r, _ := utf8.DecodeRuneInString(text[i:]); unicode.IsLetter(r) || r == '_' {
-				k = "name"
-				for i < len(text) {
-					r, size := utf8.DecodeRuneInString(text[i:])
-					if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
-						break
-					}
-					i += size
-				}
-			} else if text[i] >= '0' && text[i] <= '9' {
-				k = "number"
-				match := ""
-				if i == 0 || text[i-1] != '.' {
-					match = jinjaFloat.FindString(text[i:])
-				}
-				if match == "" {
-					match = jinjaInteger.FindString(text[i:])
-				}
-				i += len(match)
-			} else {
-				c := text[i]
-				i++
-				if strings.ContainsRune("([{", rune(c)) {
-					stack = append(stack, c)
-				}
-				if strings.ContainsRune(")]}", rune(c)) {
-					if len(stack) == 0 || !matching(stack[len(stack)-1], c) {
-						break
-					}
-					stack = stack[:len(stack)-1]
-				}
-				if i < len(text) && strings.Contains(" == != <= >= ** // ", " "+text[a:i+1]+" ") {
-					i++
-				}
-			}
-			tokens = append(tokens, Token{k, text[a:i], Span{a, i}})
-		}
+		tokens, next, closing, complete := scanExpressionTokens(text, i, close)
+		i = next
 		e := Expression{Kind: kind, Span: Span{start, i}, Tokens: tokens, Complete: complete, text: text[start:i], opening: opening, closing: closing}
 		if kind == "statement" && len(tokens) == 1 && tokens[0].Text == "raw" && complete {
 			// Raw content is literal; scan only for its matching endraw statement.
@@ -410,6 +333,90 @@ func scanExpressions(text string) []Expression {
 	}
 	return out
 }
+
+// scanExpressionTokens shares token grammar without reinterpreting an extracted
+// template body. An empty close lexes all bytes with no delimiter or trim handling.
+// Nonempty closes retain the existing YAML scalar whitespace-control behavior.
+func scanExpressionTokens(text string, start int, close string) (tokens []Token, end int, closing Span, complete bool) {
+	var stack []byte
+	i := start
+	for i < len(text) {
+		if close != "" && len(stack) == 0 && (strings.HasPrefix(text[i:], close) || ((text[i] == '-' || text[i] == '+') && strings.HasPrefix(text[i+1:], close))) {
+			closing.Start = i
+			if text[i] == '-' || text[i] == '+' {
+				i++
+			}
+			i += 2
+			closing.End = i
+			return tokens, i, closing, true
+		}
+		if space(text[i]) {
+			i++
+			continue
+		}
+		a := i
+		k := "punctuation"
+		if text[i] == '\'' || text[i] == '"' {
+			k = "string"
+			quote := text[i]
+			i++
+			closed := false
+			for i < len(text) {
+				if text[i] == '\\' {
+					i += min(2, len(text)-i)
+					continue
+				}
+				if text[i] == quote {
+					i++
+					closed = true
+					break
+				}
+				i++
+			}
+			if !closed {
+				tokens = append(tokens, Token{k, text[a:i], Span{a, i}})
+				return tokens, i, closing, false
+			}
+		} else if r, _ := utf8.DecodeRuneInString(text[i:]); unicode.IsLetter(r) || r == '_' {
+			k = "name"
+			for i < len(text) {
+				r, size := utf8.DecodeRuneInString(text[i:])
+				if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+					break
+				}
+				i += size
+			}
+		} else if text[i] >= '0' && text[i] <= '9' {
+			k = "number"
+			match := ""
+			if i == 0 || text[i-1] != '.' {
+				match = jinjaFloat.FindString(text[i:])
+			}
+			if match == "" {
+				match = jinjaInteger.FindString(text[i:])
+			}
+			i += len(match)
+		} else {
+			c := text[i]
+			i++
+			if strings.ContainsRune("([{", rune(c)) {
+				stack = append(stack, c)
+			}
+			if strings.ContainsRune(")]}", rune(c)) {
+				if len(stack) == 0 || !matching(stack[len(stack)-1], c) {
+					return tokens, i, closing, false
+				}
+				stack = stack[:len(stack)-1]
+			}
+			if i < len(text) && strings.Contains(" == != <= >= ** // ", " "+text[a:i+1]+" ") {
+				i++
+			}
+		}
+		tokens = append(tokens, Token{k, text[a:i], Span{a, i}})
+	}
+	return tokens, i, closing, close == "" && len(stack) == 0
+}
+
 func matching(a, b byte) bool {
 	return a == '(' && b == ')' || a == '[' && b == ']' || a == '{' && b == '}'
 }

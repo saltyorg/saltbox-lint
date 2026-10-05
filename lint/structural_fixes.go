@@ -111,6 +111,9 @@ func structuralNodesEquivalent(a, b *Node, changes map[*Node]structuralFix) bool
 // It validates structural edits once per file, then uses the existing whitespace
 // authority for conditional wrapping and layout stabilization.
 func buildStructuralChange(source *Source, rules []string) (Change, []structuralFix, bool) {
+	if source.Kind == Template {
+		return Change{}, nil, false
+	}
 	s, ds := Parse(source.Path, source.Data)
 	if len(ds) > 0 {
 		return Change{}, nil, false

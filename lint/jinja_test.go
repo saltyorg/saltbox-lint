@@ -1,9 +1,50 @@
 package lint
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
+
+// Extracted template bodies use exact token lexing. YAML scalar consumers retain
+// their established delimiter/control interpretation, including closing plus.
+func TestYAMLExpressionDelimiterHandlingRemainsStable(t *testing.T) {
+	for _, tc := range []struct {
+		input, opening, closing string
+		tokens                  []string
+		complete                bool
+	}{
+		{"{{ value +}}", "{{", "+}}", []string{"value"}, true},
+		{"{{ value --}}", "{{", "-}}", []string{"value", "-"}, true},
+		{"{{+value}}", "{{+", "}}", []string{"value"}, true},
+		{"{{- f('}}', 1e-3) -}}", "{{-", "-}}", []string{"f", "(", "'}}'", ",", "1e-3", ")"}, true},
+		{"{%+ set x = value +%}", "{%+", "+%}", []string{"set", "x", "=", "value"}, true},
+		{"{{ value( }}", "{{", "", []string{"value", "("}, false},
+		{"{{ 'unterminated", "{{", "", []string{"'unterminated"}, false},
+		{"{{ value(] }}", "{{", "", []string{"value", "("}, false},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			es := scanExpressions(tc.input)
+			if len(es) != 1 || es[0].Complete != tc.complete {
+				t.Fatalf("expressions=%+v", es)
+			}
+			e := es[0]
+			if tc.input[e.opening.Start:e.opening.End] != tc.opening || tc.input[e.closing.Start:e.closing.End] != tc.closing {
+				t.Fatalf("delimiter spans changed: %+v", e)
+			}
+			var tokens []string
+			for _, token := range e.Tokens {
+				tokens = append(tokens, token.Text)
+				if tc.input[token.Span.Start:token.Span.End] != token.Text {
+					t.Fatalf("token source bytes changed: %+v", token)
+				}
+			}
+			if !slices.Equal(tokens, tc.tokens) {
+				t.Fatalf("tokens=%q want=%q", tokens, tc.tokens)
+			}
+		})
+	}
+}
 
 // Mapping ordinary YAML text used to allocate in proportion to its length for
 // every expression consumer, despite returning no expressions.

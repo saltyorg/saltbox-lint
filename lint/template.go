@@ -100,14 +100,14 @@ func scanTemplate(s *Source) templateScan {
 			continue
 		}
 		body := text[bodyStart:closeStart]
-		// The shared lexer accepts the same expression token grammar. Wrapper bytes
-		// are ephemeral; map every token back to the untouched template source.
-		parsed := scanExpressions("{{" + body + "}}")
-		if len(parsed) != 1 || !parsed[0].Complete {
+		// Delimiters and trim markers are already removed. Lex the exact body
+		// without interpreting its edge tokens as synthetic whitespace controls.
+		tokens, _, _, complete := scanExpressionTokens(body, 0, "")
+		if !complete {
 			partial("unsupported template token grammar")
 			continue
 		}
-		expression := parsed[0]
+		expression := Expression{Tokens: tokens, Complete: true}
 		expression.Kind = "output"
 		if kind == 1 {
 			expression.Kind = "statement"
@@ -119,10 +119,9 @@ func scanTemplate(s *Source) templateScan {
 		expression.mapped = true
 		expression.text = text[start:end]
 		for i := range expression.Tokens {
-			expression.Tokens[i].Span.Start += bodyStart - 2
-			expression.Tokens[i].Span.End += bodyStart - 2
+			expression.Tokens[i].Span.Start += bodyStart
+			expression.Tokens[i].Span.End += bodyStart
 		}
-		tokens := expression.Tokens
 		totalTokens += len(tokens)
 		if totalTokens > 32768 {
 			partial("template exceeds the 32768 token aggregate static limit")

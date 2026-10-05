@@ -21,6 +21,9 @@ type layoutAnalysis struct {
 }
 
 func layoutFindings(s *Source) ([]Diagnostic, []Edit) {
+	if s != nil && s.Kind == Template {
+		return nil, nil
+	}
 	var ds []Diagnostic
 	var edits []Edit
 	for _, e := range Expressions(s) {
