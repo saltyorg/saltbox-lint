@@ -97,6 +97,7 @@ func TestStructuralFixAuthority(t *testing.T) {
 	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
 		t.Fatal(err)
 	}
+	admitWriteTestSources(t, p)
 	ds := Analyze(p, Rules())
 	cs, err := PlanFixes(p, ds)
 	if err != nil || len(cs) != 1 {

@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+// Synthetic policy projects acquire disk authority only through a real read of
+// their fixtures. Parse alone must never authorize writing a physical file.
+func admitWriteTestSources(t *testing.T, project *Project) {
+	t.Helper()
+	var paths []string
+	for _, name := range sortedKeys(project.Selected) {
+		if project.Selected[name] {
+			paths = append(paths, filepath.Join(project.Root, filepath.FromSlash(name)))
+		}
+	}
+	loaded, err := Load(t.Context(), Options{Root: project.Root, Paths: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Root = loaded.Root
+	for _, name := range sortedKeys(project.Selected) {
+		if !project.Selected[name] {
+			continue
+		}
+		if source := loaded.Sources[name]; source == nil || !bytes.Equal(source.Data, project.Sources[name].Data) {
+			t.Fatalf("write fixture differs from policy source: %s", name)
+		} else {
+			project.Sources[name].diskIdentity = source.diskIdentity
+		}
+	}
+}
+
 func TestTemplateSharedFormattingAndVerificationDecline(t *testing.T) {
 	for _, tc := range []struct{ parsePath, path string }{
 		{"value.j2", "value.j2"},
@@ -100,6 +127,7 @@ func TestWriteChangesPreservesModeRejectsStaleAndSymlink(t *testing.T) {
 	}
 	p := layoutProject(t, string(before))
 	p.Root = root
+	admitWriteTestSources(t, p)
 	changes, err := PlanFixes(p, Analyze(p, Rules()))
 	if err != nil || len(changes) != 1 {
 		t.Fatalf("plan: %+v %v", changes, err)
@@ -145,6 +173,7 @@ func TestWriteChangesRejectsUnverifiedAndUnselectedChanges(t *testing.T) {
 	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
 		t.Fatal(err)
 	}
+	admitWriteTestSources(t, p)
 	for _, change := range []Change{{Path: "../escape", Before: []byte(input), After: []byte("bad")}, {Path: "values.yml", Before: []byte(input), After: []byte("v: changed\n")}} {
 		if err := WriteChanges(p, []Change{change}); err == nil {
 			t.Fatalf("unsafe write accepted: %+v", change)
@@ -180,6 +209,7 @@ func TestWriteChangesPreflightsWholeBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	admitWriteTestSources(t, p)
 	changes, err := PlanFixes(p, Analyze(p, jinjaRules()))
 	if err != nil || len(changes) != 2 {
 		t.Fatalf("changes %+v %v", changes, err)
@@ -250,6 +280,7 @@ func TestWriteChangesPreservesSpecialModeBits(t *testing.T) {
 	if err := os.Chmod(path, 0640|os.ModeSticky); err != nil {
 		t.Fatal(err)
 	}
+	admitWriteTestSources(t, p)
 	changes, err := PlanFixes(p, Analyze(p, jinjaRules()))
 	if err != nil || len(changes) != 1 {
 		t.Fatalf("changes: %+v %v", changes, err)

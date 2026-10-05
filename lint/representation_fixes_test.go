@@ -83,6 +83,7 @@ func TestRepresentationWriteAuthority(t *testing.T) {
 	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
 		t.Fatal(err)
 	}
+	admitWriteTestSources(t, p)
 	cs, err := PlanFixes(p, Analyze(p, Rules()))
 	if err != nil || len(cs) != 1 {
 		t.Fatalf("plan %+v %v", cs, err)
@@ -183,6 +184,7 @@ func TestRepresentationCommentAuthority(t *testing.T) {
 		if err := os.WriteFile(path, []byte(input), 0600); err != nil {
 			t.Fatal(err)
 		}
+		admitWriteTestSources(t, p)
 		ds := Analyze(p, Rules())
 		cs, err := PlanFixes(p, ds)
 		if err != nil || len(cs) != 1 {

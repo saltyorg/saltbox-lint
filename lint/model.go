@@ -1,7 +1,11 @@
 // Package lint analyzes Saltbox and Sandbox sources without executing them.
 package lint
 
-import "github.com/saltyorg/saltbox-lint/yamlindex"
+import (
+	"os"
+
+	"github.com/saltyorg/saltbox-lint/yamlindex"
+)
 
 // Span is a half-open range of UTF-8 byte offsets in the original source.
 type Span struct{ Start, End int }
@@ -61,6 +65,9 @@ type Source struct {
 	lineStarts       []int
 	yamlComments     []Span
 	sourceIndex      *yamlindex.Index
+	// Disk write authority comes only from the file opened by the loader.
+	// Parsed values and editor overlays have no physical write authority.
+	diskIdentity *sourceDiskIdentity
 	// Loaded templates retain their context owner, not cached derived facts.
 	// Admission is rechecked against current tasks on every scan.
 	templateProject *Project
@@ -70,6 +77,11 @@ type Source struct {
 	// Original admitted spellings retain lexical role configuration even after
 	// a directory alias has been resolved or a canonical editor snapshot used.
 	templateSpellings []string
+}
+
+type sourceDiskIdentity struct {
+	path               string
+	root, parent, file os.FileInfo
 }
 
 // YAMLComments returns exact source spans for comments recognized by the YAML

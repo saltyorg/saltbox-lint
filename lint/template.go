@@ -519,6 +519,17 @@ func templateConfiguration(text string) (templateDelimiters, int, string) {
 			}
 		}
 	}
+	// Endings have precedence only at Jinja token boundaries. The bounded
+	// scanner skips quoted strings and brackets, but does not reproduce the
+	// full name, number and operator lexer. Decline endings that can begin
+	// inside those tokens instead of treating a token suffix as a tag end.
+	for _, ending := range d.ends[:2] {
+		first := ending[0]
+		exponentSign := (first == '+' || first == '-') && (len(ending) == 1 || ending[1] >= '0' && ending[1] <= '9')
+		if first >= 0x80 || first >= 'a' && first <= 'z' || first >= 'A' && first <= 'Z' || first >= '0' && first <= '9' || strings.ContainsRune("_.=*/", rune(first)) || exponentSign {
+			return d, 0, "unsupported #jinja2 configuration: closing delimiter may split an identifier, number or operator token"
+		}
+	}
 	return d, end + 1, ""
 }
 

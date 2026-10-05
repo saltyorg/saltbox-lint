@@ -316,9 +316,9 @@ func WriteChanges(project *Project, changes []Change) error {
 		return fmt.Errorf("write changes: project is required")
 	}
 	type pending struct {
-		path   string
-		change Change
-		info   os.FileInfo
+		path     string
+		change   Change
+		identity *sourceDiskIdentity
 	}
 	var files []pending
 	seen := map[string]bool{}
@@ -355,16 +355,28 @@ func WriteChanges(project *Project, changes []Change) error {
 		if !bytes.Equal(actual, change.Before) {
 			return fmt.Errorf("file changed since analysis: %s", change.Path)
 		}
-		files = append(files, pending{change.Path, change, info})
+		if err := s.diskIdentity.validate(project.Root, root, change.Path, true); err != nil {
+			return err
+		}
+		files = append(files, pending{change.Path, change, s.diskIdentity})
+	}
+	// Recheck even selected sources with no changes after candidate preparation,
+	// immediately before the first replacement. Later atomicity remains per file.
+	if err := RequireWritableSelection(project); err != nil {
+		return err
 	}
 	for _, f := range files {
-		if err := replaceFile(root, f.path, f.change, f.info); err != nil {
+		if err := replaceFile(project.Root, root, f.path, f.change, f.identity); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func replaceFile(root *os.Root, path string, change Change, info os.FileInfo) error {
+func replaceFile(rootPath string, root *os.Root, path string, change Change, identity *sourceDiskIdentity) error {
+	if err := identity.validate(rootPath, root, path, true); err != nil {
+		return err
+	}
+	info := identity.file
 	// CreateTemp is rooted in the canonical parent directory; Root operations fence
 	// destination traversal even if a parent symlink changes after discovery.
 	parent := filepath.Dir(path)
@@ -373,6 +385,10 @@ func replaceFile(root *os.Root, path string, change Change, info os.FileInfo) er
 		return fmt.Errorf("open parent of %s: %w", path, err)
 	}
 	defer func() { _ = dir.Close() }()
+	parentInfo, err := dir.Stat(".")
+	if err != nil || !os.SameFile(identity.parent, parentInfo) {
+		return fmt.Errorf("source parent changed before write: %s", path)
+	}
 	base := filepath.Base(path)
 	current, err := dir.Lstat(base)
 	if err != nil || !os.SameFile(info, current) || !current.Mode().IsRegular() {
@@ -413,6 +429,9 @@ func replaceFile(root *os.Root, path string, change Change, info os.FileInfo) er
 	if err != nil {
 		return fmt.Errorf("prepare replacement for %s: %w", path, err)
 	}
+	if err := identity.validate(rootPath, root, path, true); err != nil {
+		return err
+	}
 	current, err = dir.Lstat(base)
 	if err != nil || !os.SameFile(info, current) || !current.Mode().IsRegular() {
 		return fmt.Errorf("file identity changed before replacement: %s", path)
@@ -441,12 +460,40 @@ func RequireWritableSelection(project *Project) error {
 	if project == nil {
 		return nil
 	}
-	for _, name := range sortedKeys(project.Selected) {
+	names := sortedKeys(project.Selected)
+	var root *os.Root
+	defer func() {
+		if root != nil {
+			_ = root.Close()
+		}
+	}()
+	for _, name := range names {
 		if !project.Selected[name] {
 			continue
 		}
 		if source := project.Sources[name]; source != nil && source.Kind == Template {
 			return fmt.Errorf("refuse source writes: selected template %s is read-only", name)
+		}
+		source := project.Sources[name]
+		if source == nil || source.diskIdentity == nil {
+			return fmt.Errorf("source has no admitted disk identity: %s", name)
+		}
+		if root == nil {
+			var err error
+			root, err = os.OpenRoot(project.Root)
+			if err != nil {
+				return fmt.Errorf("open project root: %w", err)
+			}
+		}
+		if err := source.diskIdentity.validate(project.Root, root, name, true); err != nil {
+			return err
+		}
+		actual, err := root.ReadFile(filepath.FromSlash(name))
+		if err != nil || !bytes.Equal(actual, source.Data) {
+			return fmt.Errorf("file changed since analysis: %s", name)
+		}
+		if err := source.diskIdentity.validate(project.Root, root, name, true); err != nil {
+			return err
 		}
 	}
 	return nil

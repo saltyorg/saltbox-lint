@@ -50,6 +50,7 @@ func TestTemplateScanner(t *testing.T) {
 		{"unsupported expression", "{{ [x for x in values] }}", "", "expression grammar"},
 		{"unknown config", "#jinja2:unknown:True\n{{ value", "", "option: unknown"},
 		{"long delimiter", "#jinja2:variable_start_string:'" + strings.Repeat("a", 33) + "'\n{{ unclosed", "", "size or whitespace"},
+		{"custom self-overlap end", "#jinja2:variable_end_string:'aaa'\n{{ value +aaaa", "", "may split"},
 		{"overlapping config", "#jinja2:variable_start_string:'{'\n{{ value", "", "overlapping"},
 		{"invalid config", "#jinja2:variable_start_string:False\n{{ value", "", "plain quoted"},
 		{"config escapes", "#jinja2:variable_start_string:'\\x7b'\n{{ value", "", "plain quoted"},
@@ -101,7 +102,6 @@ func TestTemplateBodyTokensPreserveEndAdjacentArithmetic(t *testing.T) {
 		{"custom plus end", "#jinja2:variable_end_string:'+}}'\n{{ value +}}", "value", ""},
 		{"custom plus before end", "#jinja2:variable_end_string:'+}}'\n{{ value ++}}", "+", "expression grammar"},
 		{"custom minus before trim", "#jinja2:variable_end_string:'-}}'\n{{ value ---}}", "-", "expression grammar"},
-		{"custom self-overlap end", "#jinja2:variable_end_string:'aaa'\n{{ value +aaaa", "+", "expression grammar"},
 		{"default ending inside custom body", "#jinja2:variable_end_string:']]'\n{{ value +}}]]", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -347,6 +347,7 @@ func TestTemplateRendererUnavailableFacts(t *testing.T) {
 		{"default supported good", good, "", false},
 		{"default supported bad", traefikFixture(t, "renderer.bad.j2"), "", true},
 		{"custom supported good", "#jinja2:variable_start_string:'[[',variable_end_string:']]'\n" + strings.ReplaceAll(strings.ReplaceAll(good, "{{", "[["), "}}", "]]"), "", false},
+		{"identifier ending", "#jinja2:variable_end_string:'api'\n" + strings.ReplaceAll(good, "}}", "api"), "may split", false},
 		{"filtered capture", "{% set ignored | default(value=true) %}\n" + good + "{% endset %}\n", "statement argument grammar", true},
 		{"discarded list assignment", "{% set ignored = [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}\n", "statement argument grammar", true},
 		{"list guard", "{% if [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}literal{% endif %}\n", "statement argument grammar", true},

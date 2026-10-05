@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"iter"
 	"os"
@@ -441,6 +442,7 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	}
 	var data []byte
 	var canonical string
+	var diskIdentity *sourceDiskIdentity
 	var err error
 	if absolute == l.stdinPath {
 		data = bytes.Clone(l.stdin)
@@ -449,7 +451,7 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 			err = fmt.Errorf("source identity changed for %s", absolute)
 		}
 	} else {
-		data, canonical, err = l.readFileIdentity(absolute)
+		data, canonical, diskIdentity, err = l.readFileSnapshot(absolute)
 	}
 	if err != nil {
 		return nil, err
@@ -458,6 +460,7 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 		// One template buffer supplies all admitted spellings of that output.
 		// This is invocation-local and never overlays unrelated equal contents.
 		data = bytes.Clone(l.stdin)
+		diskIdentity = nil
 	}
 	parseName := relative
 	spellings := l.templateSpellings[absolute]
@@ -483,6 +486,7 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 	}
 	source, _ := parseOwnedSource(parseName, data)
 	source.Path = relative
+	source.diskIdentity = diskIdentity
 	if source.Kind == Template {
 		source.templateProject = l.project
 		source.templatePath = canonical
@@ -542,24 +546,62 @@ func (l *sourceLoader) readFile(absolute string) ([]byte, error) {
 }
 
 func (l *sourceLoader) readFileIdentity(absolute string) ([]byte, string, error) {
+	data, name, _, err := l.readFileSnapshot(absolute)
+	return data, name, err
+}
+
+func (l *sourceLoader) readFileSnapshot(absolute string) ([]byte, string, *sourceDiskIdentity, error) {
 	name, err := ownedSourcePath(l.project.Root, absolute)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
-	info, err := l.files.Stat(filepath.FromSlash(name))
+	dir, err := l.files.OpenRoot(filepath.Dir(filepath.FromSlash(name)))
 	if err != nil {
-		return nil, "", fmt.Errorf("inspect source %s: %w", absolute, err)
+		return nil, "", nil, fmt.Errorf("open source parent %s: %w", absolute, err)
 	}
-	if !info.Mode().IsRegular() {
-		return nil, "", fmt.Errorf("source is not a regular file: %s", absolute)
-	}
-	// Root confines the actual read even if a resolved parent is replaced
-	// after admission. This is an observation, not atomic result acceptance.
-	data, err := l.files.ReadFile(filepath.FromSlash(name))
+	defer func() { _ = dir.Close() }()
+	entry, err := dir.Lstat(filepath.Base(name))
 	if err != nil {
-		return nil, "", fmt.Errorf("read source %s: %w", absolute, err)
+		return nil, "", nil, fmt.Errorf("inspect source %s: %w", absolute, err)
 	}
-	return data, name, nil
+	if !entry.Mode().IsRegular() {
+		return nil, "", nil, fmt.Errorf("source is not a regular file: %s", absolute)
+	}
+	file, err := dir.Open(filepath.Base(name))
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("open source %s: %w", absolute, err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("inspect source %s: %w", absolute, err)
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(entry, info) {
+		return nil, "", nil, fmt.Errorf("source is not a regular file: %s", absolute)
+	}
+	rootInfo, err := l.files.Stat(".")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	parentInfo, err := dir.Stat(".")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	// The bytes and identity come from the same opened file. These bounded
+	// observations do not claim an atomic filesystem snapshot.
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("read source %s: %w", absolute, err)
+	}
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
+		return nil, "", nil, fmt.Errorf("source changed while reading: %s", absolute)
+	}
+	identity := &sourceDiskIdentity{path: name, root: rootInfo, parent: parentInfo, file: info}
+	if err := identity.validate(l.project.Root, l.files, name, false); err != nil {
+		return nil, "", nil, err
+	}
+	return data, name, identity, nil
 }
 
 func (l *sourceLoader) directory(dir string, selected bool) error {

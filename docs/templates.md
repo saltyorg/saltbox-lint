@@ -30,6 +30,13 @@ inside a template directory. They do not add unopened templates to selections.
 | Fix All, `check --fix` and formatting | Verified YAML edits | Unavailable |
 | Rename, rendering and execution | Unavailable | Unavailable |
 
+Source writes require the disk identity acquired by the loader's opened read.
+Every selected source is checked again before a fix batch, including sources
+that need no change. Changed file or parent identities, retargeted aliases and
+changed template ownership refuse the batch. Each replacement rechecks its own
+owner and original bytes. Replacement is atomic per file; this is not an atomic
+snapshot or a transaction across concurrent filesystem changes.
+
 The scanner distinguishes literal output, quoted tag strings, comments, raw
 blocks, expression tags and statement tags. It checks provable delimiter,
 bracket, nesting, branch and ending errors. Supported block structure includes
@@ -45,6 +52,15 @@ unknown or repeated options, escaped delimiter literals, malformed values and
 active line-statement/comment prefixes return `template-partial-coverage` with
 an explicit reason. The scanner does not fall back to default delimiters after
 an unsupported header. `None` line prefixes keep ordinary tag scanning.
+
+Variable and block endings that start with a letter, digit, non-ASCII byte, or
+one of `_ . = * /` also receive partial coverage. Such endings can occur inside
+identifier, number or operator tokens. Bare `+`/`-` endings and those signs
+followed by a digit are also unsupported because they can split an exponent.
+Their full custom-delimiter precedence is outside the bounded scanner.
+For example, an ending of `api` never splits
+`traefik_middleware_api` into a false read or missing-consumption finding.
+Comment endings do not lex expression tokens and retain their literal behavior.
 
 An owning template task with any explicit variable, block or comment delimiter
 argument receives partial coverage, including arguments equal to the defaults.
