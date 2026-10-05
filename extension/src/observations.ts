@@ -32,11 +32,64 @@ export function contentFingerprint(
   return `${observationFingerprint(value, target)}:${hash(bytes)}`;
 }
 
+export interface TemplateOverlay {
+  path: string;
+  filename: string;
+  sourceFilename: string;
+  sha256: string;
+}
+
 export async function observeAnalysis(
   record: AnalysisRecord,
   buffers: ReadonlySet<string> = new Set(),
   readSource: (filename: string) => Promise<Uint8Array> = readFile,
-): Promise<{ fingerprints: Map<string, string>; changed: Set<string> }> {
+  templateOverlay?: TemplateOverlay,
+): Promise<{
+  fingerprints: Map<string, string>;
+  changed: Set<string>;
+  overlayPaths: Set<string>;
+}> {
+  const overlayPaths = new Set<string>();
+  // The CLI substitutes one template snapshot into its admitted aliases.
+  // Match ownership and the captured digest, never equal content alone.
+  const overlayFiles = new Set<string>();
+  let ownerFingerprint: string | undefined;
+  const overlayOwner = async () => {
+    if (!templateOverlay) return undefined;
+    if (
+      record.sources.length !== 1 ||
+      record.sources[0].path !== templateOverlay.path ||
+      record.sources[0].source_sha256 !== templateOverlay.sha256 ||
+      path.join(record.root, ...templateOverlay.path.split("/")) !==
+        templateOverlay.filename ||
+      (await realpath(record.root)) !== record.root ||
+      (await realpath(templateOverlay.filename)) !== templateOverlay.filename ||
+      (await realpath(templateOverlay.sourceFilename)) !==
+        templateOverlay.filename
+    )
+      throw new Error("Template overlay identity changed");
+    const origin = await lstat(templateOverlay.sourceFilename, {
+      bigint: true,
+    });
+    return [
+      fileFingerprint(await lstat(record.root, { bigint: true })),
+      fileFingerprint(await lstat(templateOverlay.filename, { bigint: true })),
+      fileFingerprint(origin),
+    ].join(":");
+  };
+  if (templateOverlay) {
+    try {
+      ownerFingerprint = await overlayOwner();
+      for (const file of record.sources[0].files)
+        if (file.state === "read") overlayFiles.add(file.path);
+    } catch {
+      return {
+        fingerprints: new Map(),
+        changed: new Set([templateOverlay.path]),
+        overlayPaths,
+      };
+    }
+  }
   const observations = new Map<string, DependencyFile>();
   const identities = new Map<string, DependencyFile>();
   for (const source of record.sources) {
@@ -47,7 +100,7 @@ export async function observeAnalysis(
   const fingerprints = new Map<string, string>(),
     changed = new Set<string>();
   for (const [relative, file] of observations) {
-    const overlay = buffers.has(relative);
+    let overlay = buffers.has(relative);
     const filename = path.join(record.root, ...relative.split("/"));
     try {
       const before = await lstat(filename, { bigint: true });
@@ -59,8 +112,9 @@ export async function observeAnalysis(
         ? await stat(filename, { bigint: true })
         : undefined;
       let bytes: Uint8Array | undefined;
+      let resolved: string | undefined;
       if (file.state === "read") {
-        const resolved = await realpath(filename);
+        resolved = await realpath(filename);
         const relativeTarget = path.relative(record.root, resolved);
         if (
           relativeTarget === ".." ||
@@ -69,6 +123,18 @@ export async function observeAnalysis(
         ) {
           changed.add(relative);
           continue;
+        }
+        if (
+          templateOverlay &&
+          overlayFiles.has(relative) &&
+          resolved === templateOverlay.filename
+        ) {
+          if (file.sha256 !== templateOverlay.sha256) {
+            changed.add(relative);
+            continue;
+          }
+          overlay = true;
+          overlayPaths.add(relative);
         }
         if ((beforeTarget ?? before).isFile())
           bytes = await readSource(resolved);
@@ -87,7 +153,8 @@ export async function observeAnalysis(
         : undefined;
       if (
         observationFingerprint(before, beforeTarget) !==
-        observationFingerprint(after, afterTarget)
+          observationFingerprint(after, afterTarget) ||
+        (resolved !== undefined && (await realpath(filename)) !== resolved)
       ) {
         changed.add(relative);
         continue;
@@ -147,5 +214,13 @@ export async function observeAnalysis(
       } else if (marker.state !== "unavailable") changed.add(relative);
     }
   }
-  return { fingerprints, changed };
+  if (templateOverlay) {
+    try {
+      if ((await overlayOwner()) !== ownerFingerprint)
+        changed.add(templateOverlay.path);
+    } catch {
+      changed.add(templateOverlay.path);
+    }
+  }
+  return { fingerprints, changed, overlayPaths };
 }

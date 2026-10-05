@@ -46,6 +46,7 @@ export async function validateNavigation(
   text: string,
   index: SnapshotIndex,
   uri: vscode.Uri,
+  overlayPaths: ReadonlySet<string> = new Set(),
 ): Promise<NavigationAnswer | undefined> {
   const snapshots = new Map<
     string,
@@ -55,6 +56,26 @@ export async function validateNavigation(
   for (const [target, digest] of Object.entries(report.target_hashes)) {
     if (target === report.path) {
       if (digest !== hash(text)) return;
+      continue;
+    }
+    if (overlayPaths.has(target)) {
+      // These aliases passed the shared observation's owner/digest checks.
+      // Recheck their identity before mapping snapshot spans to the open URI.
+      if (digest !== hash(text)) return;
+      try {
+        if (
+          (
+            await identify(
+              report.root,
+              path.join(report.root, ...target.split("/")),
+            )
+          ).path !== report.path
+        )
+          return;
+      } catch {
+        return;
+      }
+      snapshots.set(target, { text, index, uri });
       continue;
     }
     let filename: string;

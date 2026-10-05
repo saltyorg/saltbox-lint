@@ -336,3 +336,151 @@ test("one refreshed primary cannot suppress context invalidation for another pri
     await cleanup();
   }
 });
+
+test("template overlays admit only fresh canonical aliases with the captured buffer hash", async () => {
+  const { root, record, cleanup } = await fixture();
+  const owner = "roles/a/tasks/main.yml";
+  const alias = "roles/a/templates/reverse.yaml";
+  const original = join(root, "reverse-alias.j2");
+  const buffer = "{{ lookup('role_var', '_port') }}\n{% if broken %}";
+  const overlay = {
+    path: owner,
+    filename: join(root, owner),
+    sourceFilename: original,
+    sha256: hash(buffer),
+  };
+  try {
+    await symlink(overlay.filename, join(root, alias), "file");
+    await symlink(overlay.filename, original, "file");
+    record.sources[0].source_sha256 = overlay.sha256;
+    record.sources[0].files[0].sha256 = overlay.sha256;
+    record.sources[0].files.push({
+      path: alias,
+      state: "read",
+      sha256: overlay.sha256,
+    });
+    const observe = (read?: (filename: string) => Promise<Uint8Array>) =>
+      observeAnalysis(record, new Set([owner]), read, overlay);
+    const accepted = await observe();
+    assert.deepEqual(
+      [...accepted.changed],
+      [],
+      "both admitted aliases use the exact dirty snapshot",
+    );
+    assert.equal(accepted.fingerprints.has(alias), true);
+    const unrelated = "roles/a/templates/other.j2";
+    await writeFile(join(root, unrelated), "saved");
+    record.sources[0].files.push({
+      path: unrelated,
+      state: "read",
+      sha256: overlay.sha256,
+    });
+    assert.deepEqual(
+      [...(await observe()).changed],
+      [unrelated],
+      "equal reported buffer hashes grant no ownership",
+    );
+    record.sources[0].files.pop();
+    record.sources[0].files.at(-1)!.sha256 = hash("[]\n");
+    assert.equal(
+      (await observe()).changed.has(alias),
+      true,
+      "same owner with an unknown overlay digest declines",
+    );
+    record.sources[0].files.at(-1)!.sha256 = overlay.sha256;
+    await writeFile(join(root, "roles/a/templates/router.conf"), "evil");
+    assert.equal(
+      (await observe()).changed.has("roles/a/templates/router.conf"),
+      true,
+    );
+    await writeFile(join(root, "roles/a/templates/router.conf"), "good");
+    await rm(join(root, alias));
+    await symlink(
+      join(root, "roles/a/templates/router.conf"),
+      join(root, alias),
+      "file",
+    );
+    assert.equal(
+      (await observe()).changed.has(alias),
+      true,
+      "retargeting to another confined owner rejects",
+    );
+    await rm(join(root, alias));
+    assert.equal(
+      (await observe()).changed.has(alias),
+      true,
+      "missing aliases reject",
+    );
+    await symlink(overlay.filename, join(root, alias), "file");
+    let changedOwner = false;
+    const duringRead = await observe(async (filename) => {
+      const bytes = await readFile(filename);
+      if (!changedOwner && filename === overlay.filename) {
+        changedOwner = true;
+        const before = await lstat(filename, { bigint: true });
+        await writeFile(filename, "changed saved owner");
+        await utimes(
+          filename,
+          Number(before.atimeMs) / 1000,
+          Number(before.mtimeMs) / 1000 + 2,
+        );
+      }
+      return bytes;
+    });
+    assert.equal(changedOwner, true);
+    assert.equal(
+      duringRead.changed.has(owner),
+      true,
+      "owner writes during admission reject",
+    );
+    let retargetedOrigin = false;
+    const duringOriginChange = await observe(async (filename) => {
+      const bytes = await readFile(filename);
+      if (!retargetedOrigin && filename === overlay.filename) {
+        retargetedOrigin = true;
+        await rm(original);
+        await symlink(
+          join(root, "roles/a/templates/router.conf"),
+          original,
+          "file",
+        );
+      }
+      return bytes;
+    });
+    assert.equal(retargetedOrigin, true);
+    assert.equal(
+      duringOriginChange.changed.has(owner),
+      true,
+      "the original spelling is revalidated after reads",
+    );
+    await rm(original);
+    await symlink(overlay.filename, original, "file");
+    const escaped = root + "-external";
+    await writeFile(escaped, "external");
+    try {
+      await rm(join(root, alias));
+      await symlink(escaped, join(root, alias), "file");
+      const reads: string[] = [];
+      const result = await observe(async (filename) => {
+        reads.push(filename);
+        return readFile(filename);
+      });
+      assert.equal(result.changed.has(alias), true);
+      assert.equal(
+        reads.includes(escaped),
+        false,
+        "escaped bytes are never read",
+      );
+    } finally {
+      await rm(escaped, { force: true });
+    }
+    await rm(original);
+    assert.equal(
+      (await observe()).changed.has(owner),
+      true,
+      "the original spelling must still own the snapshot",
+    );
+  } finally {
+    await cleanup();
+  }
+});

@@ -791,6 +791,10 @@ export class EditorIntegration implements vscode.Disposable {
       const observed = await observeAnalysis(
         report.analysis!,
         document.isDirty ? new Set([snapshot.path]) : new Set(),
+        undefined,
+        this.isTemplate(document)
+          ? { ...snapshot, sha256: sourceHash }
+          : undefined,
       );
       for (const file of observed.changed)
         this.contextEvent(
@@ -1234,21 +1238,30 @@ export class EditorIntegration implements vscode.Disposable {
         } catch {
           continue;
         }
-        if (identity.path !== snapshot.path && dependencies.has(identity.path))
+        if (
+          (identity.path === snapshot.path &&
+            hash(buffer.getText()) !== snapshot.hash) ||
+          (identity.path !== snapshot.path && dependencies.has(identity.path))
+        )
           return;
       }
+      const observed = await observeAnalysis(
+        report.dependencies,
+        new Set([snapshot.path]),
+        undefined,
+        this.isTemplate(document)
+          ? { ...snapshot, sha256: snapshot.hash }
+          : undefined,
+      );
+      if (!current() || observed.changed.size) return;
       const answer = await validateNavigation(
         report,
         snapshot.text,
         snapshot.index,
         document.uri,
+        observed.overlayPaths,
       );
-      if (!answer) return;
-      const observed = await observeAnalysis(
-        report.dependencies,
-        new Set([snapshot.path]),
-      );
-      if (!current() || observed.changed.size) return;
+      if (!answer || !current()) return;
       const identity = await identify(snapshot.root, document.uri.fsPath);
       if (
         !current() ||

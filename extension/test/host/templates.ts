@@ -185,6 +185,27 @@ export async function runTemplates(): Promise<void> {
       ),
       "template completion never proposes Saltbox edits",
     );
+    // The CLI overlays every admitted spelling of this physical template.
+    // Verify navigation while the buffer differs from all saved spellings.
+    await replace(document, original + "{# unsaved template comment #}\n");
+    await vscode.commands.executeCommand("saltboxLint.checkDocument");
+    assert.deepEqual(findings(document), []);
+    await waitFor(async () => {
+      const locations = await vscode.commands.executeCommand<
+        (vscode.Location | vscode.LocationLink)[]
+      >("vscode.executeDefinitionProvider", uri, position);
+      return locations.length === 3;
+    }, "dirty template aliases retain definition navigation");
+    const dirtyReferences = await vscode.commands.executeCommand<
+      vscode.Location[]
+    >("vscode.executeReferenceProvider", uri, position);
+    assert.ok(
+      dirtyReferences.some(
+        (location) => location.uri.toString() === uri.toString(),
+      ),
+      "dirty template reference aliases use the captured buffer coordinates",
+    );
+    assert.equal(await readFile(uri.fsPath, "utf8"), original);
     const bad = " \t😀{% if enabled -%}\r\n{{ value }}  ";
     await replace(document, bad);
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
