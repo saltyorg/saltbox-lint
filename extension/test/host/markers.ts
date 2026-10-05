@@ -6,10 +6,12 @@ import { mkdtemp, rm, mkdir, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { EditorIntegration } from "../../src/editor.ts";
 import { observeRootFormatting } from "./root-observations.ts";
 import { checkMarkerEvents } from "./marker-events.ts";
 import { checkFormatReadiness } from "./format-readiness.ts";
+import { gateFormatterSource } from "./formatter-source-gate.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const diagnostics = (uri: vscode.Uri) =>
@@ -402,7 +404,7 @@ export async function runMarkers(): Promise<void> {
       "literal glob characters retain formatter registration",
     );
     // setTextDocumentLanguage is a no-op when the mode already matches.
-    // Establish a real transition before gating its automatic open check.
+    // Establish a real transition before observing automatic source admission.
     const languageSource = await vscode.languages.setTextDocumentLanguage(
       special,
       "plaintext",
@@ -410,82 +412,59 @@ export async function runMarkers(): Promise<void> {
     assert.equal(languageSource.languageId, "plaintext");
     assert.equal(languageSource.uri.toString(), special.uri.toString());
     const sourceIdentity = await realpath(languageSource.uri.fsPath);
-    const fsPromises =
-      require("node:fs/promises") as typeof import("node:fs/promises");
-    const originalRealpath = fsPromises.realpath;
-    const realpathDescriptor = Object.getOwnPropertyDescriptor(
-      fsPromises,
-      "realpath",
-    )!;
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let entries = 0;
-    const identityPaths: string[] = [];
-    let enterFormatter!: () => void;
-    const formatterIdentity = new Promise<void>((resolve) => {
-      enterFormatter = resolve;
-    });
-    const gatedCalls: Promise<unknown>[] = [];
+    const installedAPI = createRequire(
+      join(extension.extensionPath, "package.json"),
+    )("vscode") as typeof vscode;
+    const sourceGate = gateFormatterSource(
+      languageSource.uri,
+      sourceIdentity,
+      installedAPI,
+    );
+    let changed: vscode.TextDocument | undefined;
     let pendingFormat: Promise<vscode.TextEdit[]> | undefined;
-    Object.defineProperty(fsPromises, "realpath", {
-      ...realpathDescriptor,
-      value: async (...args: Parameters<typeof originalRealpath>) => {
-        if (identityPaths.length < 32) identityPaths.push(String(args[0]));
-        const resolved = await originalRealpath(...args);
-        // The source can arrive through its editor alias or canonical spelling.
-        // Gate only successful validation of this exact actual source.
-        if (resolved !== sourceIdentity) return resolved;
-        entries++;
-        if (entries === 2) enterFormatter();
-        const call = gate.then(() => resolved);
-        gatedCalls.push(call);
-        return call;
-      },
-    });
     try {
-      const changed = await vscode.languages.setTextDocumentLanguage(
+      changed = await vscode.languages.setTextDocumentLanguage(
         languageSource,
         "ansible",
       );
       assert.equal(changed.languageId, "ansible");
       assert.equal(changed.uri.toString(), languageSource.uri.toString());
-      try {
-        await waitFor(
-          () => entries > 0,
-          "automatic Ansible check enters source identity",
-        );
-      } catch (error) {
-        throw new Error(
-          `Ansible identity gate failed: ${JSON.stringify({ uri: changed.uri.toString(), sourceIdentity, language: changed.languageId, closed: changed.isClosed, entries, identityPaths })}`,
-          { cause: error },
-        );
-      }
+      assert.equal(changed.isClosed, false);
+      assert.ok(vscode.workspace.textDocuments.includes(changed));
+      // A language transition closes the old model and admits the new one.
+      // Wait for its real registration, then hold the actual public callback's
+      // source validation rather than an ordinal background filesystem read.
+      await waitFor(
+        () =>
+          sourceGate.counts().automaticEntries > 0 &&
+          sourceGate.registered(changed!),
+        "automatic Ansible admission restores its literal-path formatter",
+      );
       let settled = false;
       pendingFormat = formatting(changed).then((edits) => {
         settled = true;
         return edits;
       });
       const first = await Promise.race([
-        formatterIdentity.then(() => "identity"),
+        sourceGate.entered.then(() => "identity"),
         pendingFormat.then(() => "settled"),
       ]);
       assert.equal(
         first,
         "identity",
-        "Ansible formatter must validate source identity before settling",
+        "Ansible formatter must validate source identity before settling: " +
+          JSON.stringify(sourceGate.counts()),
       );
+      assert.equal(sourceGate.counts().invocations, 1);
+      assert.ok(sourceGate.counts().formatterEntries > 0);
       assert.equal(settled, false, "formatter waits for source validation");
-      release();
+      sourceGate.release();
       assert.ok(
         (await pendingFormat).length > 0,
         "Ansible formatter remains available after source validation",
       );
     } finally {
-      release();
-      Object.defineProperty(fsPromises, "realpath", realpathDescriptor);
-      await Promise.allSettled(gatedCalls);
+      await sourceGate.dispose();
       if (pendingFormat) await Promise.allSettled([pendingFormat]);
     }
     await marker(vscode.Uri.file(externalRoot), false);
@@ -493,7 +472,9 @@ export async function runMarkers(): Promise<void> {
       () => diagnostics(special.uri).length === 0,
       "outside workspace marker removal observed",
     );
-    assert.deepEqual(await formatting(special), []);
+    assert.ok(changed);
+    assert.equal(changed.isClosed, false);
+    assert.deepEqual(await formatting(changed), []);
   } finally {
     await config.update(
       "root",
