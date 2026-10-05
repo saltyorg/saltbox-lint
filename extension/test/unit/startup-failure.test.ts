@@ -171,9 +171,7 @@ test("startup failure reports actual public identities without contents or priva
     assert.equal(second.configuration.value.workspaceFolderValue, false);
     assert.equal(second.configuration.value.workspaceValue, null);
     assert.equal(second.configuration.value.effective, false);
-    const main = first.fixtures.find((file) =>
-      file.path.endsWith("/main.yml"),
-    )!;
+    const main = first.fixtures.find((file) => file.path === uris[0].fsPath)!;
     assert.equal(
       main.sha256,
       createHash("sha256").update("private fixture text\n").digest("hex"),
