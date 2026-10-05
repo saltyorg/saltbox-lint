@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { readFile, writeFile, unlink } from "node:fs/promises";
-import { parseCheck } from "../../src/protocol.ts";
+import { hash, parseCheck } from "../../src/protocol.ts";
 import { runProcess } from "../../src/process.ts";
 import { MarkedRoots } from "../../src/roots.ts";
 import { EditorIntegration, type CheckStatus } from "../../src/editor.ts";
@@ -52,9 +52,11 @@ export async function runTemplates(): Promise<void> {
       vscode.Uri.joinPath(root, "roles/readonly-directory/templates", basename),
     ),
   ]) {
-    const original = await readFile(uri.fsPath, "utf8");
+    const originalBytes = await readFile(uri.fsPath);
+    const original = originalBytes.toString("utf8");
     const document = await vscode.workspace.openTextDocument(uri);
     const editor = await vscode.window.showTextDocument(document);
+    const originalEol = document.eol;
     if (uri.path.endsWith("readonly-alias/config"))
       assert.equal(document.languageId, "plaintext");
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
@@ -209,8 +211,40 @@ export async function runTemplates(): Promise<void> {
     );
     assert.equal(await readFile(uri.fsPath, "utf8"), original);
     const bad = " \t😀{% if enabled -%}\r\n{{ value }}  ";
+    // WorkspaceEdit uses the existing model EOL. Admit the intended CRLF
+    // fixture explicitly before measuring any read-only operation.
+    assert.equal(
+      await editor.edit((edit) => edit.setEndOfLine(vscode.EndOfLine.CRLF)),
+      true,
+    );
     await replace(document, bad);
+    assert.equal(document.getText(), bad);
+    assert.equal(document.eol, vscode.EndOfLine.CRLF);
+    const before = Object.freeze({
+      text: document.getText(),
+      eol: document.eol,
+      version: document.version,
+    });
+    assert.deepEqual(await readFile(uri.fsPath), originalBytes);
+    console.log(
+      "SALTBOX_TEMPLATE_PRESERVATION " +
+        JSON.stringify({
+          path: uri.path.slice(root.path.length),
+          modelSha256: hash(before.text),
+          modelBytes: Buffer.byteLength(before.text),
+          eol: before.eol,
+          documentVersion: before.version,
+          diskSha256: hash(originalBytes),
+        }),
+    );
+    const assertPreserved = async () => {
+      assert.equal(document.getText(), before.text);
+      assert.equal(document.eol, before.eol);
+      assert.equal(document.version, before.version);
+      assert.deepEqual(await readFile(uri.fsPath), originalBytes);
+    };
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
+    await assertPreserved();
     assert.ok(
       findings(document).some(
         (item) => diagnosticCode(item) === "template-syntax",
@@ -226,6 +260,7 @@ export async function runTemplates(): Promise<void> {
       uri,
       new vscode.Range(0, 0, document.lineCount, 0),
     );
+    await assertPreserved();
     assert.ok(
       actions.some(
         (action) => action.command?.command === "saltboxLint.explainRule",
@@ -239,7 +274,15 @@ export async function runTemplates(): Promise<void> {
       ),
     );
     await vscode.commands.executeCommand("saltboxLint.fixAll", uri);
-    assert.equal(document.getText(), bad);
+    await assertPreserved();
+    await vscode.commands.executeCommand(
+      "saltboxLint.applySharedFix",
+      uri,
+      hash(before.text),
+      "unavailable-template-fix",
+      "unavailable-template-report",
+    );
+    await assertPreserved();
     const formats = await vscode.commands.executeCommand<
       vscode.TextEdit[] | undefined
     >("vscode.executeFormatDocumentProvider", uri, {
@@ -247,6 +290,7 @@ export async function runTemplates(): Promise<void> {
       insertSpaces: true,
     });
     assert.deepEqual(formats === undefined ? [] : formats, []);
+    await assertPreserved();
     for (const mode of ["canonical", "lint-fixes"]) {
       const wire: unknown = JSON.parse(
         await runProcess(
@@ -277,6 +321,7 @@ export async function runTemplates(): Promise<void> {
           Array.isArray(wire.edits) &&
           wire.edits.length === 0,
       );
+      await assertPreserved();
     }
     await replace(document, "#jinja2:line_statement_prefix:'#'\r\n{{ value");
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
@@ -298,7 +343,8 @@ export async function runTemplates(): Promise<void> {
     assert.match(status.reason, /partial coverage/);
     await vscode.commands.executeCommand("workbench.action.files.revert");
     assert.equal(document.getText(), original);
-    assert.equal(await readFile(uri.fsPath, "utf8"), original);
+    assert.equal(document.eol, originalEol);
+    assert.deepEqual(await readFile(uri.fsPath), originalBytes);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
   }
   const fullRootAdapter = new EditorIntegration(executable);
