@@ -7,7 +7,7 @@ import { parseQuery, type QueryOperation } from "./navigation-protocol.ts";
 import { RuleHelp } from "./help.ts";
 import * as vscode from "vscode";
 import { isUtf8 } from "node:buffer";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { lstatSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
@@ -543,6 +543,33 @@ export class EditorIntegration implements vscode.Disposable {
       document.version === snapshot.version &&
       hash(document.getText()) === snapshot.hash
     );
+  }
+  private async writableSnapshot(
+    document: vscode.TextDocument,
+    snapshot: Snapshot,
+  ): Promise<boolean> {
+    if (!this.current(document, snapshot) || !this.writable(document))
+      return false;
+    await this.roots.refresh(snapshot.folder);
+    try {
+      // Filesystem notifications may still be queued. Resolve the original
+      // spelling again rather than granting writes from its remembered owner.
+      const source = await stat(snapshot.sourceFilename);
+      const identity = await identify(snapshot.root, snapshot.sourceFilename);
+      return (
+        source.isFile() &&
+        this.current(document, snapshot) &&
+        this.roots.get(snapshot.folder) === snapshot.root &&
+        identity.filename === snapshot.filename &&
+        identity.path === snapshot.path &&
+        !templatePath(identity.filename) &&
+        !templatePath(identity.path) &&
+        this.writable(document)
+      );
+    } catch {
+      // A missing, escaping or inaccessible source cannot authorize an edit.
+      return false;
+    }
   }
   private publish(uri: vscode.Uri): void {
     this.updateStatus();
@@ -1142,7 +1169,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (!fix || fix.path !== result.snapshot.path) return;
     const edit = new vscode.WorkspaceEdit();
     edit.set(uri, textEdits(result.snapshot.index.edits(fix.edits)));
-    if (!this.current(document, result.snapshot)) return;
+    if (!(await this.writableSnapshot(document, result.snapshot))) return;
     await vscode.workspace.applyEdit(edit);
   }
   private async query(
@@ -1312,21 +1339,30 @@ export class EditorIntegration implements vscode.Disposable {
     mode: "canonical" | "lint-fixes",
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
-    const version = document.version;
-    if (token?.isCancellationRequested || this.isTemplate(document)) return [];
+    return (
+      (await this.formattingResult(document, mode, document.version, token))
+        ?.edits ?? []
+    );
+  }
+  private async formattingResult(
+    document: vscode.TextDocument,
+    mode: "canonical" | "lint-fixes",
+    version: number,
+    token?: vscode.CancellationToken,
+  ): Promise<{ snapshot: Snapshot; edits: vscode.TextEdit[] } | undefined> {
+    if (token?.isCancellationRequested || this.isTemplate(document)) return;
     const abort = new AbortController();
     const listener = token?.onCancellationRequested(() => abort.abort());
     try {
       const snapshot = await this.snapshot(document, version);
-      if (!snapshot || abort.signal.aborted || !this.writable(document))
-        return [];
+      if (!snapshot || abort.signal.aborted || !this.writable(document)) return;
       if (!document.isDirty && !isUtf8(await readFile(snapshot.filename))) {
         this.output.appendLine(
           `Skipped ${snapshot.path}: invalid UTF-8; editor formatting requires UTF-8.`,
         );
-        return [];
+        return;
       }
-      if (!this.current(document, snapshot) || abort.signal.aborted) return [];
+      if (!this.current(document, snapshot) || abort.signal.aborted) return;
       const wire = await this.formatting.submit(
         document.uri.toString(),
         mode === "canonical" ? 2 : 1,
@@ -1357,16 +1393,19 @@ export class EditorIntegration implements vscode.Disposable {
         !this.current(document, snapshot) ||
         !this.writable(document)
       )
-        return [];
+        return;
       const plan = parseFormat(wire, snapshot.path, snapshot.text);
       if (plan.status === "skipped")
         this.output.appendLine(`Skipped ${snapshot.path}: ${plan.reason}`);
-      return this.current(document, snapshot) && this.writable(document)
-        ? textEdits(plan.edits)
-        : [];
+      if (
+        !(await this.writableSnapshot(document, snapshot)) ||
+        abort.signal.aborted
+      )
+        return;
+      return { snapshot, edits: textEdits(plan.edits) };
     } catch (error) {
       if (!abort.signal.aborted) this.error(error, true);
-      return [];
+      return;
     } finally {
       listener?.dispose();
     }
@@ -1385,20 +1424,17 @@ export class EditorIntegration implements vscode.Disposable {
       ?.uri.toString();
     if (!folder) return;
     await this.roots.refresh(folder);
-    const revision = this.rootRevision(folder);
-    const documentRevision = this.documentRevision(document);
-    const edits = await this.format(document, "lint-fixes");
+    const result = await this.formattingResult(document, "lint-fixes", version);
     if (
-      !edits.length ||
+      !result?.edits.length ||
       !this.writable(document) ||
       document.version !== version ||
-      hash(document.getText()) !== sourceHash ||
-      revision !== this.rootRevision(folder) ||
-      documentRevision !== this.documentRevision(document)
+      hash(document.getText()) !== sourceHash
     )
       return;
     const edit = new vscode.WorkspaceEdit();
-    edit.set(document.uri, edits);
+    edit.set(document.uri, result.edits);
+    if (!(await this.writableSnapshot(document, result.snapshot))) return;
     await vscode.workspace.applyEdit(edit);
   }
   change(document: vscode.TextDocument): void {

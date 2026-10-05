@@ -7,6 +7,7 @@ import { MarkedRoots } from "../../src/roots.ts";
 import { EditorIntegration, type CheckStatus } from "../../src/editor.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
+import { checkPendingWritableOwnership } from "./writable-ownership.ts";
 
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
@@ -37,6 +38,7 @@ async function waitFor(predicate: () => Promise<boolean>, reason: string) {
 export async function runTemplates(): Promise<void> {
   const root = vscode.workspace.workspaceFolders![0].uri;
   const executable = process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!;
+  await checkPendingWritableOwnership(executable, root);
   // Exercise the first extensionless alias before any conventional template
   // has established an owner for the same physical file.
   for (const uri of [
