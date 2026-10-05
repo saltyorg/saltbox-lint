@@ -21,6 +21,13 @@ async function replace(document: vscode.TextDocument, text: string) {
   );
   assert.equal(await vscode.workspace.applyEdit(edit), true);
 }
+async function showTemplateDocument(uri: vscode.Uri) {
+  const editor = await vscode.window.showTextDocument(uri);
+  assert.equal(editor.document.uri.toString(), uri.toString());
+  assert.equal(editor.document.isClosed, false);
+  assert.equal(vscode.window.activeTextEditor, editor);
+  return editor;
+}
 function findings(document: vscode.TextDocument) {
   return vscode.languages
     .getDiagnostics(document.uri)
@@ -54,8 +61,7 @@ export async function runTemplates(): Promise<void> {
   ]) {
     const originalBytes = await readFile(uri.fsPath);
     const original = originalBytes.toString("utf8");
-    const document = await vscode.workspace.openTextDocument(uri);
-    const editor = await vscode.window.showTextDocument(document);
+    let document = (await showTemplateDocument(uri)).document;
     const originalEol = document.eol;
     if (uri.path.endsWith("readonly-alias/config"))
       assert.equal(document.languageId, "plaintext");
@@ -160,7 +166,11 @@ export async function runTemplates(): Promise<void> {
     assert.ok(
       references.some((location) => location.uri.toString() === uri.toString()),
     );
-    editor.selection = new vscode.Selection(position, position);
+    const impactEditor = await showTemplateDocument(uri);
+    document = impactEditor.document;
+    assert.equal(document.getText(), original);
+    assert.equal(document.eol, originalEol);
+    impactEditor.selection = new vscode.Selection(position, position);
     const impact = await vscode.commands.executeCommand<QueryReport>(
       "saltboxLint.showImpact",
     );
@@ -176,7 +186,9 @@ export async function runTemplates(): Promise<void> {
       ),
     );
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
-    await vscode.window.showTextDocument(document);
+    document = (await showTemplateDocument(uri)).document;
+    assert.equal(document.getText(), original);
+    assert.equal(document.eol, originalEol);
     const completions =
       await vscode.commands.executeCommand<vscode.CompletionList>(
         "vscode.executeCompletionItemProvider",
@@ -213,8 +225,17 @@ export async function runTemplates(): Promise<void> {
     const bad = " \t😀{% if enabled -%}\r\n{{ value }}  ";
     // WorkspaceEdit uses the existing model EOL. Admit the intended CRLF
     // fixture explicitly before measuring any read-only operation.
+    const beforeAdmission = { text: document.getText(), eol: document.eol };
+    const admissionEditor = await showTemplateDocument(uri);
+    document = admissionEditor.document;
+    assert.deepEqual(
+      { text: document.getText(), eol: document.eol },
+      beforeAdmission,
+    );
     assert.equal(
-      await editor.edit((edit) => edit.setEndOfLine(vscode.EndOfLine.CRLF)),
+      await admissionEditor.edit((edit) =>
+        edit.setEndOfLine(vscode.EndOfLine.CRLF),
+      ),
       true,
     );
     await replace(document, bad);
@@ -341,6 +362,20 @@ export async function runTemplates(): Promise<void> {
     assert.equal(status.state, "current");
     assert.match(status.reason, /Template coverage is bounded and read-only/);
     assert.match(status.reason, /partial coverage/);
+    const beforeRevert = {
+      text: document.getText(),
+      eol: document.eol,
+      version: document.version,
+    };
+    document = (await showTemplateDocument(uri)).document;
+    assert.deepEqual(
+      {
+        text: document.getText(),
+        eol: document.eol,
+        version: document.version,
+      },
+      beforeRevert,
+    );
     await vscode.commands.executeCommand("workbench.action.files.revert");
     assert.equal(document.getText(), original);
     assert.equal(document.eol, originalEol);
