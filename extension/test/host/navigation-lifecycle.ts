@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { EditorIntegration } from "../../src/editor.ts";
+import { hash, SnapshotIndex } from "../../src/protocol.ts";
+import type { MarkedRoots } from "../../src/roots.ts";
 import {
   FixtureJournal,
   fixtureGateInstance,
@@ -40,9 +42,35 @@ export async function runNavigationLifecycle(
   const pending: Promise<unknown>[] = [];
   const adapter = new EditorIntegration(executable);
   const tokens: vscode.CancellationTokenSource[] = [];
+  const version = document.version;
+  const sourceHash = hash(document.getText());
   const position = document.positionAt(document.getText().indexOf("_port") + 2);
   let nonce = randomUUID();
   try {
+    // Initialization publishes root ownership and revokes older query revisions.
+    // Join that actual probe on this adapter before issuing its lifecycle query.
+    const roots = (adapter as unknown as { roots: MarkedRoots }).roots;
+    await roots.ready();
+    await adapter.check(document);
+    assert.equal(adapter.status(document).state, "current");
+    assert.equal(document.version, version);
+    assert.equal(hash(document.getText()), sourceHash);
+    const root = roots.get(
+      vscode.workspace.getWorkspaceFolder(document.uri)!.uri.toString(),
+    );
+    assert.ok(root);
+    const argvExpected = [
+      "query",
+      "--root",
+      root,
+      "--stdin-filename",
+      realpathSync.native(document.uri.fsPath),
+      "--operation",
+      "definition",
+      "--offset",
+      String(new SnapshotIndex(document.getText()).byteOffset(position)),
+      "-",
+    ];
     Object.defineProperty(childProcess, "spawn", {
       ...descriptor,
       value: function (this: unknown, ...args: Parameters<typeof spawn>) {
@@ -50,7 +78,9 @@ export async function runNavigationLifecycle(
         if (
           Array.isArray(argv) &&
           argv[0] === "query" &&
-          realpathSync.native(file) === canonical
+          realpathSync.native(file) === canonical &&
+          JSON.stringify(argv) === JSON.stringify(argvExpected) &&
+          options?.cwd === root
         ) {
           return spawn(process.env.SALTBOX_TEST_FIXTURE_PATH!, argv, {
             ...options,
@@ -80,8 +110,8 @@ export async function runNavigationLifecycle(
       "actual query CLI completed before cancellation gate",
     );
     const first = JSON.parse(readFileSync(gate + ".ready", "utf8"));
-    assert.equal(first.nonce, nonce);
-    assert.equal(first.args[0], "query");
+    assert.ok(first.nonce === nonce, "query readiness matches its gate nonce");
+    assert.deepEqual(first.args, argvExpected);
     const firstInstance = fixtureGateInstance(first, instances, journal);
     assert.equal(await fixtureRunning(firstInstance), true);
     cancellation.cancel();
@@ -102,7 +132,11 @@ export async function runNavigationLifecycle(
       "installed definition provider owns query gate",
     );
     const second = JSON.parse(readFileSync(gate + ".ready", "utf8"));
-    assert.equal(second.nonce, nonce);
+    assert.ok(
+      second.nonce === nonce,
+      "provider readiness matches its gate nonce",
+    );
+    assert.deepEqual(second.args, argvExpected);
     const secondInstance = fixtureGateInstance(second, instances, journal);
     assert.equal(await fixtureRunning(secondInstance), true);
     await vscode.commands.executeCommand(
