@@ -135,6 +135,26 @@ func load(ctx context.Context, opts Options, explain bool) (*Project, error) {
 	}
 	rules := Rules()
 	contextDirs := map[string]bool{}
+	if opts.referenceContext {
+		p.referenceDirectories = referenceContextDirectories(p)
+		p.referenceFiles = []string{"inventory.yaml", "inventory.yml", "vars.yaml", "vars.yml"}
+		for _, name := range p.referenceFiles {
+			absolute := filepath.Join(root, name)
+			if _, err := l.stat(absolute); errors.Is(err, fs.ErrNotExist) {
+				continue
+			} else if err != nil {
+				return nil, fmt.Errorf("inspect reference context %s: %w", name, err)
+			}
+			if err := l.add(absolute, false); err != nil {
+				return nil, err
+			}
+		}
+		for _, dirs := range p.referenceDirectories {
+			for _, dir := range dirs {
+				contextDirs[filepath.Join(root, filepath.FromSlash(dir))] = true
+			}
+		}
+	}
 	for selected := range p.Selected {
 		for _, dir := range contextDirectories(p.Sources[selected], rules) {
 			contextDirs[filepath.Join(root, filepath.FromSlash(dir))] = true

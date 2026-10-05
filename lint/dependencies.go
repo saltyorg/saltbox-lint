@@ -117,8 +117,21 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 		source := p.Sources[name]
 		record := SourceDependencies{Path: name, SourceSHA256: hashes[name], Files: []DependencyFile{}, Directories: []DependencyDirectory{}, Identity: []DependencyFile{}, Discovery: p.discovery}
 		files := map[string]bool{name: true}
-		for _, dir := range contextDirectories(source, rules) {
+		for _, file := range p.referenceFiles {
+			files[file] = true
+		}
+		dirs := append(contextDirectories(source, rules), p.referenceDirectories[name]...)
+		slices.Sort(dirs)
+		for _, dir := range slices.Compact(dirs) {
 			directoryMembers := members[dir]
+			if p.referenceDirectories != nil {
+				directoryMembers = nil
+				for _, context := range names {
+					if strings.HasPrefix(context, dir+"/") {
+						directoryMembers = append(directoryMembers, context)
+					}
+				}
+			}
 			if directoryMembers == nil {
 				directoryMembers = []string{}
 			}

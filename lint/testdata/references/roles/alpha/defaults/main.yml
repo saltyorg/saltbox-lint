@@ -1,0 +1,6 @@
+# The source value remains a Jinja expression.
+alpha_role_port: "{{ inventory_port | default(8080) }}"
+alpha_name: alpha-edge
+alpha_role_web_subdomain: alpha
+alpha_role_web_domain: example.test
+alpha_role_docker_env: {}

@@ -1,0 +1,50 @@
+- name: Same-role candidates
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_port', role='alpha') }}"
+- name: Cross-role declaration
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_port', role='beta') }}"
+- name: Endpoint components
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_web', role='alpha', scheme='https') }}"
+- name: Runtime providers remain legitimate
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_inventory_only', role='alpha', default='safe') }}"
+- name: Runtime target
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_port', role=caller_role) }}"
+- name: Runtime suffix
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', requested_suffix, role='alpha') }}"
+- name: External collection
+  ansible.builtin.debug:
+    msg: "{{ lookup('vendor.tools.role_var', '_port', role='alpha') }}"
+- name: External role
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_port', role='vendor.tools.external') }}"
+- name: Missing local role remains open
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_port', role='missing') }}"
+- name: Possible runtime declaration
+  ansible.builtin.set_fact:
+    alpha_role_runtime: 10
+- name: Set fact is a possible declaration
+  ansible.builtin.debug:
+    msg: "{{ query('role_var', '_runtime', role='alpha') }}"
+- name: Lexical binding
+  ansible.builtin.debug:
+    msg: "{% set lookup = caller_function %}{{ lookup('role_var', '_port', role='alpha') }}"
+- name: Comments and literals are opaque
+  ansible.builtin.debug:
+    msg: "{{ \"lookup('role_var', '_port', role='alpha')\" }}{# {{ lookup('role_var', '_port', role='alpha') }} #}"
+- name: Applicable task variables
+  vars:
+    beta_role_task: 44
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_task', role='beta') }}"
+- name: Unrelated task variable is unavailable
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_task', role='beta') }}"
+- name: Helpful spelling
+  ansible.builtin.debug:
+    msg: "{{ lookup('role_var', '_docker_en', role='alpha') }}"

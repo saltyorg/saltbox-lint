@@ -109,26 +109,29 @@ type Rule struct {
 	Check                                             func(*Project, *Source) []Diagnostic
 }
 type Project struct {
-	discoverable map[string]bool
-	identity     []DependencyFile
-	discovery    []DependencyFile
-	directories  map[string]string
-	analysis     *analysis
-	Root, Name   string
-	Sources      map[string]*Source
-	Selected     map[string]bool
-	Diagnostics  []Diagnostic
-	Dependencies *AnalysisRecord
-	Selection    *SelectionRecord
+	referenceDirectories map[string][]string
+	referenceFiles       []string
+	discoverable         map[string]bool
+	identity             []DependencyFile
+	discovery            []DependencyFile
+	directories          map[string]string
+	analysis             *analysis
+	Root, Name           string
+	Sources              map[string]*Source
+	Selected             map[string]bool
+	Diagnostics          []Diagnostic
+	Dependencies         *AnalysisRecord
+	Selection            *SelectionRecord
 }
 type Options struct {
-	Root            string
-	Paths           []string
-	StdinFilename   string
-	Stdin           []byte
-	IncludeAnalysis bool
-	ChangedSince    string
-	allowEmpty      bool
+	referenceContext bool
+	Root             string
+	Paths            []string
+	StdinFilename    string
+	Stdin            []byte
+	IncludeAnalysis  bool
+	ChangedSince     string
+	allowEmpty       bool
 }
 type Change struct {
 	fixRules      []string
