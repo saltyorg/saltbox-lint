@@ -892,10 +892,55 @@ export async function runDependencies(): Promise<void> {
       const aliasDocument = await vscode.workspace.openTextDocument(alias);
       await vscode.window.showTextDocument(aliasDocument, { preview: false });
       await editor.check(aliasDocument, true);
+      logFailureEvidence("SALTBOX_INITIAL_ALIAS_FACTS", {
+        schemaVersion: 1,
+        phase: "initial alias admission before template mutation",
+        aliasFacts: await aliasFailureFacts(
+          editor,
+          aliasDocument,
+          alias,
+          task,
+          template,
+          defaults,
+          "public facts after initial manual alias check; before template mutation",
+        ),
+      });
       await writeFile(template.fsPath, bad);
-      await waitFor(
-        () => renderer(alias),
-        "canonical template event must refresh an alias-owned primary",
+      await withFailureEvidence(
+        () =>
+          waitFor(
+            () => renderer(alias),
+            "canonical template event must refresh an alias-owned primary",
+          ),
+        async (error) => {
+          capturedFailure = true;
+          const [aliasFacts, processFacts] = await Promise.all([
+            aliasFailureFacts(
+              editor,
+              aliasDocument,
+              alias,
+              task,
+              template,
+              defaults,
+            ),
+            journalFailureEvidence(journal),
+          ]);
+          const evidence = {
+            schemaVersion: 1,
+            phase: "initial alias assertion rejected before disposal",
+            originalError: failureReason(error),
+            aliasFacts,
+            processFacts,
+            cleanup: "not yet observed",
+            processStart:
+              "unavailable; journal records credentialed lifetime, not OS start identity",
+          };
+          const retention = await retainFailureEvidence(evidence);
+          retainedFailureDirectory = retention.directory;
+          return { ...evidence, retention };
+        },
+        (evidence) =>
+          logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", evidence),
       );
       await writeFile(template.fsPath, good);
       await withFailureEvidence(

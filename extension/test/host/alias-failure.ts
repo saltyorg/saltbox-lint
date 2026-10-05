@@ -42,12 +42,12 @@ export async function aliasFailureFacts(
   canonical: vscode.Uri,
   template: vscode.Uri,
   defaults: vscode.Uri,
+  timing = "public facts after alias assertion rejection; not exact deadline state",
 ) {
   const capturedAt = new Date().toISOString();
   const facts = {
     capturedAt,
-    timing:
-      "public facts after alias assertion rejection; not exact deadline state",
+    timing,
     alias: alias.toString(),
     canonical: canonical.toString(),
     diagnostics: {
