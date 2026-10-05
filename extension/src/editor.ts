@@ -1056,10 +1056,11 @@ export class EditorIntegration implements vscode.Disposable {
     manual = false,
   ): Promise<NavigationAnswer | undefined> {
     if (token?.isCancellationRequested) return;
+    const version = document.version;
     const abort = new AbortController();
     const listener = token?.onCancellationRequested(() => abort.abort());
-    const revision = this.queryRevision;
-    const dependencyToken = this.dependencies.begin();
+    let revision: number | undefined;
+    let dependencyToken: number | undefined;
     let capturedSnapshot: Snapshot | undefined;
     let querySubmitted = false;
     const current = () =>
@@ -1068,7 +1069,15 @@ export class EditorIntegration implements vscode.Disposable {
       revision === this.queryRevision &&
       this.current(document, capturedSnapshot);
     try {
-      const snapshot = await this.snapshot(document);
+      if (manual) {
+        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (folder) await this.roots.refresh(folder.uri.toString());
+      }
+      // Marker refresh can revoke or restore request ownership. Capture its
+      // revisions only after that probe has completed.
+      revision = this.queryRevision;
+      dependencyToken = this.dependencies.begin();
+      const snapshot = await this.snapshot(document, version);
       capturedSnapshot = snapshot;
       if (!snapshot || !current()) return;
       if (

@@ -1,6 +1,12 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
-import { symlinkSync, unlinkSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  symlinkSync,
+  unlinkSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -346,6 +352,137 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
     await rm(temporary, { recursive: true, force: true });
   }
 }
+async function runManualMarkerRefresh(document: vscode.TextDocument) {
+  const workspace = createRequire(__filename)("vscode")
+    .workspace as typeof vscode.workspace;
+  const descriptor = Object.getOwnPropertyDescriptor(
+    workspace,
+    "createFileSystemWatcher",
+  )!;
+  const original = workspace.createFileSystemWatcher;
+  const marker = join(
+    vscode.workspace.getWorkspaceFolder(document.uri)!.uri.fsPath,
+    ".saltbox-lint",
+  );
+  let adapter: EditorIntegration | undefined;
+  // Hold this adapter's marker notifications throughout each manual command.
+  // Its real marker probes and canonical-root admission still read the disk.
+  Object.defineProperty(workspace, "createFileSystemWatcher", {
+    ...descriptor,
+    value: (...args: Parameters<typeof original>) => {
+      const watcher = original(...args);
+      const pattern = args[0];
+      if (typeof pattern === "string" || pattern.pattern !== ".saltbox-lint")
+        return watcher;
+      return new Proxy(watcher, {
+        get(target, key) {
+          if (
+            ["onDidCreate", "onDidChange", "onDidDelete"].includes(String(key))
+          )
+            return () => new vscode.Disposable(() => {});
+          const value: unknown = Reflect.get(target, key);
+          return typeof value === "function"
+            ? (value.bind(target) as unknown)
+            : value;
+        },
+      });
+    },
+  });
+  try {
+    adapter = new EditorIntegration(
+      process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!,
+    );
+  } finally {
+    Object.defineProperty(workspace, "createFileSystemWatcher", descriptor);
+  }
+  const position = document.positionAt(document.getText().indexOf("_port") + 2);
+  const impact = async () => {
+    const editor = await vscode.window.showTextDocument(document);
+    editor.selection = new vscode.Selection(position, position);
+    const answer = await adapter.navigation.impact();
+    if (answer)
+      await vscode.commands.executeCommand(
+        "workbench.action.closeActiveEditor",
+      );
+    return answer;
+  };
+  try {
+    await waitFor(
+      async () => !!(await impact()),
+      "manual marker control starts eligible",
+    );
+    for (const replacement of ["removed", "symlink", "directory"]) {
+      rmSync(marker);
+      if (replacement === "symlink")
+        symlinkSync(join(marker, ".."), marker, "junction");
+      if (replacement === "directory") mkdirSync(marker);
+      assert.equal(
+        await impact(),
+        undefined,
+        `manual impact refuses ${replacement} marker before watcher delivery`,
+      );
+      assert.equal(
+        vscode.window.activeTextEditor?.document.uri.toString(),
+        document.uri.toString(),
+      );
+      rmSync(marker, { recursive: true, force: true });
+      writeFileSync(marker, "");
+      assert.ok(
+        await impact(),
+        `first manual impact accepts restored marker after ${replacement} without watcher delivery`,
+      );
+    }
+    const promises = createRequire(__filename)(
+      "node:fs/promises",
+    ) as typeof import("node:fs/promises");
+    const lstatDescriptor = Object.getOwnPropertyDescriptor(promises, "lstat")!;
+    const originalLstat = promises.lstat;
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const delayed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const originalText = document.getText();
+    Object.defineProperty(promises, "lstat", {
+      ...lstatDescriptor,
+      value: async (...args: Parameters<typeof originalLstat>) => {
+        if (args[0] === marker) {
+          entered();
+          await delayed;
+        }
+        return Reflect.apply(originalLstat, promises, args);
+      },
+    });
+    let pending: ReturnType<typeof impact> | undefined;
+    try {
+      pending = impact();
+      await started;
+      await replace(
+        document,
+        "# edit during manual marker refresh\n" + originalText,
+      );
+      release();
+      assert.equal(
+        await pending,
+        undefined,
+        "edit during marker refresh declines the old cursor",
+      );
+    } finally {
+      release();
+      await pending;
+      Object.defineProperty(promises, "lstat", lstatDescriptor);
+      await replace(document, originalText);
+    }
+  } finally {
+    rmSync(marker, { recursive: true, force: true });
+    writeFileSync(marker, "");
+    adapter.dispose();
+    await vscode.window.showTextDocument(document);
+  }
+}
 export async function runNavigation(): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
   const sourceURI = vscode.Uri.joinPath(
@@ -495,6 +632,7 @@ export async function runNavigation(): Promise<void> {
   // Keep the manual control's context writes beside the existing target-save
   // acceptance checks, after the source-only completion and undo assertions.
   await runManualImpactFailure(document);
+  await runManualMarkerRefresh(document);
   const targetURI = vscode.Uri.joinPath(
     roots[0].uri,
     "roles/navtarget/defaults/main.yml",
