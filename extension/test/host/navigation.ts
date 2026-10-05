@@ -323,7 +323,11 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
         ),
       );
       const targetOriginal = target.getText();
+      const targetIdentity = lstatSync(target.uri.fsPath, { bigint: true });
+      assert.equal(target.isDirty, false);
+      await vscode.window.showTextDocument(target);
       await replace(target, targetOriginal + "# dirty manual target\n");
+      await vscode.window.showTextDocument(document);
       editor.selection = new vscode.Selection(position, position);
       assert.equal(await adapter.navigation.impact(), undefined);
       // Root refreshes can also emit legitimate stale-context status lines.
@@ -334,8 +338,24 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
       );
       assert.ok(!JSON.stringify(lines).includes(payload));
       assert.equal(notices.length, 2);
-      await replace(target, targetOriginal);
-      await target.save();
+      // Restore the dirty-buffer control through the editor's undo stack. A
+      // save of unchanged bytes would generate a delayed context notification
+      // that can revoke the following manual marker control's first query.
+      await vscode.window.showTextDocument(target);
+      await vscode.commands.executeCommand("undo");
+      assert.equal(target.getText(), targetOriginal);
+      assert.equal(target.isDirty, false);
+      const restoredIdentity = lstatSync(target.uri.fsPath, { bigint: true });
+      assert.deepEqual(
+        [
+          restoredIdentity.ino,
+          restoredIdentity.mtimeNs,
+          restoredIdentity.ctimeNs,
+        ],
+        [targetIdentity.ino, targetIdentity.mtimeNs, targetIdentity.ctimeNs],
+        "dirty-target refusal restores the buffer without a context disk write",
+      );
+      await vscode.window.showTextDocument(document);
     } finally {
       token.dispose();
     }
@@ -473,6 +493,43 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
         await impact(),
         `first manual impact accepts restored marker after ${replacement} without watcher delivery`,
       );
+    }
+    // A real context event during response validation still revokes the query.
+    // Keep this distinct from the marker probe's controlled lack of delivery.
+    const contextPromises = createRequire(__filename)(
+      "node:fs/promises",
+    ) as typeof import("node:fs/promises");
+    const readDescriptor = Object.getOwnPropertyDescriptor(
+      contextPromises,
+      "readFile",
+    )!;
+    const originalRead = contextPromises.readFile;
+    const context = vscode.Uri.joinPath(
+      vscode.workspace.getWorkspaceFolder(document.uri)!.uri,
+      "roles/navtarget/defaults/main.yml",
+    );
+    let delivered = false;
+    step = "context event during response validation";
+    Object.defineProperty(contextPromises, "readFile", {
+      ...readDescriptor,
+      value: async (...args: Parameters<typeof originalRead>) => {
+        const bytes = await Reflect.apply(originalRead, contextPromises, args);
+        if (!delivered && args[0] === context.fsPath) {
+          delivered = true;
+          adapter.refresh([context]);
+        }
+        return bytes;
+      },
+    });
+    try {
+      assert.equal(await impact(), undefined);
+      assert.equal(delivered, true, "real target validation reaches the event");
+      assert.equal(
+        vscode.window.activeTextEditor?.document.uri.toString(),
+        document.uri.toString(),
+      );
+    } finally {
+      Object.defineProperty(contextPromises, "readFile", readDescriptor);
     }
     const promises = createRequire(__filename)(
       "node:fs/promises",
