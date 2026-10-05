@@ -488,6 +488,16 @@ release checks, and offline documentation links and platform-table freshness.
 Use `make docs-update` to explicitly regenerate the platform table.
 CI uses the same gates.
 
+Local and native Go checks use current tracked and nonignored untracked project
+sources through `tools/go-check.mjs`. Go applies the current target and build
+constraints; nested modules, vendor, testdata and hidden directories keep their
+normal Go boundaries. Installed developer dependencies do not add packages to
+vet, lint or tests. The tidiness check runs in a temporary copy of the same
+current source files, including embedded assets and local module replacements,
+and removes that copy after success or failure. It reports genuine `go.mod` and
+`go.sum` differences without rewriting the originals. Published source uses its
+`SOURCE-PROVENANCE.json` input inventory when no project Git inputs are available.
+
 CI runs native source checks independently of Linux packaging on Linux, macOS,
 and Windows, each on amd64 and arm64. Every target runs the CGO-free Go suite,
 patched Nuri tests, vet, pinned golangci-lint, extension type/build/unit checks,

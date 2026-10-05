@@ -158,6 +158,61 @@ func TestNativeExtensionPhasesHaveFailingDeadlines(t *testing.T) {
 	}
 }
 
+func TestNativeGoChecksShareLocalSourceScope(t *testing.T) {
+	type step struct {
+		Name string
+		Uses string
+		Run  string
+		If   string
+	}
+	var ci struct {
+		Jobs map[string]struct{ Steps []step }
+	}
+	readYAML(t, "../.github/workflows/ci.yml", &ci)
+	makefile, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		"node tools/go-check.mjs tidy",
+		"node tools/go-check.mjs go vet",
+		"node tools/go-check.mjs '$(GOLANGCI)' run",
+		"node tools/go-check.mjs go test -race",
+		"go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer",
+	} {
+		if !strings.Contains(string(makefile), "\t"+command+"\n") {
+			t.Errorf("local gate omits %q", command)
+		}
+	}
+	want := map[string]string{
+		"Native Go tests": "node tools/go-check.mjs go test",
+		"Native Go race tests on supported targets":           "node tools/go-check.mjs go test -race",
+		"Native vet and lint":                                 "node tools/go-check.mjs go vet\nnode tools/go-check.mjs go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run",
+		"Native patched Nuri tests":                           "go -C third_party/nuri test . ./internal/grammar ./internal/tokenizer",
+		"Native patched Nuri race tests on supported targets": "go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer",
+	}
+	nodeReady := false
+	for _, step := range ci.Jobs["native"].Steps {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") {
+			nodeReady = true
+		}
+		command, ok := want[step.Name]
+		if !ok {
+			continue
+		}
+		if !nodeReady || strings.TrimSpace(step.Run) != command {
+			t.Errorf("native Go phase requires Node and shared scope: %+v", step)
+		}
+		if strings.Contains(step.Name, "race") && step.If != "matrix.race" {
+			t.Errorf("native race exception changed: %+v", step)
+		}
+		delete(want, step.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing native Go phases: %v", want)
+	}
+}
+
 func readYAML(t *testing.T, path string, value any) {
 	t.Helper()
 	data, err := os.ReadFile(path)

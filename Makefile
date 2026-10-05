@@ -53,10 +53,10 @@ docs-check:
 	node tools/docs/check.mjs
 
 check: tools format-check extension-check docs-check
-	go mod tidy -diff
-	go vet ./...
-	$(GOLANGCI) run
-	go test -race ./...
+	node tools/go-check.mjs tidy
+	node tools/go-check.mjs go vet
+	node tools/go-check.mjs '$(GOLANGCI)' run
+	node tools/go-check.mjs go test -race
 	go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
 	$(ACTIONLINT) -shellcheck= -pyflakes= .github/workflows/*.yml examples/github/*.yml
 	$(GORELEASER) check
