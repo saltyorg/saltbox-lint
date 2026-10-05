@@ -9,6 +9,32 @@ function latch() {
   });
   return { promise, resolve };
 }
+test("scheduler forwards the original failure and releases its lane before the next request", async () => {
+  const scheduler = new Scheduler();
+  const gate = latch();
+  const original = new Error("owned operation failed");
+  let joined = false;
+  const first = scheduler.submit("failed", 1, async () => {
+    try {
+      await gate.promise;
+      throw original;
+    } finally {
+      joined = true;
+    }
+  });
+  const rejected = assert.rejects(first, (error) => error === original);
+  const next = scheduler.submit("next", 1, async () => {
+    assert.equal(joined, true, "failed operation must join before lane reuse");
+    return "next";
+  });
+  gate.resolve();
+  try {
+    await rejected;
+    assert.equal(await next, "next");
+  } finally {
+    scheduler.dispose();
+  }
+});
 test("scheduler runs latest pending snapshot and cancels superseded active work", async () => {
   const scheduler = new Scheduler();
   const started = latch();

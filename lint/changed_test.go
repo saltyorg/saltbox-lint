@@ -35,6 +35,32 @@ func commitChangedFixture(t *testing.T, root string) {
 	gitTest(t, root, "add", "--all")
 	gitTest(t, root, "commit", "-q", "-m", "chore: update fixture")
 }
+
+func TestChangedFixturesWithoutExternalGitIdentity(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "empty.gitconfig")
+	if err := os.WriteFile(config, []byte("[user]\n\tuseConfigOnly = true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), executable, "-test.run=^TestChangedDeletionRenameAndEmptyRepository$", "-test.count=1")
+	// Do not inspect or alter the developer's identity. The child must obtain
+	// both fixture commits' identity solely from its temporary repository.
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		key = strings.ToUpper(key)
+		if strings.HasPrefix(key, "GIT_CONFIG") || strings.HasPrefix(key, "GIT_AUTHOR_") || strings.HasPrefix(key, "GIT_COMMITTER_") || key == "EMAIL" {
+			continue
+		}
+		command.Env = append(command.Env, entry)
+	}
+	command.Env = append(command.Env, "GIT_CONFIG_GLOBAL="+config, "GIT_CONFIG_SYSTEM="+config, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=0")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("changed fixtures with isolated Git identity: %v\n%s", err, output)
+	}
+}
 func gitReadTest(t *testing.T, root string, args ...string) []byte {
 	t.Helper()
 	output, err := exec.CommandContext(t.Context(), "git", append([]string{"--no-optional-locks", "-C", root}, args...)...).Output()

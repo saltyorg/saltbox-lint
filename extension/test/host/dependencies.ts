@@ -93,6 +93,7 @@ export async function runDependencies(): Promise<void> {
   );
   // This primary is excluded from full coverage and has no accepted graph yet.
   let editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
+  let admissionControl: Promise<PromiseSettledResult<void>[]> | undefined;
   // The lane releases a child before a saved check finishes rendering and
   // synchronizing open sources. Track that whole operation when joining work.
   const savedChecks = new Set<Promise<unknown>>();
@@ -537,7 +538,9 @@ export async function runDependencies(): Promise<void> {
     const admissionControlDocument =
       await vscode.workspace.openTextDocument(defaults);
     const admissionControlFilename = await realpath(defaults.fsPath);
-    void editor.check(admissionControlDocument);
+    admissionControl = Promise.allSettled([
+      editor.check(admissionControlDocument),
+    ]);
     await waitFor(
       () =>
         invocations()
@@ -600,6 +603,8 @@ export async function runDependencies(): Promise<void> {
     const revokedCount = invocations().length;
     editor.removeFile(admissionIgnore);
     await rm(admissionGate);
+    const controlOutcome = (await admissionControl)[0];
+    if (controlOutcome.status === "rejected") throw controlOutcome.reason;
     await waitFor(
       () =>
         invocations()
@@ -1491,6 +1496,7 @@ export async function runDependencies(): Promise<void> {
     throw error;
   } finally {
     editor.dispose();
+    await admissionControl;
     for (const subscription of subscriptions) subscription.dispose();
     delete process.env.SALTBOX_TEST_PROCESS_LOG;
     delete process.env.SALTBOX_TEST_PROCESS_INSTANCES;

@@ -65,7 +65,7 @@ function textEdits(edits: EditorEdit[]): vscode.TextEdit[] {
 }
 
 export class EditorIntegration implements vscode.Disposable {
-  private readonly roots = new MarkedRoots();
+  private readonly roots = new MarkedRoots((error) => this.error(error, false));
   private readonly eligibilityChanged = new vscode.EventEmitter<void>();
   readonly onDidChangeEligibility = this.eligibilityChanged.event;
   private readonly rootListener: vscode.Disposable;
@@ -491,7 +491,18 @@ export class EditorIntegration implements vscode.Disposable {
     if (this.disposed) return;
     const message = error instanceof Error ? error.message : String(error);
     this.output.appendLine(message);
-    if (manual) void vscode.window.showErrorMessage(`Saltbox Lint: ${message}`);
+    if (manual)
+      this.background(
+        vscode.window.showErrorMessage(`Saltbox Lint: ${message}`),
+      );
+  }
+  private background(operation: PromiseLike<unknown>): void {
+    Promise.resolve(operation).catch((error: unknown) =>
+      this.error(error, false),
+    );
+  }
+  checkBackground(document: vscode.TextDocument): void {
+    this.background(this.check(document));
   }
   async check(
     document: vscode.TextDocument,
@@ -1130,7 +1141,7 @@ export class EditorIntegration implements vscode.Disposable {
   open(document: vscode.TextDocument): void {
     this.closedTabs.delete(document.uri.toString());
     this.eligibilityChanged.fire();
-    void this.check(document);
+    this.checkBackground(document);
   }
   close(document: vscode.TextDocument): void {
     const key = document.uri.toString();
@@ -1311,7 +1322,7 @@ export class EditorIntegration implements vscode.Disposable {
             pending.has(current.uri.toString()) &&
             this.roots.get(current.uri.toString())
           )
-            void this.checkSaved(current, false);
+            this.background(this.checkSaved(current, false));
       }, 100);
     }
   }
@@ -1341,7 +1352,7 @@ export class EditorIntegration implements vscode.Disposable {
     if (this.fileTimer) clearTimeout(this.fileTimer);
     this.fileTimer = setTimeout(() => {
       this.fileTimer = undefined;
-      void this.flushFiles();
+      this.background(this.flushFiles());
     }, 100);
   }
   private async flushFiles(): Promise<void> {
@@ -1484,7 +1495,7 @@ export class EditorIntegration implements vscode.Disposable {
       if (this.pendingFiles.size && !this.fileTimer)
         this.fileTimer = setTimeout(() => {
           this.fileTimer = undefined;
-          void this.flushFiles();
+          this.background(this.flushFiles());
         }, 100);
     }
   }
@@ -1619,7 +1630,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.pendingRefresh.clear();
       for (const folder of vscode.workspace.workspaceFolders ?? [])
         if (pending.has(folder.uri.toString()))
-          void this.checkSaved(folder, false);
+          this.background(this.checkSaved(folder, false));
       for (const document of vscode.workspace.textDocuments) {
         const folder = vscode.workspace.getWorkspaceFolder(document.uri);
         const result = this.results.document(document.uri.toString());
@@ -1629,7 +1640,7 @@ export class EditorIntegration implements vscode.Disposable {
           this.eligible(document) &&
           (!result || !this.current(document, result.snapshot))
         )
-          void this.check(document);
+          this.background(this.check(document));
       }
     }, 100);
   }

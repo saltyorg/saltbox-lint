@@ -165,6 +165,9 @@ available at no charge alongside the matching release binaries.
 
 See the repository's [release and native testing guide](https://github.com/saltyorg/saltbox-lint/blob/main/docs/extension-release.md).
 Use Node 24.20.0, npm 11.19.0 and the Go toolchain in `go.mod`.
-Run `npm ci --ignore-scripts`, `npm run build`, `npm test`, and
-`npm run format:check` in this directory. `make check` includes these quality
+Run `npm ci --ignore-scripts`, `npm run build`, `npm test`,
+`npm run test:release` and `npm run format:check` in this directory.
+The build runs TypeScript and pinned type-aware ESLint checks. See the
+[contributor guide](https://github.com/saltyorg/saltbox-lint/blob/main/docs/contributing.md)
+for live ESLint diagnostics in VS Code. `make check` includes these quality
 gates; `make snapshot` builds the eight local VSIXs and corresponding source.

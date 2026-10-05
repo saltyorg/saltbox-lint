@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as paths from "node:path";
+import * as filesystem from "node:fs";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
@@ -268,6 +270,86 @@ test("failure reporting preserves the original error through collection and logg
       ),
     (error) => error === original,
   );
+});
+
+test("startup identity assertions retain exact paths under POSIX and Windows separators", async () => {
+  // Execute the ordinary identity test and real collector with both path
+  // contracts on every host. This is a separator model, not a native OS run.
+  const bundled = await build({
+    stdin: {
+      contents: readFileSync("test/unit/startup-failure.test.ts", "utf8"),
+      resolveDir: join(process.cwd(), "test/unit"),
+      sourcefile: "startup-failure.test.ts",
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "cjs",
+    packages: "external",
+    logLevel: "error",
+  });
+  const require = createRequire(import.meta.url);
+  for (const model of [paths.posix, paths.win32]) {
+    const registered: { name: string; run: () => void }[] = [];
+    const created: string[] = [];
+    const translate = (path: string) => path.replaceAll("\\", "/");
+    const modeledFS = {
+      ...filesystem,
+      mkdirSync: (path: string, options: filesystem.MakeDirectoryOptions) =>
+        mkdirSync(translate(path), options),
+      readFileSync: (path: string, options: BufferEncoding) =>
+        readFileSync(translate(path), options),
+      writeFileSync: (path: string, content: string) =>
+        writeFileSync(translate(path), content),
+      rmSync: (path: string, options: filesystem.RmOptions) =>
+        rmSync(translate(path), options),
+      mkdtempSync: (prefix: string) => {
+        const actual = mkdtempSync(translate(prefix));
+        created.push(actual);
+        return model.normalize(translate(actual));
+      },
+    };
+    const module = { exports: {} };
+    runInNewContext(bundled.outputFiles[0].text, {
+      require: (name: string) => {
+        if (name === "node:path") return { ...paths, join: model.join };
+        if (name === "node:fs") return modeledFS;
+        if (name === "node:os") return { tmpdir: () => translate(tmpdir()) };
+        if (name === "node:test")
+          return {
+            test: (name: string, run: () => void) =>
+              registered.push({ name, run }),
+          };
+        return require(name);
+      },
+      module,
+      exports: module.exports,
+      process,
+      Buffer,
+      console,
+      setTimeout,
+      clearTimeout,
+    });
+    const identityTest = registered.find(
+      ({ name }) =>
+        name ===
+        "startup failure reports actual public identities without contents or private state",
+    );
+    assert.ok(identityTest);
+    try {
+      identityTest.run();
+    } finally {
+      const survivors = created.filter((path) => filesystem.existsSync(path));
+      for (const path of survivors)
+        rmSync(path, { recursive: true, force: true });
+      assert.deepEqual(
+        survivors,
+        [],
+        "identity test must clean its own fixtures",
+      );
+    }
+  }
 });
 
 test("real startup call site collects only on rejection and retains the original wait", async () => {

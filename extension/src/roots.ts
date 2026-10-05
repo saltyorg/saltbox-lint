@@ -35,6 +35,9 @@ function markerIdentity(stat: BigIntStats): string {
 // Marker probes run at setup, on filesystem/configuration events and manual commands.
 // Invalidation is synchronous; a superseded probe cannot restore eligibility.
 export class MarkedRoots implements vscode.Disposable {
+  constructor(
+    private readonly reportError: (error: unknown) => void = console.error,
+  ) {}
   private readonly roots = new Map<string, Root>();
   private readonly changed = new vscode.EventEmitter<string>();
   readonly onDidChange = this.changed.event;
@@ -128,15 +131,15 @@ export class MarkedRoots implements vscode.Disposable {
       this.roots.set(key, root);
       const refresh = () => {
         if (this.roots.get(key) !== root || this.unchangedMarker(root)) return;
-        void this.probe(key, root);
+        this.startProbe(key, root);
       };
       root.watcher = vscode.Disposable.from(
         watcher,
         watcher.onDidCreate(refresh),
-        watcher.onDidDelete(() => this.probe(key, root)),
+        watcher.onDidDelete(() => this.startProbe(key, root)),
         watcher.onDidChange(refresh),
       );
-      this.probe(key, root);
+      this.startProbe(key, root);
     }
     for (const key of this.roots.keys())
       if (!folders.has(key)) this.remove(key);
@@ -211,6 +214,11 @@ export class MarkedRoots implements vscode.Disposable {
       }
     })();
     return root.ready;
+  }
+  private startProbe(key: string, root: Root): void {
+    // Keep root.ready as the actual probe. Event reporting must not turn a
+    // rejected readiness check into successful eligibility for its waiters.
+    this.probe(key, root).catch(this.reportError);
   }
   get(folder: string): string | undefined {
     return this.roots.get(folder)?.canonical;

@@ -8,6 +8,26 @@ checks, actionlint, GoReleaser configuration checks, documentation links and
 generated documentation freshness. Tool caches and ignored build artifacts may
 be populated.
 
+The extension's `npm run check` runs TypeScript and the pinned type-aware ESLint
+gate. `npm run lint` checks promise handling and dangerous non-null assertion
+patterns in `extension/src` and its TypeScript tests. The build invokes this
+same gate locally and in every native CI job. Ordinary tests also exercise
+POSIX/Windows path identities and temporary Git fixtures without an external
+author identity. These checks supplement the native platform suites.
+
+For live lint diagnostics in VS Code, install the official
+[ESLint extension](https://github.com/microsoft/vscode-eslint) and run
+`npm --prefix extension ci --ignore-scripts`. When opening the repository root,
+set `eslint.workingDirectories` to `["./extension"]` in your editor settings.
+Opening `extension/` directly uses its configuration automatically. The editor
+uses the project's pinned ESLint and the same rules as `npm run lint`; the
+command-line gates work without installing the editor extension.
+ESLint 10.12.0 requires Node `^20.19.0 || ^22.13.0 || >=24`. If the editor's
+embedded Node is older, set `eslint.runtime` to the absolute path of your Node
+24.20.0 executable, or to `"node"` when that version is on the editor's PATH.
+The ESLint extension's [runtime and working-directory settings](https://github.com/microsoft/vscode-eslint#settings-options)
+control this development setup independently of the packaged Saltbox extension.
+
 `make build` runs that gate before producing `bin/saltbox-lint`.
 `make snapshot` also packages all native archives, VSIXs and source. See
 [release validation](extension-release.md) and [rule authoring](rule-authoring.md).

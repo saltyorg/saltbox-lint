@@ -69,13 +69,14 @@
     }
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && npm run lint",
+    "lint": "eslint src test --max-warnings 0",
     "build": "npm run check && node scripts/build.mjs",
     "test": "node --experimental-strip-types --test test/unit/*.test.ts",
     "test:host": "node scripts/test-host.mjs",
     "stage:binary": "node scripts/stage-binary.mjs",
     "stage:test-fixture": "node scripts/stage-test-fixture.mjs",
-    "format:check": "prettier --check src test scripts package.json tsconfig.json",
+    "format:check": "prettier --check src test scripts package.json tsconfig.json eslint.config.mjs",
     "test:release": "node --test test/*.test.mjs",
     "package": "node scripts/release.mjs",
     "test:package": "node scripts/test-package.mjs"
@@ -86,8 +87,10 @@
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.2",
+    "eslint": "10.12.0",
     "prettier": "3.9.6",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.71.0",
     "yauzl": "3.4.0"
   },
   "repository": {

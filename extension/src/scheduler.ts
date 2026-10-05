@@ -73,6 +73,9 @@ export class Scheduler {
     if (!request) return;
     this.pending.delete(request.key);
     this.active = request;
+    // execute forwards failures to submit's promise and releases its lane in
+    // finally. It owns and joins cancellation before starting the next request.
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     void this.execute(request);
   }
   private async execute(request: Request): Promise<void> {

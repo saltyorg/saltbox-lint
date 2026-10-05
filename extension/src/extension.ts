@@ -146,5 +146,5 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
   for (const document of vscode.workspace.textDocuments)
-    void editor.check(document);
+    editor.checkBackground(document);
 }

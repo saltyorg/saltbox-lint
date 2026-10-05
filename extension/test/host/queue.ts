@@ -195,9 +195,15 @@ export async function runQueue(): Promise<void> {
             editor!.status = originalStatus;
           }
           let settled = false;
-          void pending.then(() => {
-            settled = true;
-          });
+          pending.then(
+            () => {
+              settled = true;
+            },
+            () => {
+              settled = true;
+            },
+          );
+          // The original pending promise is joined below and retains failures.
           const queuedReads = reads;
           try {
             if (invalidation === "edit" || invalidation === "version") {
