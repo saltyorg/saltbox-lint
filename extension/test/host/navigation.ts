@@ -455,7 +455,6 @@ export async function runNavigation(): Promise<void> {
   await vscode.window.showTextDocument(document);
   const original = document.getText();
   await runNestedNavigation(document, original);
-  await runManualImpactFailure(document);
   await replace(document, original.replace("'_port'", "'_po'"));
   const before = document.getText();
   const list = await vscode.commands.executeCommand<vscode.CompletionList>(
@@ -493,6 +492,9 @@ export async function runNavigation(): Promise<void> {
   console.log(
     "PASS real completion edits only active quoted literal with undo; same-role, dynamic and missing context stay explicit",
   );
+  // Keep the manual control's context writes beside the existing target-save
+  // acceptance checks, after the source-only completion and undo assertions.
+  await runManualImpactFailure(document);
   const targetURI = vscode.Uri.joinPath(
     roots[0].uri,
     "roles/navtarget/defaults/main.yml",
