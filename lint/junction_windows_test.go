@@ -60,16 +60,36 @@ func TestWindowsJunctionReferenceContext(t *testing.T) {
 	filename := putFile(t, root, "roles/navsource/tasks/main.yml", text)
 	putFile(t, root, "roles/navtarget/defaults/main.yml", "navtarget_role_port: 1234\nnavtarget_name: navalias\nnavalias_port: 4321\n")
 	putFile(t, root, "roles/navtarget/vars/main.yml", "navtarget_role_port: 5678\n")
-	putFile(t, root, "roles/readonly-directory/tasks/config.yaml", "{{ value }}")
-	template := "{{ lookup('role_var', '_port', role='navtarget') }}"
-	putFile(t, root, "roles/readonly-directory/tasks/config", template)
-	putFile(t, root, "roles/readonly-directory/templates/config", template)
+	// Match the normal installed-editor fixture, including its literal prefix.
+	// A bare '{{ value }}' is invalid YAML in the physical task directory and
+	// correctly makes all template configuration in that owning role unavailable.
+	template := " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  "
+	for _, basename := range []string{"config", "config.yaml", "config.j2"} {
+		putFile(t, root, "roles/readonly-directory/tasks/"+basename, template)
+		putFile(t, root, "roles/readonly-directory/templates/"+basename, template)
+	}
 	gitTest(t, root, "add", ".")
 	alias := filepath.Join(root, "roles/readonly-directory/templates")
 	if err := os.RemoveAll(alias); err != nil {
 		t.Fatal(err)
 	}
 	junction(t, alias, filepath.Join(root, "roles/readonly-directory/tasks"))
+	project, err := Load(t.Context(), Options{Root: root, Paths: []string{root}, referenceContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, basename := range []string{"config", "config.yaml", "config.j2"} {
+		source := project.Sources["roles/readonly-directory/templates/"+basename]
+		if source == nil || source.Kind != Template || string(source.Data) != template || source.templatePath != "roles/readonly-directory/tasks/"+basename {
+			t.Fatalf("indexed junction fixture did not admit template %s: %+v", basename, source)
+		}
+		if scan := scanTemplate(source); scan.configurationUnavailable || len(scan.diagnostics) > 0 {
+			t.Fatalf("junction fixture cannot expose static references: %+v", scan)
+		}
+	}
+	if source := project.Sources["roles/readonly-directory/tasks/config.yaml"]; source == nil || len(source.parseDiagnostics) > 0 {
+		t.Fatalf("junction fixture has invalid owning task context: %+v", source)
+	}
 
 	result, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: "definition", Offset: strings.Index(text, "_port") + 2})
 	if err != nil {

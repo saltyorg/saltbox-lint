@@ -295,9 +295,12 @@ func TestQueryReferencesRetainsExtensionlessTemplateAliasOwner(t *testing.T) {
 	putFile(t, root, "roles/readonly/tasks/main.yml", "[]\n")
 	owner := "roles/readonly/tasks/config"
 	alias := "roles/readonly/templates/config"
-	template := " \t😀\r\n{{ lookup('role_var', '_port', role='navtarget') }}  "
+	template := " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  "
 	ownerFilename := putFile(t, root, owner, template)
-	putFile(t, root, alias, template)
+	for _, basename := range []string{"config", "config.yaml", "config.j2"} {
+		putFile(t, root, "roles/readonly/tasks/"+basename, template)
+		putFile(t, root, "roles/readonly/templates/"+basename, template)
+	}
 	gitTest(t, root, "add", ".")
 	aliasDirectory := filepath.Dir(filepath.Join(root, alias))
 	if err := os.RemoveAll(aliasDirectory); err != nil {
@@ -305,6 +308,19 @@ func TestQueryReferencesRetainsExtensionlessTemplateAliasOwner(t *testing.T) {
 	}
 	if err := os.Symlink(filepath.Dir(ownerFilename), aliasDirectory); err != nil {
 		t.Fatal(err)
+	}
+	project, err := Load(t.Context(), Options{Root: root, Paths: []string{root}, StdinFilename: filename, Stdin: []byte(text), IncludeAnalysis: true, referenceContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, basename := range []string{"config", "config.yaml", "config.j2"} {
+		source := project.Sources["roles/readonly/templates/"+basename]
+		if source == nil || source.Kind != Template || string(source.Data) != template || scanTemplate(source).configurationUnavailable {
+			t.Fatalf("indexed alias fixture did not admit static template %s", basename)
+		}
+	}
+	if source := project.Sources["roles/readonly/tasks/config.yaml"]; source == nil || len(source.parseDiagnostics) > 0 {
+		t.Fatal("alias fixture requires valid owning task YAML")
 	}
 	result, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: "references", Offset: strings.Index(text, "_port") + 2})
 	if err != nil {
@@ -321,10 +337,6 @@ func TestQueryReferencesRetainsExtensionlessTemplateAliasOwner(t *testing.T) {
 			t.Fatalf("missing exact template owner observation: %s", name)
 		}
 	}
-	project, err := Load(t.Context(), Options{Root: root, Paths: []string{root}, StdinFilename: filename, Stdin: []byte(text), IncludeAnalysis: true, referenceContext: true})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if project.Sources[owner] != nil {
 		t.Fatal("physical observation fabricated an unclassified parser source")
 	}
@@ -338,5 +350,35 @@ func TestQueryReferencesRetainsExtensionlessTemplateAliasOwner(t *testing.T) {
 	}
 	if got, err := os.ReadFile(ownerFilename); err != nil || string(got) != template {
 		t.Fatal("query changed template bytes")
+	}
+	// Invalid owning task YAML must continue to refuse template reads, even
+	// though the indexed alias and its captured physical dependency are present.
+	putFile(t, root, "roles/readonly/tasks/config.yaml", "{{ value }}")
+	invalid, err := Load(t.Context(), Options{Root: root, Paths: []string{root}, referenceContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source := invalid.Sources["roles/readonly/tasks/config.yaml"]; source == nil || len(source.parseDiagnostics) == 0 {
+		t.Fatal("refusal control requires invalid owning task YAML")
+	}
+	if source := invalid.Sources[alias]; source == nil || !slices.Contains(scanTemplate(source).reasonMessages(), "template configuration is unavailable: invalid owning task context") {
+		t.Fatal("refusal control requires the admitted alias with unavailable configuration")
+	}
+	refused, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: "references", Offset: strings.Index(text, "_port") + 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(refused.Locations, func(location QueryLocation) bool { return location.Path == alias }) {
+		t.Fatal("invalid owning task context authorized template reference")
+	}
+	if !slices.ContainsFunc(refused.Locations, func(location QueryLocation) bool {
+		return location.Path == "roles/navsource/tasks/main.yml" && location.Kind == "read"
+	}) {
+		t.Fatal("invalid template context revoked the valid primary YAML read")
+	}
+	if !slices.ContainsFunc(refused.Dependencies.Sources[0].Files, func(file DependencyFile) bool {
+		return file.Path == owner && file.State == "read" && file.SHA256 == digest
+	}) {
+		t.Fatal("invalid owning task context lost captured physical dependency")
 	}
 }
