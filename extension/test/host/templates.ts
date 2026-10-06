@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
+import { readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { hash, parseCheck } from "../../src/protocol.ts";
 import { runProcess } from "../../src/process.ts";
@@ -8,6 +11,7 @@ import { EditorIntegration, type CheckStatus } from "../../src/editor.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import { checkPendingWritableOwnership } from "./writable-ownership.ts";
+import { observeDirtyReference } from "./dirty-reference-observer.ts";
 
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
@@ -45,7 +49,34 @@ async function waitFor(predicate: () => Promise<boolean>, reason: string) {
 export async function runTemplates(): Promise<void> {
   const root = vscode.workspace.workspaceFolders![0].uri;
   const executable = process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!;
+  // Preflight observation runs before the original template sequence. Failure
+  // leaves identity unavailable and never changes an installed test outcome.
+  const cli: { spellings: string[]; identityEqual: boolean | undefined } = {
+    spellings: [executable],
+    identityEqual: undefined,
+  };
+  let observedRoot = root.fsPath;
+  try {
+    observedRoot = realpathSync.native(root.fsPath);
+    const canonicalCLI = realpathSync.native(executable);
+    cli.spellings.push(canonicalCLI);
+    const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
+    if (product) {
+      const productCLI = join(
+        product.extensionPath,
+        "bin",
+        "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+      );
+      cli.identityEqual =
+        realpathSync.native(productCLI) === canonicalCLI &&
+        readFileSync(productCLI).equals(readFileSync(executable));
+      if (cli.identityEqual) cli.spellings.push(productCLI);
+    }
+  } catch {
+    // Identity comparison is evidence only.
+  }
   await checkPendingWritableOwnership(executable, root);
+  const retainedDocuments = new Map<string, vscode.TextDocument>();
   // Exercise the first extensionless alias before any conventional template
   // has established an owner for the same physical file.
   for (const uri of [
@@ -212,15 +243,72 @@ export async function runTemplates(): Promise<void> {
       >("vscode.executeDefinitionProvider", uri, position);
       return locations.length === 3;
     }, "dirty template aliases retain definition navigation");
-    const dirtyReferences = await vscode.commands.executeCommand<
-      vscode.Location[]
-    >("vscode.executeReferenceProvider", uri, position);
-    assert.ok(
-      dirtyReferences.some(
-        (location) => location.uri.toString() === uri.toString(),
-      ),
-      "dirty template reference aliases use the captured buffer coordinates",
-    );
+    const observer =
+      uri.toString() ===
+      vscode.Uri.joinPath(
+        root,
+        "roles/readonly/templates/reverse.yaml",
+      ).toString()
+        ? observeDirtyReference({
+            childProcess: createRequire(__filename)(
+              "node:child_process",
+            ) as object,
+            document,
+            documents: () => vscode.workspace.textDocuments,
+            retainedDocuments: () => [...retainedDocuments.values()],
+            tabURIs: () =>
+              vscode.window.tabGroups.all.flatMap((group) =>
+                group.tabs.flatMap((tab) => {
+                  if (tab.input instanceof vscode.TabInputText)
+                    return [tab.input.uri.toString()];
+                  if (tab.input instanceof vscode.TabInputTextDiff)
+                    return [
+                      tab.input.original.toString(),
+                      tab.input.modified.toString(),
+                    ];
+                  return [];
+                }),
+              ),
+            aliases: [
+              "reverse-alias.j2",
+              "roles/readonly/templates/reverse.yaml",
+              "roles/readonly/defaults/reverse.yml",
+              "readonly-alias/reverse.yaml",
+            ].map((path) => ({
+              path,
+              uri: vscode.Uri.joinPath(root, path).toString(),
+            })),
+            root: observedRoot,
+            owner: join(observedRoot, "roles/readonly/defaults/reverse.yml"),
+            ownerPath: "roles/readonly/defaults/reverse.yml",
+            source: uri.fsPath,
+            position,
+            baseline: originalBytes,
+            cli,
+          })
+        : undefined;
+    try {
+      const request = () =>
+        vscode.commands.executeCommand<vscode.Location[]>(
+          "vscode.executeReferenceProvider",
+          uri,
+          position,
+        );
+      const dirtyReferences = await (observer
+        ? observer.request(request)
+        : request());
+      assert.ok(
+        dirtyReferences.some(
+          (location) => location.uri.toString() === uri.toString(),
+        ),
+        "dirty template reference aliases use the captured buffer coordinates",
+      );
+    } catch (error) {
+      observer?.failure();
+      throw error;
+    } finally {
+      observer?.dispose();
+    }
     assert.equal(await readFile(uri.fsPath, "utf8"), original);
     const bad = " \t😀{% if enabled -%}\r\n{{ value }}  ";
     // WorkspaceEdit uses the existing model EOL. Admit the intended CRLF
@@ -381,6 +469,7 @@ export async function runTemplates(): Promise<void> {
     assert.equal(document.eol, originalEol);
     assert.deepEqual(await readFile(uri.fsPath), originalBytes);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+    retainedDocuments.set(uri.toString(), document);
   }
   const fullRootAdapter = new EditorIntegration(executable);
   try {
