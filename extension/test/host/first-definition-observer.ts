@@ -38,10 +38,16 @@ function digest(value: unknown): string | undefined {
     ? value
     : undefined;
 }
-function path(value: string): string | undefined {
-  return value.length <= 4096 && !/[\u0000-\u001f]/u.test(value)
+function path(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 4096 &&
+    !/[\u0000-\u001f]/u.test(value)
     ? value
     : undefined;
+}
+function pathAvailability(value: unknown) {
+  return path(value) === undefined ? "path_unavailable" : "path_available";
 }
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -87,10 +93,13 @@ export function observeFirstDefinition(inputs: Inputs) {
   let child:
     | {
         rootMatches: boolean;
+        rootAvailability: ReturnType<typeof pathAvailability>;
         publicAttempt: number;
         sourceMatches: boolean;
+        sourceAvailability: ReturnType<typeof pathAvailability>;
         offsetMatches: boolean;
         cliRawPathMatches: boolean;
+        cliPathAvailability: ReturnType<typeof pathAvailability>;
         spawnThrew: boolean;
         spawned: boolean;
         exited: boolean;
@@ -253,10 +262,13 @@ export function observeFirstDefinition(inputs: Inputs) {
             if (child) return;
             child = {
               rootMatches,
+              rootAvailability: pathAvailability(flag("--root")),
               publicAttempt: pendingAttempt,
               sourceMatches,
+              sourceAvailability: pathAvailability(flag("--stdin-filename")),
               offsetMatches,
               cliRawPathMatches: args[0] === inputs.cliPath,
+              cliPathAvailability: pathAvailability(args[0]),
               spawnThrew: false,
               spawned: false,
               exited: false,
@@ -354,13 +366,14 @@ export function observeFirstDefinition(inputs: Inputs) {
           (state) => state === value.state,
         ) ?? "unrecognized",
       rootMatches: value.root === inputs.root,
+      rootAvailability: pathAvailability(value.root),
       pathMatches:
         value.path ===
         inputs.source.slice(inputs.root.length + 1).replaceAll("\\", "/"),
+      pathAvailability: pathAvailability(value.path),
       hashMatches:
         digest(value.source_sha256) !== undefined &&
         value.source_sha256 === sha256,
-      sourceHash: digest(value.source_sha256),
       offsetMatches: value.offset === offset,
       locations: length(value.locations),
       declarations: length(value.declarations),
@@ -369,6 +382,7 @@ export function observeFirstDefinition(inputs: Inputs) {
       dependencySources: length(sources),
       dependencyFiles: length(firstSource?.files),
       dependencyRootMatches: dependencies?.root === inputs.root,
+      dependencyRootAvailability: pathAvailability(dependencies?.root),
       dependencyHashMatches: firstSource?.source_sha256 === sha256,
     };
   }
@@ -385,10 +399,13 @@ export function observeFirstDefinition(inputs: Inputs) {
       commandObserverInstalled: installedCommand,
       spawnObserverInstalled: installedSpawn,
       root: path(inputs.root),
+      rootAvailability: pathAvailability(inputs.root),
       source: path(inputs.source),
+      sourceAvailability: pathAvailability(inputs.source),
       sourceHash: sha256,
       offset,
       cliPath: path(inputs.cliPath),
+      cliPathAvailability: pathAvailability(inputs.cliPath),
       cliHash: digest(inputs.cliHash),
       calls,
       candidates,

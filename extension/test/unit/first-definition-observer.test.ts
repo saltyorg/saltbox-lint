@@ -296,6 +296,166 @@ test("synchronous exceptions and rejected promises retain their identities; obse
   }
 });
 
+test("a valid unexpected response digest emits equality only and retains captured expected digests", async () => {
+  const fixture = setup();
+  const unexpectedDigest = "b".repeat(64);
+  const expectedDigest = createHash("sha256")
+    .update(fixture.document.getText())
+    .digest("hex");
+  const observer = observeFirstDefinition(fixture.inputs);
+  const original = new Error("original assertion");
+  const messages: string[] = [];
+  await assert.rejects(
+    withFirstDefinitionObservation(
+      observer,
+      async () => {
+        const pending = fixture.command();
+        fixture.native.spawn(fixture.inputs.cliPath, fixture.args);
+        fixture.child.stdout.emit(
+          "data",
+          Buffer.from(JSON.stringify({ source_sha256: unexpectedDigest })),
+        );
+        fixture.child.emit("close", 0, null);
+        fixture.resolve([]);
+        await pending;
+        throw original;
+      },
+      (line) => messages.push(line),
+    ),
+    (error: unknown) => error === original,
+  );
+  assert.equal(messages.length, 1);
+  assert.ok(!messages[0].includes(unexpectedDigest));
+  const facts = JSON.parse(
+    messages[0].slice("SALTBOX_FIRST_DEFINITION_FAILURE ".length),
+  );
+  assert.equal(facts.response.stage, "response_json_object");
+  assert.equal(facts.response.hashMatches, false);
+  assert.equal(Object.hasOwn(facts.response, "sourceHash"), false);
+  assert.equal(facts.sourceHash, expectedDigest);
+  assert.equal(facts.cliHash, fixture.inputs.cliHash);
+  fixture.child.stdout.destroy();
+  fixture.child.stderr.destroy();
+});
+
+test("expected path availability is explicit without echoing unknown or rejected paths", async () => {
+  for (const [value, available] of [
+    [undefined, false],
+    [null, false],
+    [7, false],
+    ["", false],
+    ["rejected_path_" + "x".repeat(4097), false],
+    ["rejected_path_\n", false],
+    ["rejected_path_\u0000", false],
+    ["x".repeat(4096), true],
+    ['unicode_😀_"_\\_path', true],
+  ] as const) {
+    for (const field of ["root", "source", "cliPath"] as const) {
+      const fixture = setup();
+      Reflect.set(fixture.inputs, field, value);
+      const observer = observeFirstDefinition(fixture.inputs);
+      const original = new Error("original assertion");
+      const messages: string[] = [];
+      await assert.rejects(
+        withFirstDefinitionObservation(
+          observer,
+          async () => {
+            throw original;
+          },
+          (line) => messages.push(line),
+        ),
+        (error: unknown) => error === original,
+      );
+      assert.equal(messages.length, 1);
+      assert.ok(Buffer.byteLength(messages[0], "utf8") <= 16 * 1024);
+      assert.ok(!messages[0].includes("rejected_path_"));
+      const facts = JSON.parse(
+        messages[0].slice("SALTBOX_FIRST_DEFINITION_FAILURE ".length),
+      );
+      assert.equal(facts.stage, "original_assertion_rejected");
+      assert.equal(
+        facts[field + "Availability"],
+        available ? "path_available" : "path_unavailable",
+      );
+      assert.equal(facts[field], available ? value : undefined);
+      fixture.child.stdout.destroy();
+      fixture.child.stderr.destroy();
+    }
+  }
+});
+
+test("response and candidate path comparisons classify unavailable identities without echoing values", async () => {
+  for (const [value, available] of [
+    [undefined, false],
+    [null, false],
+    [7, false],
+    ["", false],
+    ["secret_path_" + "x".repeat(4097), false],
+    ["secret_path_\n", false],
+    ["secret_path_\u0000", false],
+    ["x".repeat(4096), true],
+    ['secret_path_😀_"_\\', true],
+  ] as const) {
+    const fixture = setup();
+    const observer = observeFirstDefinition(fixture.inputs);
+    const original = new Error("original assertion");
+    const messages: string[] = [];
+    await assert.rejects(
+      withFirstDefinitionObservation(
+        observer,
+        async () => {
+          const pending = fixture.command();
+          fixture.native.spawn(
+            fixture.inputs.cliPath,
+            fixture.args.map((arg) =>
+              arg === fixture.inputs.root || arg === fixture.inputs.source
+                ? value
+                : arg,
+            ),
+          );
+          fixture.child.stdout.emit(
+            "data",
+            Buffer.from(
+              JSON.stringify({
+                root: value,
+                path: value,
+                dependencies: { root: value },
+              }),
+            ),
+          );
+          fixture.child.emit("close", 0, null);
+          fixture.resolve([]);
+          await pending;
+          throw original;
+        },
+        (line) => messages.push(line),
+      ),
+      (error: unknown) => error === original,
+    );
+    assert.equal(messages.length, 1);
+    assert.ok(Buffer.byteLength(messages[0], "utf8") <= 16 * 1024);
+    assert.ok(!messages[0].includes("secret_path_"));
+    const facts = JSON.parse(
+      messages[0].slice("SALTBOX_FIRST_DEFINITION_FAILURE ".length),
+    );
+    const availability = available ? "path_available" : "path_unavailable";
+    assert.equal(facts.child.rootAvailability, availability);
+    assert.equal(facts.child.sourceAvailability, availability);
+    assert.equal(facts.child.cliPathAvailability, "path_available");
+    assert.equal(facts.child.rootMatches, false);
+    assert.equal(facts.child.sourceMatches, false);
+    assert.equal(facts.response.stage, "response_json_object");
+    assert.equal(facts.response.rootAvailability, availability);
+    assert.equal(facts.response.pathAvailability, availability);
+    assert.equal(facts.response.dependencyRootAvailability, availability);
+    assert.equal(facts.response.rootMatches, false);
+    assert.equal(facts.response.pathMatches, false);
+    assert.equal(facts.response.dependencyRootMatches, false);
+    fixture.child.stdout.destroy();
+    fixture.child.stderr.destroy();
+  }
+});
+
 test("capture bounds and malformed output yield fixed stages without raw payloads", async () => {
   for (const [bytes, stage] of [
     [Buffer.alloc(256 * 1024 + 1, "x"), "response_capture_truncated"],
@@ -316,6 +476,7 @@ test("capture bounds and malformed output yield fixed stages without raw payload
     const facts = observer.snapshot();
     assert.equal(facts.response.stage, stage);
     assert.equal(facts.root, undefined);
+    assert.equal(facts.rootAvailability, "path_unavailable");
     assert.equal(facts.cliHash, undefined);
     assert.ok(!JSON.stringify(facts).includes("secret_"));
     observer.dispose();
