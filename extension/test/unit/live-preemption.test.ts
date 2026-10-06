@@ -47,7 +47,7 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let enabled = true;
   let marked = true;
-  const folder = { uri: { toString: () => "folder" } };
+  const folder = { uri: { scheme: "file", toString: () => "folder" } };
   const document = (name: string) => ({
     uri: {
       scheme: "file",
@@ -69,8 +69,10 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
   const seen: string[] = [];
   const published: string[] = [];
   const errors: unknown[] = [];
+  const scans: string[][] = [];
   let launches = 0;
   let completed = 0;
+  let cancelled = false;
   const processing = latch();
   const publications: string[] = [];
   async function pause(at: ProcessingBoundary) {
@@ -99,12 +101,21 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
     setTimeout,
     clearTimeout,
     require: (name: string): unknown => {
+      if (name === "node:fs/promises")
+        return {
+          ...realRequire(name),
+          readFile: async (filename: string) => {
+            assert.equal(filename, "/root/a.yml");
+            return Buffer.from(a.getText());
+          },
+        };
       if (name === "vscode")
         return {
           window: { tabGroups: { all: [] } },
           workspace: {
             isTrusted: true,
             textDocuments: [a, b],
+            workspaceFolders: [folder],
             getWorkspaceFolder: () => folder,
             getConfiguration: () => ({ get: () => enabled }),
           },
@@ -116,6 +127,8 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
       if (name === "./identity.ts")
         return {
           templatePath: () => false,
+          resolveSource: async (root: string, relative: string) =>
+            `${root}/${relative}`,
           identify: async (root: string, filename: string) => {
             await pause("identity");
             return { root, filename, path: filename.slice(6) };
@@ -141,15 +154,50 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
             request: { args: string[]; input: string },
             signal: AbortSignal,
           ) => {
+            if (!request.args.includes("--stdin-filename")) {
+              seen.push("workspace");
+              return JSON.stringify({
+                schema_version: 2,
+                diagnostics: [],
+                fixes: [],
+                analysis: {
+                  schema_version: 1,
+                  root: "/root",
+                  generation: hash("generation"),
+                  complete: true,
+                  sources: [
+                    {
+                      path: "a.yml",
+                      source_sha256: hash(a.getText()),
+                      identity: [],
+                      discovery: [],
+                      files: [
+                        {
+                          path: "a.yml",
+                          state: "read",
+                          sha256: hash(a.getText()),
+                        },
+                      ],
+                      directories: [],
+                    },
+                  ],
+                },
+              });
+            }
             const filename =
               request.args[request.args.indexOf("--stdin-filename") + 1];
             const path = filename.slice(6);
             seen.push(path);
             if (++launches === 1 && !boundary) {
               entered.resolve();
-              signal.addEventListener("abort", () => aborted.resolve(), {
-                once: true,
-              });
+              signal.addEventListener(
+                "abort",
+                () => {
+                  cancelled = true;
+                  aborted.resolve();
+                },
+                { once: true },
+              );
               await release.promise;
               seen.push("joined");
             }
@@ -196,7 +244,16 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
   });
   interface Subject {
     change(value: typeof a): void;
-    check(value: typeof a, manual?: boolean): Promise<void>;
+    check(
+      value: typeof a,
+      manual?: boolean,
+      version?: number,
+      typing?: boolean,
+      signal?: AbortSignal,
+    ): Promise<void>;
+    checkWorkspace(): Promise<void>;
+    checkSaved(value: typeof folder, manual: boolean): Promise<unknown>;
+    admit(value: typeof a, version?: number): Promise<boolean>;
     close(value: typeof a): void;
     saved(value: typeof a): void;
     configureRoots(): void;
@@ -206,6 +263,8 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
     lint: Scheduler;
     liveChecks?: LiveChecks<typeof a>;
     dependencies: Dependencies;
+    failures: Map<string, { token: string; message: string }>;
+    updateStatus(): void;
   }
   const editor = Object.assign(
     Object.create(module.exports.EditorIntegration.prototype) as Subject,
@@ -214,6 +273,8 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
       sourceOwners: new Map(),
       documentRevisions: new WeakMap(),
       rootRevisions: new Map(),
+      scanRevisions: new Map(),
+      canonicalRoots: new Map(),
       pendingDiskReload: new Set(),
       nextRevision: 0,
       relatedRevision: 0,
@@ -221,6 +282,7 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
       disposed: false,
       roots: {
         get: () => (marked ? "/root" : undefined),
+        folder: () => folder,
         ready: async () => {},
         refresh: async () => {},
         configure() {},
@@ -234,6 +296,10 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
         invalidateRelated: () => [],
         close() {},
         storeDocument: (key: string) => published.push(key),
+        storeScan: (_folder: string, entries: Map<string, unknown>) => {
+          scans.push([...entries.keys()]);
+          return [];
+        },
       },
       collection: { delete() {} },
       failures: new Map(),
@@ -250,6 +316,7 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
         await pause("rules");
         return new Set();
       },
+      synchronizeSources: async () => {},
       snapshot: async (value: typeof a) => ({
         root: "/root",
         filename: value.uri.fsPath,
@@ -277,6 +344,7 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
   });
   return {
     editor,
+    folder,
     a,
     b,
     entered,
@@ -285,9 +353,11 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
     seen,
     published,
     errors,
+    scans,
     processing,
     publications,
     completed: () => completed,
+    cancelled: () => cancelled,
     disable: () => {
       enabled = false;
     },
@@ -295,6 +365,124 @@ function fixture(t: TestContext, boundary?: ProcessingBoundary) {
       marked = false;
     },
   };
+}
+
+test(
+  "explicit workspace check aborts and joins typing before completing, then resumes its eligible buffer",
+  { timeout: 5000 },
+  async (t) => {
+    const f = fixture(t);
+    f.editor.change(f.a);
+    t.mock.timers.tick(300);
+    await f.entered.promise;
+    const command = f.editor.checkWorkspace();
+    await f.aborted.promise;
+    assert.deepEqual(f.seen, ["a.yml"], "workspace waits for typing join");
+    f.release.resolve();
+    await command;
+    assert.equal(f.scans.length, 1, "workspace diagnostics are accepted");
+    await f.editor.liveChecks?.join();
+    assert.deepEqual(f.seen, ["a.yml", "joined", "workspace"]);
+    t.mock.timers.tick(300);
+    await f.editor.liveChecks?.join();
+    assert.deepEqual(f.seen, ["a.yml", "joined", "workspace", "a.yml"]);
+    assert.deepEqual(f.published, ["a"]);
+  },
+);
+
+test(
+  "background workspace coverage stays priority zero and does not abort active typing",
+  { timeout: 5000 },
+  async (t) => {
+    const f = fixture(t);
+    f.editor.change(f.a);
+    t.mock.timers.tick(300);
+    await f.entered.promise;
+    const submitted = latch();
+    const submit = f.editor.lint.submit.bind(f.editor.lint);
+    t.mock.method(
+      f.editor.lint,
+      "submit",
+      (
+        key: string,
+        priority: number,
+        operation: (signal: AbortSignal) => Promise<unknown>,
+        signal?: AbortSignal,
+      ) => {
+        assert.equal(priority, 0);
+        const pending = submit(key, priority, operation, signal);
+        submitted.resolve();
+        return pending;
+      },
+    );
+    const coverage = f.editor.checkSaved(f.folder, false);
+    await submitted.promise;
+    assert.equal(f.cancelled(), false);
+    assert.deepEqual(f.seen, ["a.yml"]);
+    f.editor.lint.cancel("a");
+    await f.aborted.promise;
+    f.release.resolve();
+    assert.deepEqual([...((await coverage) as Set<string>)], ["a.yml"]);
+    await f.editor.liveChecks?.join();
+    assert.deepEqual(f.seen, ["a.yml", "joined", "workspace"]);
+  },
+);
+
+for (const control of [
+  "current typing",
+  "disabled",
+  "aborted",
+  "disabled and aborted",
+  "manual",
+  "open",
+  "saved",
+] as const) {
+  test(
+    `admission EACCES after asynchronous wait handles ${control}`,
+    { timeout: 5000 },
+    async (t) => {
+      const f = fixture(t);
+      const admitting = latch();
+      const reject = latch();
+      const error = Object.assign(new Error("admission denied"), {
+        code: "EACCES",
+      });
+      t.mock.method(f.editor, "admit", async () => {
+        admitting.resolve();
+        await reject.promise;
+        throw error;
+      });
+      const status = t.mock.method(f.editor, "updateStatus");
+      const typing = !["manual", "open", "saved"].includes(control);
+      const abort = new AbortController();
+      if (!typing) f.disable();
+      if (control === "saved") f.a.isDirty = false;
+      const check = f.editor.check(
+        f.a,
+        control === "manual",
+        f.a.version,
+        typing,
+        abort.signal,
+      );
+      await admitting.promise;
+      assert.equal(f.editor.failures.size, 0);
+      const previousStatus = status.mock.callCount();
+      if (control === "disabled" || control === "disabled and aborted")
+        f.disable();
+      if (control === "aborted" || control === "disabled and aborted")
+        abort.abort();
+      reject.resolve();
+      await check;
+      const publish = !["disabled", "aborted", "disabled and aborted"].includes(
+        control,
+      );
+      assert.equal(f.editor.failures.has("a"), publish);
+      assert.equal(status.mock.callCount() - previousStatus, publish ? 1 : 0);
+      assert.deepEqual(f.errors, publish ? [error] : []);
+      assert.deepEqual(f.seen, [], "admission failure never launches a check");
+      f.errors.length = 0;
+    },
+  );
 }
 
 for (const priority of ["manual", "save"] as const) {

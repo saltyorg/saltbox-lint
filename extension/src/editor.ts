@@ -831,6 +831,8 @@ export class EditorIntegration implements vscode.Disposable {
       if (!(await this.admit(document, version))) return;
     } catch (error) {
       if (
+        !signal?.aborted &&
+        (!typing || this.typingEligible(document)) &&
         document.version === version &&
         this.documentRevision(document) === revision &&
         sourceFolder &&
@@ -1172,7 +1174,7 @@ export class EditorIntegration implements vscode.Disposable {
       if (!root || !current()) return;
       const wire = await this.lint.submit(
         `${selected ? "files" : "workspace"}:${folder.uri}`,
-        0,
+        manual ? 2 : 0,
         async (signal) => {
           if (!current() || !this.roots.get(folderKey)) return;
           return runProcess(
