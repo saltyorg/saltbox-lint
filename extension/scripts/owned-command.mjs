@@ -60,6 +60,7 @@ export function ownedCommand(
     let stderr = "";
     let outputBytes = 0;
     let failure;
+    let cleanupFailure;
     let cleanupTimer;
     let reapTimer;
     let groupTimer;
@@ -72,13 +73,13 @@ export function ownedCommand(
     let cleanupStarted = false;
     const failCleanup = (message, cause) => {
       const error = new Error(`${identity}: ${message}`, { cause });
-      // Cleanup is a separate failure. Keep the initiating error visible and
-      // retain both error objects, without treating a denied signal as exit.
-      failure = failure
+      // The command's exit failure may arrive after cleanup starts. Keep
+      // cleanup separate until the final command result is assembled.
+      cleanupFailure = cleanupFailure
         ? new AggregateError(
-            [failure, error],
-            `${failure.message}; ${error.message}`,
-            { cause: failure },
+            [cleanupFailure, error],
+            `${cleanupFailure.message}; ${error.message}`,
+            { cause: cleanupFailure },
           )
         : error;
     };
@@ -92,6 +93,26 @@ export function ownedCommand(
       observation.abort();
       signal?.removeEventListener("abort", onAbort);
       child.stdin?.destroy();
+      if (
+        !error &&
+        closed &&
+        closed.code !== 0 &&
+        !(returnExitCode && closed.code !== null)
+      ) {
+        const { code, signal } = closed;
+        error = new Error(`${identity}: exited ${code ?? signal}\n${stderr}`);
+        error.exitCode = code;
+        error.stderr = stderr;
+      }
+      if (cleanupFailure) {
+        error = error
+          ? new AggregateError(
+              [error, cleanupFailure],
+              `${error.message}; ${cleanupFailure.message}`,
+              { cause: error },
+            )
+          : cleanupFailure;
+      }
       const settle = () => {
         if (error) reject(error);
         else resolveResult(returnExitCode ? closed.code : stdout);
@@ -113,16 +134,7 @@ export function ownedCommand(
     };
     const complete = () => {
       if (!closed || !groupGone) return;
-      const { code, signal } = closed;
-      if (failure) finish(failure);
-      else if (code !== 0 && !(returnExitCode && code !== null)) {
-        const error = new Error(
-          `${identity}: exited ${code ?? signal}\n${stderr}`,
-        );
-        error.exitCode = code;
-        error.stderr = stderr;
-        finish(error);
-      } else finish();
+      finish(failure);
     };
     const observeGroup = async () => {
       // SIGKILL queues termination. Observe the owned group's disappearance

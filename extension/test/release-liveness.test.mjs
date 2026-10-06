@@ -554,6 +554,80 @@ test("successful capture still rejects a denied owned group cleanup", async (t) 
   }
 });
 
+test("ordinary command exits preserve failures alongside denied cleanup", async (t) => {
+  if (process.platform === "win32") return;
+  for (const code of [0, 3]) {
+    for (const returnExitCode of [false, true]) {
+      const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-exit-"));
+      const filename = join(directory, "builder.json");
+      const nonce = randomBytes(16).toString("hex");
+      const kill = process.kill.bind(process);
+      const denied = Object.assign(new Error("kill EPERM control"), {
+        code: "EPERM",
+        syscall: "kill",
+      });
+      let instance;
+      const mock = t.mock.method(process, "kill", (pid, signal) => {
+        if (pid < 0 && signal === "SIGKILL") {
+          instance = JSON.parse(readFileSync(filename));
+          assert.equal(instance.nonce, nonce);
+          if (pid === -instance.pid) throw denied;
+        }
+        return kill(pid, signal);
+      });
+      try {
+        await assert.rejects(
+          ownedCommand(
+            process.execPath,
+            [
+              "-e",
+              `require("node:fs").writeFileSync(${JSON.stringify(filename)}, JSON.stringify({ pid: process.pid, nonce: ${JSON.stringify(nonce)} })); process.stderr.write("ordinary failure detail\\n"); process.exit(${code})`,
+            ],
+            {
+              phase: "ordinary exit cleanup control",
+              timeoutMs: 30000,
+              returnExitCode,
+            },
+          ),
+          (error) => {
+            if (code !== 0 && !returnExitCode) {
+              assert.ok(error instanceof AggregateError);
+              assert.equal(error.errors.length, 2);
+              const [primary, cleanup] = error.errors;
+              assert.notEqual(primary, cleanup);
+              assert.equal(primary.exitCode, code);
+              assert.equal(primary.stderr, "ordinary failure detail\n");
+              assert.match(
+                primary.message,
+                /exited 3\nordinary failure detail/,
+              );
+              assert.match(cleanup.message, /owned group cleanup failed/);
+              assert.equal(cleanup.cause, denied);
+              assert.equal(error.cause, primary);
+              assert.match(
+                error.message,
+                /exited 3\nordinary failure detail.*owned group cleanup failed/s,
+              );
+            } else {
+              assert.equal(error instanceof AggregateError, false);
+              assert.match(error.message, /owned group cleanup failed/);
+              assert.equal(error.cause, denied);
+              assert.equal(error.exitCode, undefined);
+              assert.equal(error.stderr, undefined);
+            }
+            return true;
+          },
+        );
+        assert.equal(instance.nonce, nonce);
+        assert.equal(await groupHasLiveMembers(instance.pid), false);
+      } finally {
+        mock.mock.restore();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
 test("source overflow retains cleanup errors and waits for owned group exit", async (t) => {
   if (process.platform === "win32") return;
   const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-overflow-"));
@@ -626,6 +700,86 @@ test("source overflow retains cleanup errors and waits for owned group exit", as
     controller.abort();
     if (parent && (await groupHasLiveMembers(parent.pid))) {
       // Signal only our recorded group after authenticating a live member.
+      assert.ok(
+        (await running(parent)) || (descendant && (await running(descendant))),
+      );
+      kill(-parent.pid, "SIGKILL");
+    }
+    await result;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("owned deadline retains cleanup errors and waits for group exit", async (t) => {
+  if (process.platform === "win32") return;
+  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-deadline-"));
+  const filename = join(directory, "builder.json");
+  const controller = new AbortController();
+  const kill = process.kill.bind(process);
+  const denied = Object.assign(new Error("kill EPERM control"), {
+    code: "EPERM",
+    syscall: "kill",
+  });
+  let parent;
+  let descendant;
+  let mock;
+  let settled = false;
+  const result = ownedCommand(process.execPath, [fixture, "tree", filename], {
+    phase: "owned deadline cleanup control",
+    timeoutMs: 30000,
+    returnExitCode: true,
+    signal: controller.signal,
+  }).then(
+    () => {
+      settled = true;
+      throw new Error("Deadline unexpectedly succeeded");
+    },
+    (error) => {
+      settled = true;
+      return error;
+    },
+  );
+  try {
+    parent = await record(filename);
+    descendant = await record(filename + ".child");
+    let deniedKill;
+    const attempted = new Promise((resolve) => {
+      deniedKill = resolve;
+    });
+    mock = t.mock.method(process, "kill", (pid, signal) => {
+      if (pid === -parent.pid && signal === "SIGKILL") {
+        deniedKill();
+        throw denied;
+      }
+      return kill(pid, signal);
+    });
+    await attempted;
+    assert.equal(await running(parent), true);
+    assert.equal(await running(descendant), true);
+    assert.equal(await groupHasLiveMembers(parent.pid), true);
+    assert.equal(settled, false, "EPERM does not prove owned group exit");
+    mock.mock.restore();
+    kill(-parent.pid, "SIGKILL");
+    const error = await result;
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.errors.length, 2);
+    const [primary, cleanup] = error.errors;
+    assert.notEqual(primary, cleanup);
+    assert.match(primary.message, /timed out after 30000ms/);
+    assert.match(cleanup.message, /owned group cleanup failed/);
+    assert.equal(cleanup.cause, denied);
+    assert.equal(error.cause, primary);
+    assert.match(
+      error.message,
+      /timed out after 30000ms.*owned group cleanup failed/s,
+    );
+    assert.equal(await groupHasLiveMembers(parent.pid), false);
+    assert.equal(await endpointAbsent(parent), true);
+    assert.equal(await endpointAbsent(descendant), true);
+  } finally {
+    mock?.mock.restore();
+    controller.abort();
+    if (parent && (await groupHasLiveMembers(parent.pid))) {
       assert.ok(
         (await running(parent)) || (descendant && (await running(descendant))),
       );
