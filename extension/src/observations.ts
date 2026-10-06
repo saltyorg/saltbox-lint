@@ -68,6 +68,10 @@ export interface LogicalSource extends Identity {
   rootFingerprint: string;
   parents: { filename: string; canonical: string; fingerprint: string }[];
 }
+interface SourceOrigin extends Identity {
+  sourceFilename: string;
+  logical?: LogicalSource;
+}
 async function absent(filename: string): Promise<boolean> {
   try {
     await lstat(filename);
@@ -217,6 +221,29 @@ export function logicalSourceCurrent(
 }
 export function logicalSourceCurrentNow(observation: LogicalSource): boolean {
   return authorityCurrentNow(logicalSourceChecks(observation));
+}
+// The original URI may be absent from every reported dependency and target.
+// Retain its captured owner separately from the current public buffer list.
+export function sourceOriginCurrent(origin: SourceOrigin): Promise<boolean> {
+  return authorityCurrent(sourceOriginChecks(origin));
+}
+export function sourceOriginCurrentNow(origin: SourceOrigin): boolean {
+  return authorityCurrentNow(sourceOriginChecks(origin));
+}
+function* sourceOriginChecks(
+  origin: SourceOrigin,
+): Generator<AuthorityRead, boolean, unknown> {
+  try {
+    const identity = yield* identityRead(origin.root, origin.sourceFilename);
+    if (identity.filename !== origin.filename || identity.path !== origin.path)
+      return false;
+    return origin.logical
+      ? yield* logicalSourceChecks(origin.logical)
+      : (yield* canonicalRead(origin.sourceFilename)) === origin.filename;
+  } catch (error) {
+    if (unavailableSource(error)) return false;
+    throw error;
+  }
 }
 export function sourceCurrent(
   root: string,

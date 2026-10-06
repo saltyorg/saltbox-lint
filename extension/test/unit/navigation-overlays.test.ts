@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { build } from "esbuild";
 import { SnapshotIndex, hash } from "../../src/protocol.ts";
-import { observeAnalysis } from "../../src/observations.ts";
+import { observeAnalysis, fileFingerprint } from "../../src/observations.ts";
 import { Scheduler } from "../../src/scheduler.ts";
 import { synchronizeDirtyAliases } from "../host/dirty-alias-buffers.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
@@ -98,12 +98,12 @@ async function bundle(entry: string, query = false) {
 const validatorBundle = await bundle("src/navigation.ts");
 const queryBundle = await bundle("src/editor.ts", true);
 
-async function fixture() {
+async function fixture(originalPath = "reverse-alias.j2") {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "saltbox-navigation-overlay-")),
   );
   const external = root + "-external";
-  const original = join(root, "reverse-alias.j2");
+  const original = join(root, originalPath);
   for (const directory of [
     "roles/a/defaults",
     "roles/a/templates",
@@ -111,6 +111,7 @@ async function fixture() {
     "roles/b/templates",
     ".git",
     "owned-admin",
+    "aliases",
   ])
     await mkdir(join(root, directory), { recursive: true });
   await writeFile(join(root, sourcePath), "saved contents");
@@ -644,9 +645,21 @@ for (const phase of [
     "root generation",
     "source generation",
     "cancelled",
+    ...(phase === "final target read"
+      ? ([
+          "nested original stable",
+          "nested original retargeted",
+          "nested original deleted",
+          "nested original escape",
+          "nested original git admin",
+        ] as const)
+      : []),
   ] as const) {
     test(`actual template query ${kind} at ${phase} without a watcher notification`, async () => {
-      const f = await fixture();
+      const nestedOrigin = kind.startsWith("nested original");
+      const f = await fixture(
+        nestedOrigin ? "aliases/reverse-alias.j2" : undefined,
+      );
       const lane = new Scheduler();
       const folder = { uri: uri(f.root) };
       let generation = 0;
@@ -786,7 +799,47 @@ for (const phase of [
             );
           }),
         ]);
-        if (kind === "dependency generation") generation++;
+        const rootFingerprint = fileFingerprint(
+          await stat(f.root, { bigint: true }),
+        );
+        if (nestedOrigin) {
+          assert.equal(
+            f.report.target_hashes["aliases/reverse-alias.j2"],
+            undefined,
+          );
+          assert.ok(
+            f.report.dependencies.sources[0].files.every(
+              (file) => file.path !== "aliases/reverse-alias.j2",
+            ),
+          );
+          if (kind !== "nested original stable") {
+            await rm(f.original);
+            if (kind !== "nested original deleted")
+              await symlink(
+                kind === "nested original escape"
+                  ? f.external
+                  : join(
+                      f.root,
+                      kind === "nested original git admin"
+                        ? ".git/config"
+                        : "other.yml",
+                    ),
+                f.original,
+                "file",
+              );
+          }
+          assert.equal(
+            fileFingerprint(await stat(f.root, { bigint: true })),
+            rootFingerprint,
+            "the nested origin change leaves the retained root unchanged",
+          );
+          assert.equal(
+            await readFile(join(f.root, sourcePath), "utf8"),
+            "saved contents",
+          );
+          assert.equal(f.document.getText(), text);
+          assert.equal(f.document.version, 1);
+        } else if (kind === "dependency generation") generation++;
         else if (kind === "query generation") editor.queryRevision++;
         else if (kind === "primary version") f.document.version++;
         else if (kind === "primary contents")
@@ -801,15 +854,23 @@ for (const phase of [
         else if (kind === "cancelled") {
           assert.ok(cancel);
           cancel();
-        } else await change(f, kind);
-        assert.equal(
-          await realpath(f.original),
-          join(f.root, sourcePath),
-          "the original primary spelling stays confined to its owner",
-        );
+        } else {
+          const mutation = changes.find((value) => value === kind);
+          assert.ok(mutation);
+          await change(f, mutation);
+        }
+        if (!nestedOrigin || kind === "nested original stable")
+          assert.equal(
+            await realpath(f.original),
+            join(f.root, sourcePath),
+            "the original primary spelling stays confined to its owner",
+          );
         release();
         const answer = await pending;
-        assert.equal(!!answer, accepted(kind));
+        assert.equal(
+          !!answer,
+          accepted(kind) || kind === "nested original stable",
+        );
         assert.equal(invoked, 1);
         assert.equal(
           joined,

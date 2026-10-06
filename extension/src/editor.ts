@@ -39,7 +39,8 @@ import {
   observationFingerprint,
   observeLogicalSource,
   logicalSourceCurrent,
-  logicalSourceCurrentNow,
+  sourceOriginCurrent,
+  sourceOriginCurrentNow,
   type LogicalSource,
 } from "./observations.ts";
 
@@ -1454,20 +1455,16 @@ export class EditorIntegration implements vscode.Disposable {
         ]),
       );
       if (!answer || !current()) return;
-      const identity = await identify(snapshot.root, document.uri.fsPath);
-      if (
-        !current() ||
-        identity.filename !== snapshot.filename ||
-        identity.path !== snapshot.path
-      )
-        return;
+      if (!(await sourceOriginCurrent(snapshot)) || !current()) return;
       // Events which arrived before a previously unknown query dependency was
       // loaded still prevent late acceptance. Do not overwrite lint ownership.
+      // Keep the original URI's owner in the final cohort even when that
+      // spelling is absent from the report's dependencies and targets.
       if (
         !(await answer.targetsCurrent()) ||
         (snapshot.logical && !(await logicalSourceCurrent(snapshot.logical))) ||
         !answer.targetsCurrentNow() ||
-        (snapshot.logical && !logicalSourceCurrentNow(snapshot.logical)) ||
+        !sourceOriginCurrentNow(snapshot) ||
         !current() ||
         this.dependencies.begin() !== dependencyToken
       )
