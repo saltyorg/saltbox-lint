@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EditorIntegration } from "../../src/editor.ts";
+import { reportWritableOwnershipFailure } from "./writable-ownership-failure.ts";
 import {
   FixtureJournal,
   FixtureGateCohort,
@@ -33,6 +34,7 @@ export async function checkPendingWritableOwnership(
   const instances = join(temporary, "instances.jsonl");
   const journal = new FixtureJournal(instances);
   const modes = ["canonical", "lint-fixes", "fixAll"] as const;
+  let completed = 0;
   const cohort = new FixtureGateCohort(
     instances,
     journal,
@@ -115,6 +117,7 @@ export async function checkPendingWritableOwnership(
         process.env.SALTBOX_TEST_PROCESS_GATE = gate;
         await writeFile(gate, "");
         let settled = false;
+        let acceptedReady = false;
         const pending = (
           mode === "fixAll" ? editor.fixAll(uri) : editor.format(document, mode)
         ).then((result) => {
@@ -143,6 +146,7 @@ export async function checkPendingWritableOwnership(
                 ],
               );
               assert.equal(await fixtureRunning(controlled), true);
+              acceptedReady = true;
               return true;
             } catch (error) {
               if ((error as NodeJS.ErrnoException).code === "ENOENT")
@@ -189,6 +193,14 @@ export async function checkPendingWritableOwnership(
             bytes,
             "template disk bytes stay unchanged",
           );
+          completed++;
+        } catch (error) {
+          reportWritableOwnershipFailure(error, {
+            control: `${mode}:${retarget ? "retarget" : "stable"}`,
+            completed,
+            settled,
+            acceptedReady,
+          });
         } finally {
           await rm(gate, { force: true });
           await pending;
