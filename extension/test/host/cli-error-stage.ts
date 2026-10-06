@@ -96,6 +96,8 @@ export function observeCLIErrorStage() {
   let remaining = 0;
   let minimum = 0x80;
   let maximum = 0xbf;
+  // Finite progress through E2 80 A8/A9, the Unicode line separators.
+  let lineSeparator = 0;
 
   function observe(data: unknown) {
     if (invalid) return;
@@ -116,12 +118,21 @@ export function observeCLIErrorStage() {
           invalid = true;
           return;
         }
+        if (lineSeparator === 2 && (byte === 0xa8 || byte === 0xa9)) {
+          invalid = true;
+          return;
+        }
+        lineSeparator = lineSeparator === 1 && byte === 0x80 ? 2 : 0;
         remaining--;
         minimum = 0x80;
         maximum = 0xbf;
       } else if (byte >= 0x80) {
-        if (byte >= 0xc2 && byte <= 0xdf) remaining = 1;
-        else if (byte >= 0xe0 && byte <= 0xef) {
+        lineSeparator = byte === 0xe2 ? 1 : 0;
+        if (byte >= 0xc2 && byte <= 0xdf) {
+          remaining = 1;
+          // C2 80..9F encodes the C1 controls, including NEXT LINE.
+          minimum = byte === 0xc2 ? 0xa0 : 0x80;
+        } else if (byte >= 0xe0 && byte <= 0xef) {
           remaining = 2;
           minimum = byte === 0xe0 ? 0xa0 : 0x80;
           maximum = byte === 0xed ? 0x9f : 0xbf;

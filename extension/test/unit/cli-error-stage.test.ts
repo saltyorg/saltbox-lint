@@ -78,6 +78,27 @@ test("classification is independent of chunk boundaries and retains no opaque ta
   }
 });
 
+test("valid Unicode boundaries remain eligible opaque tail content", () => {
+  for (const point of [
+    0x7e, 0xa0, 0xa1, 0x7ff, 0x800, 0x2027, 0x202f, 0x2030, 0x20a8, 0xe028,
+    0xe029, 0x10000, 0x1f980, 0x10ffff,
+  ]) {
+    const bytes = Buffer.from(
+      "saltbox-lint: open source parent " +
+        String.fromCodePoint(point) +
+        "secret_path: secret_error\n",
+    );
+    for (let split = 0; split <= bytes.length; split++) {
+      const observer = observeCLIErrorStage();
+      observer.observe(bytes.subarray(0, split));
+      observer.observe(bytes.subarray(split));
+      assert.equal(observer.stage(true, 2), "error_source_parent_open");
+      assert.doesNotMatch(JSON.stringify(observer), /secret_path|secret_error/);
+      observer.dispose();
+    }
+  }
+});
+
 test("unavailable and malformed stderr never acquire an invented stage", () => {
   const cases: unknown[][] = [
     [],

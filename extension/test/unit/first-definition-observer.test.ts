@@ -101,6 +101,54 @@ test("native stderr exposes only a fixed source-owned error stage after close", 
   }
 });
 
+test("native stderr rejects encoded controls and line separators across chunk boundaries", async (t) => {
+  const prefix = Buffer.from("saltbox-lint: open source parent ");
+  const controls = [
+    ...Array.from({ length: 32 }, (_, index) => 0x80 + index),
+    0x2028,
+    0x2029,
+  ];
+  for (const point of controls) {
+    const bytes = Buffer.from(String.fromCodePoint(point));
+    for (let split = 0; split <= bytes.length; split++) {
+      await t.test(`U+${point.toString(16)} split ${split}`, async () => {
+        const fixture = setup();
+        const observer = observeFirstDefinition(fixture.inputs);
+        try {
+          const pending = fixture.command();
+          fixture.native.spawn(fixture.inputs.cliPath, fixture.args);
+          for (const chunk of [
+            prefix,
+            bytes.subarray(0, split),
+            bytes.subarray(split),
+            Buffer.from("secret_path: secret_error\n"),
+          ])
+            assert.equal(fixture.child.stderr.emit("data", chunk), false);
+          fixture.child.emit("close", 2, null);
+          fixture.resolve([]);
+          await pending;
+          const facts = observer.snapshot();
+          assert.equal(
+            Reflect.get(facts.child!, "errorStage"),
+            "error_stage_unknown",
+            `U+${point.toString(16)} split ${split}`,
+          );
+          assert.doesNotMatch(
+            JSON.stringify(facts),
+            /secret_path|secret_error/,
+          );
+          assert.equal(fixture.child.stderr.listenerCount("data"), 0);
+          assert.equal(fixture.child.stderr.readableFlowing, null);
+        } finally {
+          observer.dispose();
+          fixture.child.stdout.destroy();
+          fixture.child.stderr.destroy();
+        }
+      });
+    }
+  }
+});
+
 test("public request and native wrappers preserve exact receivers, arguments, promise, child and streams", async () => {
   const fixture = setup();
   const commandReceiver = {},
