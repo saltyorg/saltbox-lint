@@ -1,0 +1,6 @@
+{# Loop targets and iterables use distinct grammar. #}
+{% for (key, (left, right)), value in items if enabled recursive %}
+  {{ key }} {{ value }}
+{% endfor %}
+{% for item in first, second, if ready %}{{ item }}{% endfor %}
+{% for item in (first if flag else second) %}{{ item }}{% endfor %}

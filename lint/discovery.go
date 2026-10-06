@@ -160,13 +160,26 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 		if err != nil {
 			return nil, fmt.Errorf("inspect target %s: %w", target, err)
 		}
+		spelling, err := admitSelectionSpelling(root, target)
+		if err != nil {
+			return nil, err
+		}
+		owner, err := ownedSourcePath(root, absolute)
+		if err != nil {
+			return nil, err
+		}
+		if owner != spelling.owner {
+			return nil, fmt.Errorf("selected spelling owner changed during admission: %s", target)
+		}
 		if info.IsDir() {
 			// A conventional template directory remains excluded from primary
 			// discovery even when its parent spelling aliases a YAML directory.
 			if !isTemplate(filepath.Join(target, "source")) {
+				p.selectionSpellings = append(p.selectionSpellings, spelling)
 				err = l.directory(absolute, true)
 			}
 		} else {
+			p.selectionSpellings = append(p.selectionSpellings, spelling)
 			err = l.add(absolute, true)
 		}
 		if err != nil {

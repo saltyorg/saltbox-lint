@@ -130,6 +130,7 @@ type Rule struct {
 	Check                                             func(*Project, *Source) []Diagnostic
 }
 type Project struct {
+	selectionSpellings   []selectionSpelling
 	referenceDirectories map[string][]string
 	referenceFiles       []string
 	discoverable         map[string]bool

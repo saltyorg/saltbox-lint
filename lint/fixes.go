@@ -460,6 +460,9 @@ func RequireWritableSelection(project *Project) error {
 	if project == nil {
 		return nil
 	}
+	if err := project.validateSelectionSpellings(); err != nil {
+		return err
+	}
 	names := sortedKeys(project.Selected)
 	var root *os.Root
 	defer func() {

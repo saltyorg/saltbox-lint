@@ -52,3 +52,34 @@ func (identity *sourceDiskIdentity) validate(rootPath string, root *os.Root, nam
 	}
 	return nil
 }
+
+// selectionSpelling retains the caller's path before directory aliases are
+// normalized. Files selected by a directory inherit that directory's admission.
+type selectionSpelling struct {
+	absolute, owner string
+}
+
+func admitSelectionSpelling(root, target string) (selectionSpelling, error) {
+	absolute, err := filepath.Abs(target)
+	if err != nil {
+		return selectionSpelling{}, err
+	}
+	owner, err := ownedSourcePath(root, absolute)
+	if err != nil {
+		return selectionSpelling{}, err
+	}
+	return selectionSpelling{absolute: absolute, owner: owner}, nil
+}
+
+func (p *Project) validateSelectionSpellings() error {
+	for _, spelling := range p.selectionSpellings {
+		owner, err := ownedSourcePath(p.Root, spelling.absolute)
+		if err != nil {
+			return err
+		}
+		if owner != spelling.owner {
+			return fmt.Errorf("selected spelling owner changed since analysis: %s", spelling.absolute)
+		}
+	}
+	return nil
+}

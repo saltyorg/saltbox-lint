@@ -248,3 +248,69 @@ func TestWriteChangesStableDirectoryAliasAtAdmission(t *testing.T) {
 		t.Fatalf("stable alias correction lost: %q %v", actual, err)
 	}
 }
+
+func TestWriteChangesRejectsRetargetedOriginalDirectorySelection(t *testing.T) {
+	for _, selection := range []string{"file", "directory", "expanded", "duplicate", "root alias"} {
+		for _, changed := range []bool{false, true} {
+			t.Run(selection+"/"+map[bool]string{false: "unchanged source", true: "changed source"}[changed], func(t *testing.T) {
+				root := t.TempDir()
+				input := "v: true\n"
+				if changed {
+					input = "v: \"{{ a\n | f }}\"\n"
+				}
+				filename := putFile(t, root, "roles/demo/defaults/main.yaml", input)
+				template := putFile(t, root, "roles/demo/templates/main.yaml", input)
+				otherInput := "v: \"{{ a\n | f }}\"\n"
+				other := putFile(t, root, "other.yml", otherInput)
+				alias := filepath.Join(root, "alias")
+				if err := os.Symlink(filepath.Dir(filename), alias); err != nil {
+					t.Fatal(err)
+				}
+				paths := []string{filepath.Join(alias, "main.yaml"), other}
+				switch selection {
+				case "directory":
+					paths[0] = alias
+				case "expanded":
+					paths = []string{root, paths[0], other}
+				case "duplicate":
+					paths = append([]string{filename}, paths...)
+				case "root alias":
+					originalRoot := filepath.Join(t.TempDir(), "root")
+					if err := os.Symlink(root, originalRoot); err != nil {
+						t.Fatal(err)
+					}
+					paths[0] = filepath.Join(originalRoot, "alias/main.yaml")
+				}
+				p, err := Load(t.Context(), Options{Root: root, Paths: paths})
+				if err != nil {
+					t.Fatal(err)
+				}
+				changes, err := PlanFixes(p, Analyze(p, jinjaRules()))
+				if err != nil || len(changes) != map[bool]int{false: 1, true: 2}[changed] {
+					t.Fatalf("plan: %+v %v", changes, err)
+				}
+				if err := RequireWritableSelection(p); err != nil {
+					t.Fatalf("stable alias refused: %v", err)
+				}
+				if err := os.Remove(alias); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Dir(template), alias); err != nil {
+					t.Fatal(err)
+				}
+				if err := RequireWritableSelection(p); err == nil {
+					t.Error("retargeted original selection passed preflight")
+				}
+				if err := WriteChanges(p, changes); err == nil {
+					t.Error("retargeted original selection authorized old YAML write")
+				}
+				for path, want := range map[string]string{filename: input, template: input, other: otherInput} {
+					got, err := os.ReadFile(path)
+					if err != nil || string(got) != want {
+						t.Errorf("batch source changed: %s: %q %v", path, got, err)
+					}
+				}
+			})
+		}
+	}
+}

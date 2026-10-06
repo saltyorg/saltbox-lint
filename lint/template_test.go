@@ -14,6 +14,28 @@ import (
 func TestTemplateScanner(t *testing.T) {
 	cases := []struct{ name, input, errorText, partial string }{
 		{"literal layout", " \t  literal }} %} #}\r\n\r\n  no final newline", "", ""},
+		{"for unpacked target", "{% for a, b in items %}{{ a }}{% endfor %}", "", ""},
+		{"for trailing target comma", "{% for a, in items %}{{ a }}{% endfor %}", "", ""},
+		{"for grouped target", "{% for (a) in items %}{{ a }}{% endfor %}", "", ""},
+		{"for nested target tuple", "{% for (a, (b, c)), d in items %}{{ a }}{% endfor %}", "", ""},
+		{"for tuple iterable", "{% for x in first, second, %}{{ x }}{% endfor %}", "", ""},
+		{"for filtered tuple iterable", "{% for x in first, second, if ready %}{{ x }}{% endfor %}", "", ""},
+		{"for filtered iterable", "{% for x in items if ready %}{{ x }}{% endfor %}", "", ""},
+		{"for recursive iterable", "{% for x in items recursive %}{{ x }}{% endfor %}", "", ""},
+		{"for filtered recursive iterable", "{% for x in items if ready recursive %}{{ x }}{% endfor %}", "", ""},
+		{"for nested conditional iterable", "{% for x in (items if ready else backup) %}{{ x }}{% endfor %}", "", ""},
+		{"for conditional filter", "{% for x in items if ready if flag else backup %}{{ x }}{% endfor %}", "", ""},
+		{"for quoted keywords", "{% for x in choose('if', 'recursive', 'else', 'in') %}{{ x }}{% endfor %}", "", ""},
+		{"for custom trim whitespace", "#jinja2:block_start_string:'<%',block_end_string:'%>'\n<%- for\u00a0a, b\u2003in items if ready recursive +%> {{ a }} <% endfor -%>", "", ""},
+		{"for ignored raw grammar", "{% raw %}{% for , in items if ready else backup %}{% endraw %}", "", ""},
+		{"for literal target", "{% for true in items %}literal{% endfor %}", "", "statement argument grammar"},
+		{"for double target comma", "{% for a,, b in items %}literal{% endfor %}", "", "statement argument grammar"},
+		{"for missing iterable", "{% for x in %}literal{% endfor %}", "", "statement argument grammar"},
+		{"for missing filter", "{% for x in items if %}literal{% endfor %}", "", "statement argument grammar"},
+		{"for repeated recursive", "{% for x in items recursive recursive %}literal{% endfor %}", "", "statement argument grammar"},
+		{"for adjacent targets", "{% for a b in items %}{{ a }}{% endfor %}", "", "statement argument grammar"},
+		{"for empty comma target", "{% for , in items %}literal{% endfor %}", "", "statement argument grammar"},
+		{"for conditional iterable", "{% for x in items if ready else backup %}{{ x }}{% endfor %}", "", "statement argument grammar"},
 		{"nested branches", "{% if a %}{% for item in items %}{{ item }}{% else %}empty{% endfor %}{% elif b %}b{% else %}c{% endif %}", "", ""},
 		{"quoted delimiters", `{{ '}} {{ {% #}' }}{% if value == '%}' %}yes{% endif %}`, "", ""},
 		{"comments", "{# {{ {% unmatched \" #}\n{{ value }}", "", ""},
@@ -454,7 +476,7 @@ func TestTemplateCommittedFixtures(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
 		diagnostics, partial bool
-	}{{"valid.j2", false, false}, {"invalid.j2", true, false}, {"partial.j2", false, true}, {"custom.j2", false, false}, {"whitespace-valid.j2", false, false}, {"whitespace-invalid.j2", true, false}} {
+	}{{"valid.j2", false, false}, {"invalid.j2", true, false}, {"partial.j2", false, true}, {"custom.j2", false, false}, {"whitespace-valid.j2", false, false}, {"whitespace-invalid.j2", true, false}, {"for-valid.j2", false, false}, {"for-partial.j2", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, err := os.ReadFile("testdata/templates/" + tc.name)
 			if err != nil {
@@ -590,5 +612,48 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 	identity, err := ResolveSourceIdentity(root, alias)
 	if err != nil || !identity.IsTemplate() || identity.Root != canonicalRoot || identity.Path != "unrelated.yml" {
 		t.Fatalf("alias identity: %+v %v", identity, err)
+	}
+}
+
+func TestTemplateForGrammarExplanation(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"for-valid.j2", "for-partial.j2"} {
+		data, err := os.ReadFile("testdata/templates/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		filename := putFile(t, root, name, string(data))
+		p, err := Load(t.Context(), Options{Root: root, Paths: []string{filename}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ds := Analyze(p, Rules())
+		if name == "for-partial.j2" {
+			if len(ds) != 1 || ds[0].RuleID != "template-partial-coverage" || ds[0].Fix != nil {
+				t.Fatalf("partial coverage finding missing: %+v", ds)
+			}
+		} else if len(ds) != 0 {
+			t.Fatalf("unexpected valid-loop findings: %+v", ds)
+		}
+		explanation, err := Explain(t.Context(), Options{Root: root, Paths: []string{filename}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := "static-template"
+		if name == "for-partial.j2" {
+			state = "partial-template"
+			if !slices.ContainsFunc(explanation.Source.CoverageReasons, func(reason string) bool { return strings.Contains(reason, "statement argument grammar") }) {
+				t.Fatalf("partial reason missing: %+v", explanation.Source)
+			}
+		} else if len(explanation.Source.CoverageReasons) != 0 {
+			t.Fatalf("valid loop lost coverage: %+v", explanation.Source)
+		}
+		if explanation.Source.ParseState != state {
+			t.Fatalf("coverage=%s want=%s", explanation.Source.ParseState, state)
+		}
+		after, err := os.ReadFile(filename)
+		if err != nil || !bytes.Equal(data, after) {
+			t.Fatal("checking or explanation changed template bytes")
+		}
 	}
 }

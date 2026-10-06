@@ -390,25 +390,7 @@ func supportedTemplateStatement(e Expression) bool {
 		_, ok := parseFixExpression(t[1:])
 		return ok
 	case "for":
-		in := -1
-		for i := 1; i < len(t); i++ {
-			if t[i].Text == "in" {
-				in = i
-				break
-			}
-			if t[i].Kind != "name" && t[i].Text != "," {
-				return false
-			}
-		}
-		if in < 2 {
-			return false
-		}
-		end := len(t)
-		if t[end-1].Text == "recursive" {
-			end--
-		}
-		_, ok := parseFixExpression(t[in+1 : end])
-		return ok
+		return supportedTemplateFor(t[1:])
 	case "block":
 		return len(t) == 2 && t[1].Kind == "name" || len(t) == 3 && t[1].Kind == "name" && t[2].Text == "scoped"
 	case "set":
@@ -749,4 +731,64 @@ func traefikContractGuard(tokens []Token) bool {
 	}
 	_, ok := parseFixExpression(tokens[start:])
 	return ok
+}
+
+// For iterables disable top-level conditional expressions, as Jinja's for
+// grammar does. A following if is a loop filter, with its own expression.
+func supportedTemplateFor(tokens []Token) bool {
+	pos := 0
+	if !templateForTarget(tokens, &pos, 0) || pos >= len(tokens) || tokens[pos].Text != "in" {
+		return false
+	}
+	p := expressionParser{tokens: tokens, pos: pos + 1}
+	for {
+		if p.pos >= len(tokens) || tokens[p.pos].Text == "if" || tokens[p.pos].Text == "recursive" {
+			return false
+		}
+		p.binary(0)
+		if p.invalid {
+			return false
+		}
+		if !p.take(",") {
+			break
+		}
+		if p.pos == len(tokens) || tokens[p.pos].Text == "if" || tokens[p.pos].Text == "recursive" {
+			break
+		}
+	}
+	if p.take("if") {
+		p.conditional()
+	}
+	p.take("recursive")
+	return !p.invalid && p.pos == len(tokens)
+}
+
+// The supported assignment subset is a name or a comma-separated tuple of
+// names, including grouping and nested tuples. Other targets remain partial.
+func templateForTarget(tokens []Token, pos *int, depth int) bool {
+	if depth > 128 || *pos >= len(tokens) {
+		return false
+	}
+	for {
+		if *pos >= len(tokens) {
+			return false
+		}
+		token := tokens[*pos]
+		*pos += 1
+		if token.Text == "(" {
+			if !templateForTarget(tokens, pos, depth+1) || *pos >= len(tokens) || tokens[*pos].Text != ")" {
+				return false
+			}
+			*pos += 1
+		} else if token.Kind != "name" || token.Text == "in" || token.Text == "true" || token.Text == "True" || token.Text == "false" || token.Text == "False" || token.Text == "none" || token.Text == "None" {
+			return false
+		}
+		if *pos >= len(tokens) || tokens[*pos].Text != "," {
+			return true
+		}
+		*pos += 1
+		if *pos < len(tokens) && (tokens[*pos].Text == "in" || tokens[*pos].Text == ")") {
+			return true
+		}
+	}
 }
