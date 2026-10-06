@@ -7,6 +7,7 @@ import { Dependencies } from "../../src/dependencies.ts";
 import { hash, SnapshotIndex } from "../../src/protocol.ts";
 import type { Scheduler } from "../../src/scheduler.ts";
 import type { LiveChecks } from "../../src/live-checks.ts";
+import { runProcess } from "../../src/process.ts";
 
 const bundle = await build({
   stdin: {
@@ -24,7 +25,7 @@ const bundle = await build({
       name: "snapshot-adapters",
       setup(builder) {
         builder.onResolve(
-          { filter: /\/(process|identity|observations)\.ts$/ },
+          { filter: /\/(process|identity|observations|diagnostics)\.ts$/ },
           (args) => ({ path: args.path, external: true }),
         );
       },
@@ -40,7 +41,9 @@ function latch() {
   return { promise, resolve };
 }
 
-function fixture(t: TestContext) {
+type ProcessingBoundary = "identity" | "rules" | "render" | "observe";
+
+function fixture(t: TestContext, boundary?: ProcessingBoundary) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let enabled = true;
   let marked = true;
@@ -67,6 +70,19 @@ function fixture(t: TestContext) {
   const published: string[] = [];
   const errors: unknown[] = [];
   let launches = 0;
+  let completed = 0;
+  const processing = latch();
+  const publications: string[] = [];
+  async function pause(at: ProcessingBoundary) {
+    if (boundary !== at || completed !== 1) return;
+    assert.equal(
+      completed,
+      1,
+      "the subprocess has closed before processing pauses",
+    );
+    processing.resolve();
+    await release.promise;
+  }
   const module = {
     exports: {} as {
       EditorIntegration: { prototype: object };
@@ -100,18 +116,24 @@ function fixture(t: TestContext) {
       if (name === "./identity.ts")
         return {
           templatePath: () => false,
-          identify: async (root: string, filename: string) => ({
-            root,
-            filename,
-            path: filename.slice(6),
-          }),
+          identify: async (root: string, filename: string) => {
+            await pause("identity");
+            return { root, filename, path: filename.slice(6) };
+          },
         };
       if (name === "./observations.ts")
         return {
-          observeAnalysis: async () => ({
-            changed: new Set(),
-            fingerprints: new Map(),
-          }),
+          observeAnalysis: async () => {
+            await pause("observe");
+            return { changed: new Set(), fingerprints: new Map() };
+          },
+        };
+      if (name === "./diagnostics.ts")
+        return {
+          renderDiagnostics: async () => {
+            await pause("render");
+            return [];
+          },
         };
       if (name === "./process.ts")
         return {
@@ -123,7 +145,7 @@ function fixture(t: TestContext) {
               request.args[request.args.indexOf("--stdin-filename") + 1];
             const path = filename.slice(6);
             seen.push(path);
-            if (++launches === 1) {
+            if (++launches === 1 && !boundary) {
               entered.resolve();
               signal.addEventListener("abort", () => aborted.resolve(), {
                 once: true,
@@ -131,7 +153,7 @@ function fixture(t: TestContext) {
               await release.promise;
               seen.push("joined");
             }
-            return JSON.stringify({
+            const report = JSON.stringify({
               schema_version: 2,
               diagnostics: [],
               fixes: [],
@@ -154,6 +176,19 @@ function fixture(t: TestContext) {
                 ],
               },
             });
+            if (!boundary) return report;
+            // Run the process adapter through a real child close. Result
+            // processing, rather than a native operation, owns the later latch.
+            const wire = await runProcess(
+              {
+                executable: process.execPath,
+                cwd: process.cwd(),
+                args: ["-e", "process.stdout.write(process.argv[1])", report],
+              },
+              signal,
+            );
+            completed++;
+            return wire;
           },
         };
       return realRequire(name);
@@ -170,6 +205,7 @@ function fixture(t: TestContext) {
     disposed: boolean;
     lint: Scheduler;
     liveChecks?: LiveChecks<typeof a>;
+    dependencies: Dependencies;
   }
   const editor = Object.assign(
     Object.create(module.exports.EditorIntegration.prototype) as Subject,
@@ -204,12 +240,16 @@ function fixture(t: TestContext) {
       eligibilityChanged: { fire() {} },
       repaint() {},
       revokeQueries() {},
-      publish() {},
+      publish: (uri: { toString(): string }) =>
+        publications.push(uri.toString()),
       contextEvent() {},
       updateStatus() {},
       queueFile: () => editor.check(b),
       admit: async () => true,
-      documentedRules: async () => new Set(),
+      documentedRules: async () => {
+        await pause("rules");
+        return new Set();
+      },
       snapshot: async (value: typeof a) => ({
         root: "/root",
         filename: value.uri.fsPath,
@@ -245,6 +285,9 @@ function fixture(t: TestContext) {
     seen,
     published,
     errors,
+    processing,
+    publications,
+    completed: () => completed,
     disable: () => {
       enabled = false;
     },
@@ -387,3 +430,79 @@ test(
     assert.deepEqual(f.published, []);
   },
 );
+
+for (const boundary of ["identity", "rules", "render", "observe"] as const) {
+  for (const control of [
+    "enabled",
+    "setting",
+    "cancel",
+    "close",
+    "supersede",
+    "newer buffer",
+    "root",
+    "reconfigure",
+    "dispose",
+  ] as const) {
+    test(
+      `completed typing result at ${boundary} handles ${control} after subprocess close`,
+      { timeout: 5000 },
+      async (t) => {
+        const f = fixture(t, boundary);
+        const acceptance = t.mock.method(f.editor.dependencies, "accept");
+        f.editor.change(f.a);
+        t.mock.timers.tick(300);
+        await f.processing.promise;
+        assert.equal(f.completed(), 1);
+        assert.equal(acceptance.mock.callCount(), 0);
+        assert.deepEqual(f.published, []);
+        if (control === "setting") {
+          f.disable();
+          // The configuration listener cancels ineligible typing entries.
+          f.editor.liveChecks?.cancelWhere(() => true);
+        }
+        if (control === "cancel") f.editor.liveChecks?.cancel(f.a);
+        if (control === "close") {
+          f.a.isClosed = true;
+          f.editor.close(f.a);
+        }
+        if (control === "supersede") f.editor.change(f.a);
+        if (control === "newer buffer") {
+          f.a.version++;
+          f.editor.change(f.a);
+        }
+        if (control === "root") f.unmark();
+        if (control === "reconfigure") f.editor.configureRoots();
+        if (control === "dispose") {
+          f.editor.disposed = true;
+          f.editor.liveChecks?.dispose();
+          f.editor.lint.dispose();
+        }
+        // Ignore invalidation publications emitted by the control itself.
+        f.publications.length = 0;
+        f.release.resolve();
+        await f.editor.liveChecks?.join();
+        assert.equal(
+          f.completed(),
+          1,
+          "cancelled results do not launch retries",
+        );
+        const accepted = control === "enabled";
+        assert.equal(acceptance.mock.callCount(), accepted ? 1 : 0);
+        assert.deepEqual(f.published, accepted ? ["a"] : []);
+        assert.deepEqual(f.publications, accepted ? ["a"] : []);
+        if (control === "supersede" || control === "newer buffer") {
+          t.mock.timers.tick(300);
+          await f.editor.liveChecks?.join();
+          assert.equal(f.completed(), 2);
+          assert.equal(acceptance.mock.callCount(), 1);
+          assert.deepEqual(f.published, ["a"]);
+          assert.deepEqual(f.publications, ["a"]);
+        } else {
+          t.mock.timers.tick(300);
+          await f.editor.liveChecks?.join();
+          assert.equal(f.completed(), 1);
+        }
+      },
+    );
+  }
+}

@@ -1008,10 +1008,11 @@ export class EditorIntegration implements vscode.Disposable {
         return;
       }
       const { wire, snapshot, sourceHash, unsupported } = result;
-      if (!this.current(document, snapshot)) return retry();
+      if (!current() || !this.current(document, snapshot)) return retry();
       if (unsupported && document.isDirty) return;
       const identity = await identify(snapshot.root, snapshot.sourceFilename);
       if (
+        !current() ||
         !this.current(document, snapshot) ||
         identity.filename !== snapshot.filename ||
         identity.path !== snapshot.path
@@ -1038,6 +1039,7 @@ export class EditorIntegration implements vscode.Disposable {
         for (const fix of report.fixes.values())
           snapshot.index.edits(fix.edits);
       const documentedRules = await this.documentedRules();
+      if (!current() || !this.current(document, snapshot)) return retry();
       const relatedRevision = this.relatedRevision;
       const diagnostics = unsupported
         ? []
@@ -1047,7 +1049,7 @@ export class EditorIntegration implements vscode.Disposable {
             snapshot.root,
             documentedRules,
           );
-      if (!this.current(document, snapshot)) return retry();
+      if (!current() || !this.current(document, snapshot)) return retry();
       if (relatedRevision !== this.relatedRevision)
         for (const diagnostic of diagnostics)
           diagnostic.relatedInformation = undefined;
@@ -1059,11 +1061,16 @@ export class EditorIntegration implements vscode.Disposable {
           ? { ...snapshot, sha256: sourceHash }
           : undefined,
       );
+      if (!current() || !this.current(document, snapshot)) return retry();
       for (const file of observed.changed)
         this.contextEvent(
           vscode.Uri.file(path.join(snapshot.root, ...file.split("/"))),
         );
-      if (!this.current(document, snapshot) || observed.changed.size)
+      if (
+        !current() ||
+        !this.current(document, snapshot) ||
+        observed.changed.size
+      )
         return retry();
       if (unsupported && document.isDirty) return;
       if (
