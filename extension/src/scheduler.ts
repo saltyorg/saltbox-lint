@@ -1,3 +1,6 @@
+/** Distinguishes priority preemption from supersession/lifecycle cancellation. */
+export const typingPreempted = Symbol("typing preempted");
+
 interface Request {
   key: string;
   priority: number;
@@ -28,7 +31,7 @@ export class Scheduler {
     // Explicit/save work preempts an active typing check. Its successor still
     // waits for execute's finally, which joins the cancelled operation.
     if (priority >= 1 && this.active && this.active.priority < 0)
-      this.active.abort.abort();
+      this.active.abort.abort(typingPreempted);
     return new Promise<T | undefined>((resolve, reject) => {
       const abort = new AbortController();
       const cancel = () => {

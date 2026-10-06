@@ -28,7 +28,7 @@ import type {
 } from "./protocol.ts";
 import { runProcess } from "./process.ts";
 import { range, renderDiagnostics } from "./diagnostics.ts";
-import { Scheduler } from "./scheduler.ts";
+import { Scheduler, typingPreempted } from "./scheduler.ts";
 import { LiveChecks } from "./live-checks.ts";
 import { MarkedRoots } from "./roots.ts";
 import { Results } from "./results.ts";
@@ -931,11 +931,13 @@ export class EditorIntegration implements vscode.Disposable {
         };
     };
     let failureToken: string | undefined;
+    let operationSignal: AbortSignal | undefined;
     try {
       const result = await this.lint.submit(
         key,
         typing ? -1 : manual ? 2 : 1,
         async (signal) => {
+          operationSignal = signal;
           if (signal.aborted || !current()) return;
           failureToken = this.statusToken(document);
           const snapshot = await this.snapshot(document, version);
@@ -998,7 +1000,11 @@ export class EditorIntegration implements vscode.Disposable {
       );
       if (!current()) return;
       if (!result) {
-        if (dependencyToken !== this.dependencies.begin()) return retry();
+        if (
+          dependencyToken !== this.dependencies.begin() ||
+          (typing && operationSignal?.reason === typingPreempted)
+        )
+          return retry();
         return;
       }
       const { wire, snapshot, sourceHash, unsupported } = result;
