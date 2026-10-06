@@ -210,6 +210,51 @@ test("watcher echoes coalesce by file identity while atomic replacements invalid
   );
 });
 
+test("a newer same-owner report cannot consume a dependency event owed to an older alias result", () => {
+  const graph = new Dependencies();
+  const good = source("a");
+  const template = "roles/a/templates/missing.conf";
+  good.files[1] = { path: template, state: "read", sha256: hash("good") };
+  const bad: SourceDependencies = {
+    ...good,
+    files: [
+      good.files[0],
+      { path: template, state: "read", sha256: hash("bad") },
+    ],
+  };
+  const initial = new Map([[template, "good-file-identity"]]);
+  const changed = new Map([[template, "bad-file-identity"]]);
+  assert.equal(
+    graph.accept("one", report(good), graph.begin(), false, [], initial),
+    true,
+  );
+  const aliasRevision = graph.revision("one", good.path);
+  // A canonical saved check may accept the new bytes before the watcher event.
+  // Its graph replacement does not replace the alias's independently cached result.
+  assert.equal(
+    graph.accept("one", report(bad), graph.begin(), false, [], changed),
+    true,
+  );
+  assert.equal(graph.revision("one", good.path), aliasRevision);
+  assert.deepEqual(
+    [
+      ...(graph.event("one", "/project", template, changed.get(template)) ??
+        []),
+    ],
+    [good.path],
+    "canonical template event must refresh an alias-owned primary",
+  );
+  assert.ok(graph.revision("one", good.path) > aliasRevision);
+  assert.equal(
+    graph.accept("one", report(bad), graph.begin(), false, [], changed),
+    true,
+  );
+  assert.equal(
+    graph.event("one", "/project", template, changed.get(template)),
+    undefined,
+  );
+});
+
 test("ancestor ignore controls invalidate membership without crossing sibling roles", () => {
   const graph = new Dependencies(),
     a = source("a"),

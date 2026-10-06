@@ -112,7 +112,15 @@ export class Dependencies {
         if (!declared.has(file) && observes(source, file))
           observed.set(file, fingerprint);
       for (const file of declared)
-        if (fingerprints.has(file)) observed.set(file, fingerprints.get(file)!);
+        if (fingerprints.has(file))
+          // A report replaces only its own result. Other buffers can still
+          // display an older result for this canonical source, so acceptance
+          // must not consume the next dependency event on their behalf.
+          observed.set(
+            file,
+            previous.get(source.path)?.fingerprints.get(file) ??
+              fingerprints.get(file)!,
+          );
       current.sources.set(source.path, {
         record: source,
         revision: previous.get(source.path)?.revision ?? 0,

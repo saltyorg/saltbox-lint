@@ -8,6 +8,7 @@ import {
   writeFile,
   symlink,
   realpath,
+  readFile,
   rm,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,6 +17,10 @@ import { build } from "esbuild";
 import type { TextDocument } from "vscode";
 import type { Identity } from "../../src/identity.ts";
 import type { EditorIntegration } from "../../src/editor.ts";
+import { Dependencies } from "../../src/dependencies.ts";
+import { contentFingerprint } from "../../src/observations.ts";
+import { hash, parseCheck, type AnalysisRecord } from "../../src/protocol.ts";
+import { lstatSync } from "node:fs";
 
 const bundled = await build({
   entryPoints: ["src/editor.ts"],
@@ -48,6 +53,189 @@ const bundled = await build({
       },
     },
   ],
+});
+
+test("canonical template events queue the clean alias after a newer saved report replaces its graph", async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "saltbox-alias-event-")),
+  );
+  const primary = "roles/example/tasks/main.yml";
+  const template = "roles/example/templates/router.conf";
+  const filename = join(root, primary);
+  const templateFilename = join(root, template);
+  const alias = join(root, "task-alias.yml");
+  const text = "example_role_task: true\n";
+  const good = "http:\n  routers:\n    example: {}\n";
+  const bad = "http:\n  routers: {}\n";
+  const uri = (filename: string) => ({
+    scheme: "file",
+    path: filename.replaceAll("\\", "/"),
+    fsPath: filename,
+    toString: () => `file://${filename}`,
+  });
+  const document = {
+    uri: uri(alias),
+    isClosed: false,
+    isDirty: false,
+    version: 1,
+  };
+  const folder = { uri: uri(root) };
+  const module = {
+    exports: {} as { EditorIntegration: typeof EditorIntegration },
+  };
+  runInNewContext(bundled.outputFiles[0].text, {
+    module,
+    exports: module.exports,
+    require: createRequire(import.meta.url),
+    process,
+    Buffer,
+    api: {
+      workspace: { textDocuments: [document] },
+      Uri: {
+        file: uri,
+        parse: (value: string) => uri(value.slice("file://".length)),
+      },
+    },
+  });
+  const dependencies = new Dependencies();
+  const queued: { target: string; force: boolean }[] = [];
+  const editor = Object.assign(
+    Object.create(module.exports.EditorIntegration.prototype) as {
+      contextEvent(uri: unknown): void;
+    },
+    {
+      disposed: false,
+      sourceOwners: new Map([
+        [document.uri.toString(), { root, filename, path: primary }],
+      ]),
+      roots: { folder: () => folder, get: () => root },
+      dependencies,
+      results: { hasCompleteScan: () => true },
+      lint: { cancel() {} },
+      formatting: { cancel() {} },
+      revokeQueries() {},
+      updateStatus() {},
+      queueFile(target: { toString(): string }, force = false) {
+        queued.push({ target: target.toString(), force });
+      },
+      output: { appendLine() {} },
+    },
+  );
+  const analysis = (bytes: string): AnalysisRecord => ({
+    schema_version: 1,
+    root,
+    generation: hash(bytes),
+    complete: true,
+    sources: [
+      {
+        path: primary,
+        source_sha256: hash(text),
+        files: [
+          { path: primary, state: "read", sha256: hash(text) },
+          { path: template, state: "read", sha256: hash(bytes) },
+        ],
+        identity: [],
+        discovery: [],
+        directories: [],
+      },
+    ],
+  });
+  const report = (bytes: string) =>
+    parseCheck(
+      JSON.stringify({
+        schema_version: 2,
+        diagnostics: [],
+        fixes: [],
+        analysis: analysis(bytes),
+      }),
+      true,
+    ).analysis!;
+  const observed = (bytes: string) =>
+    new Map([
+      [
+        template,
+        contentFingerprint(
+          lstatSync(templateFilename, { bigint: true }),
+          Buffer.from(bytes),
+        ),
+      ],
+    ]);
+  try {
+    await mkdir(join(root, "roles/example/tasks"), { recursive: true });
+    await mkdir(join(root, "roles/example/templates"), { recursive: true });
+    await writeFile(filename, text);
+    await symlink(filename, alias, "file");
+    await writeFile(templateFilename, good);
+    assert.equal(
+      dependencies.accept(
+        folder.uri.toString(),
+        report(good),
+        dependencies.begin(),
+        false,
+        [],
+        observed(good),
+      ),
+      true,
+    );
+    const aliasRevision = dependencies.revision(folder.uri.toString(), primary);
+    await writeFile(templateFilename, bad);
+    assert.equal(
+      dependencies.accept(
+        folder.uri.toString(),
+        report(bad),
+        dependencies.begin(),
+        false,
+        [],
+        observed(bad),
+      ),
+      true,
+    );
+    editor.contextEvent(uri(templateFilename));
+    assert.deepEqual(
+      queued,
+      [{ target: document.uri.toString(), force: true }],
+      "canonical template event must refresh an alias-owned primary",
+    );
+    assert.ok(
+      dependencies.revision(folder.uri.toString(), primary) > aliasRevision,
+    );
+    editor.contextEvent(uri(templateFilename));
+    assert.equal(
+      queued.length,
+      1,
+      "the consumed event still coalesces its echo",
+    );
+    document.isDirty = true;
+    await writeFile(templateFilename, good);
+    assert.equal(
+      dependencies.accept(
+        folder.uri.toString(),
+        report(good),
+        dependencies.begin(),
+        false,
+        [],
+        observed(good),
+      ),
+      true,
+    );
+    const beforeDirtyEvent = dependencies.revision(
+      folder.uri.toString(),
+      primary,
+    );
+    editor.contextEvent(uri(templateFilename));
+    assert.ok(
+      dependencies.revision(folder.uri.toString(), primary) > beforeDirtyEvent,
+    );
+    assert.equal(
+      queued.length,
+      1,
+      "dirty aliases remain stale without an automatic buffer check",
+    );
+    assert.equal(await realpath(alias), filename);
+    assert.equal(hash(await readFile(filename)), hash(text));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("first plaintext alias admission resolves canonical templates and retains origin without granting writes", async () => {
