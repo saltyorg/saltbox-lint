@@ -389,7 +389,7 @@ func (l *sourceLoader) rememberTemplateSpelling(filename, absolute string) {
 		// (including /tmp on Darwin). Resolve only the root ancestor, keeping
 		// every spelling below it: a leaf alias can have a different role owner.
 		for ancestor := filepath.Dir(spelling); ; ancestor = filepath.Dir(ancestor) {
-			if resolved, resolveErr := filepath.EvalSymlinks(ancestor); resolveErr == nil && resolved == l.project.Root {
+			if resolved, resolveErr := resolveSourcePath(ancestor); resolveErr == nil && resolved == l.project.Root {
 				name, _ = relativeSource(ancestor, spelling)
 				break
 			}
@@ -426,7 +426,9 @@ func (l *sourceLoader) stdinIdentity() (string, error) {
 	if relativeErr != nil {
 		return "", relativeErr
 	}
-	if info, statErr := l.files.Lstat(filepath.FromSlash(relative)); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+	if _, statErr := l.files.Lstat(filepath.FromSlash(relative)); statErr == nil {
+		// Only an absent leaf can supply a new logical buffer identity. On
+		// Windows a dangling junction is ModeIrregular, not ModeSymlink.
 		return "", err
 	} else if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
 		return "", statErr
@@ -526,7 +528,7 @@ func isTemplateFile(filename string) bool {
 	if isTemplate(filename) {
 		return true
 	}
-	resolved, err := filepath.EvalSymlinks(filename)
+	resolved, err := resolveSourcePath(filename)
 	return err == nil && isTemplate(resolved)
 }
 
@@ -542,7 +544,7 @@ var errOutsideRoot = errors.New("outside root")
 // ownedSourcePath admits the resolved identity before any content read. Keep
 // the original lexical identity in Source.Path for fix and dependency callers.
 func ownedSourcePath(root, absolute string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := resolveSourcePath(absolute)
 	if err != nil {
 		// A missing leaf still needs its existing parent checked. This prevents
 		// an escaped directory from masquerading as an owned negative lookup.
@@ -851,7 +853,7 @@ func absoluteTarget(name string) (string, error) {
 		return "", fmt.Errorf("inspect target %s: %w", name, err)
 	}
 	if err == nil && info.IsDir() {
-		return filepath.EvalSymlinks(absolute)
+		return resolveSourcePath(absolute)
 	}
 	// Resolve directory aliases, but retain a file's own basename. The fix
 	// layer must still be able to Lstat Root/Source.Path and reject file links.
@@ -865,7 +867,7 @@ func absoluteTarget(name string) (string, error) {
 // An editor buffer may name a file in a directory that does not exist yet.
 // Resolve its nearest existing ancestor without concealing dangling links.
 func canonicalDirectory(dir string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(dir)
+	resolved, err := resolveSourcePath(dir)
 	if err == nil {
 		return resolved, nil
 	}
@@ -910,7 +912,7 @@ func sourceRoot(opts Options) (string, error) {
 		if !info.IsDir() {
 			return "", fmt.Errorf("source root is not a directory: %s", root)
 		}
-		return filepath.EvalSymlinks(root)
+		return resolveSourcePath(root)
 	}
 	target := opts.StdinFilename
 	if len(opts.Paths) > 0 {
@@ -936,13 +938,13 @@ func sourceRoot(opts Options) (string, error) {
 			return "", err
 		}
 		if name != "" || marker {
-			return filepath.EvalSymlinks(current)
+			return resolveSourcePath(current)
 		}
 		if filepath.Dir(current) == current {
 			break
 		}
 	}
-	return filepath.EvalSymlinks(dir)
+	return resolveSourcePath(dir)
 }
 func projectName(root string) (string, error) {
 	name, _, err := inspectProjectIdentity(root)

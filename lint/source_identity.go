@@ -12,7 +12,7 @@ func (identity *sourceDiskIdentity) validate(rootPath string, root *os.Root, nam
 	if identity == nil {
 		return fmt.Errorf("source has no admitted disk identity: %s", name)
 	}
-	canonicalRoot, err := filepath.EvalSymlinks(rootPath)
+	canonicalRoot, err := resolveSourcePath(rootPath)
 	if err != nil || canonicalRoot != filepath.Clean(rootPath) {
 		return fmt.Errorf("source root owner changed since analysis: %s", name)
 	}
