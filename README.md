@@ -357,6 +357,12 @@ Both arrays are empty for clean input. Each diagnostic contains `path`, `rule_id
 `fix_id`. Range lines/columns are one-based code points with a half-open end;
 span offsets are half-open UTF-8 bytes in the original source.
 
+Use `check --stats` for opt-in source, finding, shared-fix counts and phase
+timings. JSON includes a versioned `statistics` object; other formats append
+statistics to stderr. Diff stdout remains a patch. See the
+[statistics contract](https://github.com/saltyorg/saltbox-lint/blob/main/docs/statistics.md)
+for count scope, timing overlap, and failure behavior.
+
 Use `check --format json --include-analysis` to attach an optional `analysis`
 object with its own `schema_version: 1`. Default schema-2 JSON remains unchanged.
 Analysis records cover every selected source, including clean and invalid YAML,

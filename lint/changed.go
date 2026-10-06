@@ -99,7 +99,7 @@ func loadChanged(ctx context.Context, opts Options) (*Project, error) {
 	uncertain := flaggedGitNames(output)
 	// Read current bytes and the full current graph once. Deleted names are only
 	// impact inputs; directory discovery never tries to load them as primaries.
-	fullOpts := Options{Root: root, Paths: []string{root}, IncludeAnalysis: true, allowEmpty: true}
+	fullOpts := Options{Root: root, Paths: []string{root}, IncludeAnalysis: true, Statistics: opts.Statistics, allowEmpty: true}
 	project, err := load(ctx, fullOpts)
 	if err != nil {
 		return nil, err

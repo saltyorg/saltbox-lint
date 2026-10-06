@@ -153,6 +153,7 @@ type Options struct {
 	StdinSourceFilename string
 	Stdin               []byte
 	IncludeAnalysis     bool
+	Statistics          *LoadStatistics
 	ChangedSince        string
 	allowEmpty          bool
 }

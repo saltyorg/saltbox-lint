@@ -5,29 +5,39 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/saltyorg/saltbox-lint/lint"
 )
 
 // Options selects a renderer. Summary is optional and used only by github.
 type Options struct {
-	Format  string
-	Version string
-	Summary io.Writer
-	GitHub  GitHub
-	Human   HumanOptions
+	Format     string
+	Version    string
+	Summary    io.Writer
+	GitHub     GitHub
+	Human      HumanOptions
+	Statistics *Statistics
 }
 
 // Render writes diagnostics to w; it never reads or changes source files.
 func Render(w io.Writer, p *lint.Project, ds []lint.Diagnostic, opts Options) error {
+	var preparation time.Time
+	if opts.Statistics != nil {
+		preparation = time.Now()
+	}
 	records := diagnostics(p, ds)
+	if opts.Statistics != nil && opts.Format != "json" {
+		duration := float64(time.Since(preparation)) / float64(time.Millisecond)
+		opts.Statistics.Phases = append(opts.Statistics.Phases, StatisticsPhase{Name: "report_preparation", Status: "complete", Scope: "wall", Duration: &duration})
+	}
 	switch opts.Format {
 	case "", "human":
 		return human(w, p, records, opts.Human)
 	case "concise":
 		return concise(w, p, records)
 	case "json":
-		return jsonReport(w, records, p.Dependencies)
+		return jsonReport(w, records, p.Dependencies, opts.Statistics, preparation)
 	case "sarif":
 		return sarifReport(w, p, records, opts.Version)
 	case "github":

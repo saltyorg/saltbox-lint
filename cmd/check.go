@@ -18,6 +18,7 @@ type checkOptions struct {
 	root, format, stdinFilename, stdinSourceFilename, changedSince string
 	fix, diff                                                      bool
 	includeAnalysis                                                bool
+	stats                                                          bool
 }
 
 func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
@@ -43,6 +44,7 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 	flags.BoolVar(&opts.fix, "fix", false, "Apply verified formatting fixes and recheck")
 	flags.BoolVar(&opts.diff, "diff", false, "Print unified formatting changes without writing")
 	flags.BoolVar(&opts.includeAnalysis, "include-analysis", false, "Include versioned dependency records in JSON output")
+	flags.BoolVar(&opts.stats, "stats", false, "Report versioned counts and phase timings (JSON field or stderr)")
 	command.MarkFlagsMutuallyExclusive("fix", "diff")
 	return command
 }
@@ -101,7 +103,13 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 	return load, nil
 }
 
-func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMode, themeMode string) error {
+func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMode, themeMode string) (resultErr error) {
+	var statistics *checkStatistics
+	if opts.stats {
+		statistics = newCheckStatistics()
+		defer func() { resultErr = statistics.finish(command.ErrOrStderr(), opts.format, resultErr) }()
+	}
+	statistics.begin("input")
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
@@ -109,69 +117,127 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMod
 	if err != nil {
 		return err
 	}
+	statistics.end(nil)
+	if statistics != nil {
+		load.Statistics = &lint.LoadStatistics{}
+	}
 	diagnosticOutput := command.OutOrStdout()
 	if opts.diff {
 		diagnosticOutput = command.ErrOrStderr()
 	}
 	format, human := resolveCheckPresentation(command.Context(), diagnosticOutput, opts.format, colorMode, themeMode)
+	statistics.begin("discovery_loading")
 	project, err := lint.Load(command.Context(), load)
+	statistics.end(err)
+	statistics.parsing("parsing", load.Statistics, err)
 	if err != nil {
 		return err
 	}
 	if opts.fix {
+		statistics.begin("fix_selection")
 		if err := lint.RequireWritableSelection(project); err != nil {
 			return err
 		}
+		statistics.end(nil)
 	}
+	statistics.begin("analysis")
 	diagnostics := lint.Analyze(project, lint.Rules())
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
+	statistics.end(nil)
+	if statistics != nil {
+		statistics.record.Initial = report.CountStatistics(project, diagnostics)
+	}
 	if opts.fix || opts.diff {
+		statistics.begin("fix_planning")
 		changes, err := lint.PlanFixes(project, diagnostics)
 		if err != nil {
 			return err
 		}
+		statistics.end(nil)
+		if statistics != nil {
+			count := len(changes)
+			statistics.record.PlannedFiles = &count
+		}
 		if opts.diff {
+			statistics.begin("rendering")
 			if err := report.Diff(command.OutOrStdout(), changes); err != nil {
 				return err
 			}
-			if err := report.Render(command.ErrOrStderr(), project, diagnostics, report.Options{Format: format, Human: human}); err != nil {
+			var record *report.Statistics
+			if statistics != nil {
+				record = &statistics.record
+			}
+			if err := report.Render(command.ErrOrStderr(), project, diagnostics, report.Options{Format: format, Human: human, Statistics: record}); err != nil {
 				return err
 			}
+			statistics.end(nil)
 			if len(diagnostics) > 0 {
 				return errFindings
 			}
 			return nil
 		}
+		statistics.begin("fix_writing")
 		if err := lint.WriteChanges(project, changes); err != nil {
 			return err
 		}
+		statistics.end(nil)
+		if statistics != nil {
+			count := len(changes)
+			statistics.record.AppliedFiles = &count
+			load.Statistics = &lint.LoadStatistics{}
+		}
+		statistics.begin("recheck_discovery_loading")
 		project, err = lint.Load(command.Context(), load)
+		statistics.end(err)
+		statistics.parsing("recheck_parsing", load.Statistics, err)
 		if err != nil {
 			return err
 		}
+		statistics.begin("recheck_analysis")
 		diagnostics = lint.Analyze(project, lint.Rules())
+		statistics.end(command.Context().Err())
+		if statistics != nil && command.Context().Err() == nil {
+			statistics.record.Rechecked = report.CountStatistics(project, diagnostics)
+		}
 	}
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
-	if format == "sarif" {
-		err = report.Render(command.OutOrStdout(), project, diagnostics, report.Options{Format: format, Version: command.Root().Version})
+	var record *report.Statistics
+	if statistics != nil {
+		record = &statistics.record
+	}
+	if format == "json" && record != nil {
+		record.Phases = append(record.Phases, report.StatisticsPhase{Name: "encoding_writing", Status: "unavailable", Scope: "wall"})
 	} else {
-		err = renderCheck(command.Context(), command.OutOrStdout(), project, diagnostics, format, human)
+		statistics.begin("rendering")
+	}
+	if format == "sarif" {
+		err = report.Render(command.OutOrStdout(), project, diagnostics, report.Options{Format: format, Version: command.Root().Version, Statistics: record})
+	} else {
+		err = renderCheck(command.Context(), command.OutOrStdout(), project, diagnostics, format, human, record)
 	}
 	if err != nil {
+		if format == "json" && record != nil {
+			for i := range record.Phases {
+				if record.Phases[i].Name == "encoding_writing" {
+					record.Phases[i].Status = "failed"
+				}
+			}
+		}
 		return err
 	}
+	statistics.end(nil)
 	if len(diagnostics) > 0 {
 		return errFindings
 	}
 	return nil
 }
 
-func renderCheck(ctx context.Context, out io.Writer, project *lint.Project, diagnostics []lint.Diagnostic, format string, human report.HumanOptions) error {
-	opts := report.Options{Format: format, Human: human}
+func renderCheck(ctx context.Context, out io.Writer, project *lint.Project, diagnostics []lint.Diagnostic, format string, human report.HumanOptions, statistics *report.Statistics) error {
+	opts := report.Options{Format: format, Human: human, Statistics: statistics}
 	if format != "github" {
 		return report.Render(out, project, diagnostics, opts)
 	}

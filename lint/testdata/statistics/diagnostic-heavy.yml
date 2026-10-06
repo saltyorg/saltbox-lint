@@ -1,0 +1,17 @@
+first: "{{ value
+ | combine(other) }}"
+second: "{{ value
+ | combine(other) }}"
+third: "{{ value
+ | combine(other) }}"
+fourth: "{{ value
+ | combine(other) }}"
+fifth: "{{ value
+ | combine(other) }}"
+sixth: "{{ value
+ | combine(other) }}"
+seventh: "{{ value
+ | combine(other) }}"
+eighth: "{{ value
+ | combine(other) }}"
+conditional: "{{ lookup('env', 'a' if condition else 'b') }}"

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Load reads worktree bytes for selected files and their conventional context.
@@ -50,7 +51,7 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 		return nil, fmt.Errorf("open source root %s: %w", root, err)
 	}
 	defer func() { _ = files.Close() }()
-	l := sourceLoader{ctx: ctx, project: p, files: files, templateSpellings: map[string][]string{}}
+	l := sourceLoader{ctx: ctx, project: p, files: files, statistics: opts.Statistics, templateSpellings: map[string][]string{}}
 	gitRoot, err := enclosingGitRoot(root)
 	if err != nil {
 		return nil, err
@@ -366,6 +367,7 @@ func gitAdministrativeOwner(gitRoot, administrative string) (string, error) {
 }
 
 type sourceLoader struct {
+	statistics         *LoadStatistics
 	files              *os.Root
 	ctx                context.Context
 	project            *Project
@@ -511,7 +513,15 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 		// A narrowed root must not recover role context from outside the root.
 		parseName = "source.j2"
 	}
-	source, _ := parseOwnedSource(parseName, data)
+	var source *Source
+	if l.statistics == nil {
+		source, _ = parseOwnedSource(parseName, data)
+	} else {
+		start := time.Now()
+		source, _ = parseOwnedSource(parseName, data)
+		l.statistics.nanos.Add(int64(time.Since(start)))
+		l.statistics.attempts.Add(1)
+	}
 	source.Path = relative
 	source.diskIdentity = diskIdentity
 	if source.Kind == Template {
