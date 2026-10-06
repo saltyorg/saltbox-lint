@@ -43,34 +43,11 @@ import {
   sourceOriginCurrentNow,
   type LogicalSource,
 } from "./observations.ts";
+import type { WritableStage, WritableGuard } from "./writable-trace.ts";
+export type { WritableStage, WritableGuard } from "./writable-trace.ts";
 
 // Supplied only by the ownership test for its existing invocation. Normal
 // extension callbacks leave this absent; no observation channel is installed.
-export type WritableStage =
-  | "root-refresh-returned"
-  | "snapshot-present"
-  | "snapshot-declined"
-  | "submission-entered"
-  | "submission-refused"
-  | "operation-returned"
-  | "operation-failed"
-  | "operation-cancelled"
-  | "parser-accepted"
-  | "parser-failed"
-  | "final-authority-accepted"
-  | "final-authority-declined";
-export type WritableGuard =
-  | "fixall-document"
-  | "fixall-folder"
-  | "format-preflight"
-  | "snapshot-admission"
-  | "disk-utf8"
-  | "before-submission"
-  | "after-submission"
-  | "format-result-authority"
-  | "format-return-authority"
-  | "fixall-result"
-  | "fixall-write-authority";
 export type WritableStageCollector = (
   stage: WritableStage,
   guard?: WritableGuard,
@@ -1604,7 +1581,7 @@ export class EditorIntegration implements vscode.Disposable {
     writableStage(
       collect,
       accepted ? "final-authority-accepted" : "final-authority-declined",
-      "format-return-authority",
+      accepted ? undefined : "format-return-authority",
     );
     return accepted ? result.edits : [];
   }
@@ -1695,11 +1672,7 @@ export class EditorIntegration implements vscode.Disposable {
         );
         return;
       }
-      writableStage(
-        collect,
-        "final-authority-accepted",
-        "format-result-authority",
-      );
+      writableStage(collect, "final-authority-accepted");
       return { snapshot, edits: textEdits(plan.edits) };
     } catch (error) {
       if (stage === "operation")
@@ -1767,11 +1740,7 @@ export class EditorIntegration implements vscode.Disposable {
       );
       return;
     }
-    writableStage(
-      collect,
-      "final-authority-accepted",
-      "fixall-write-authority",
-    );
+    writableStage(collect, "final-authority-accepted");
     await vscode.workspace.applyEdit(edit);
   }
   change(document: vscode.TextDocument): void {

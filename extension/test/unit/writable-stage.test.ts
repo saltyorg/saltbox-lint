@@ -43,6 +43,7 @@ const primary = new Error("original operation failure");
 const text = "a: 1\n";
 const cases = [
   "accepted",
+  "format-accepted",
   "fixall-document",
   "fixall-folder",
   "format-preflight",
@@ -230,6 +231,7 @@ async function invoke(scenario: Scenario, collect?: WritableStageCollector) {
   let outcome: unknown;
   try {
     outcome =
+      scenario === "format-accepted" ||
       scenario === "format-return-authority" ||
       scenario === "operation-cancelled"
         ? await editor.format(document, "canonical", token, collect)
@@ -281,11 +283,11 @@ test("passive invocation stages preserve default results, guards, operations and
     if (scenario === "root-failed") {
       assert.equal(observed.outcome, primary);
       assert.deepEqual(collector.records, []);
-    } else if (scenario === "accepted") {
+    } else if (scenario === "accepted" || scenario === "format-accepted") {
       assert.deepEqual(
         collector.records.map(({ stage }) => stage),
         [
-          "root-refresh-returned",
+          ...(scenario === "accepted" ? ["root-refresh-returned"] : []),
           "snapshot-present",
           "submission-entered",
           "operation-returned",
@@ -294,7 +296,10 @@ test("passive invocation stages preserve default results, guards, operations and
           "final-authority-accepted",
         ],
       );
-      assert.ok(observed.operations.includes("apply"));
+      assert.equal(
+        observed.operations.includes("apply"),
+        scenario === "accepted",
+      );
     } else if (
       ["operation-failed", "operation-cancelled", "parser-failed"].includes(
         scenario,
@@ -313,6 +318,16 @@ test("passive invocation stages preserve default results, guards, operations and
         ),
         scenario,
       );
+    for (const record of collector.records) {
+      if (record.stage === "final-authority-accepted")
+        assert.equal(Object.hasOwn(record, "guard"), false, scenario);
+      if (record.guard !== undefined)
+        assert.ok(
+          record.stage.endsWith("declined") ||
+            record.stage === "submission-refused",
+          scenario,
+        );
+    }
     assert.ok(collector.records.length <= 24);
     assert.doesNotMatch(
       JSON.stringify(collector.records),

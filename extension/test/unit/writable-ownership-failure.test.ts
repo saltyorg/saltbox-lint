@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { writableStages, writableGuards } from "../../src/writable-trace.ts";
 import {
   captureWritableOwnershipPreconditions,
   collectWritableOwnershipStages,
@@ -409,10 +410,18 @@ test("host wiring retains the original readiness deadline, six controls and chil
   );
   assert.doesNotMatch(
     helper.replace(
-      /^import type \{ WritableStage, WritableGuard \} from "\.\.\/\.\.\/src\/editor\.ts";\n/,
+      /^import \{[^}]+\} from "\.\.\/\.\.\/src\/writable-trace\.ts";\n/,
       "",
     ),
     /\b(?:import|require|await|async|process|setTimeout|fetch|addEventListener)\b|\.onDid|\.on\(/,
+  );
+  const vocabulary = readFileSync(
+    new URL("../../src/writable-trace.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    vocabulary,
+    /\b(?:import|require|await|async|process|function|class|new|fetch|setTimeout|addEventListener)\b|\.onDid|\.on\(/,
   );
   assert.match(
     host,
@@ -429,6 +438,29 @@ test("host wiring retains the original readiness deadline, six controls and chil
   assert.match(fixture, /err := command\.Run\(\)/);
   assert.match(fixture, /os\.Stdout\.Write\(output\.Bytes\(\)\)/);
   assert.match(fixture, /os\.Exit\(exit\.ExitCode\(\)\)/);
+});
+
+test("every callback vocabulary label survives collection and failure reporting", () => {
+  const collector = collectWritableOwnershipStages();
+  for (const stage of writableStages) collector.collect(stage);
+  for (const guard of writableGuards)
+    collector.collect("final-authority-declined", guard);
+  const expected = [
+    ...writableStages.map((stage) => ({ stage })),
+    ...writableGuards.map((guard) => ({
+      stage: "final-authority-declined",
+      guard,
+    })),
+  ];
+  assert.deepEqual(collector.records, expected);
+  const record = failureRecord({
+    control: "fixAll:retarget",
+    completed: 5,
+    settled: true,
+    acceptedReady: false,
+    stages: collector.records,
+  });
+  assert.deepEqual(record.invocation_stages, expected);
 });
 
 test("invocation collector bounds fixed records and rejects unexpected source values", () => {

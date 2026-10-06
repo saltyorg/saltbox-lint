@@ -1,4 +1,9 @@
-import type { WritableStage, WritableGuard } from "../../src/editor.ts";
+import {
+  writableStages as stages,
+  writableGuards as guards,
+  type WritableStage,
+  type WritableGuard,
+} from "../../src/writable-trace.ts";
 
 type Mode = "canonical" | "lint-fixes" | "fixAll";
 
@@ -36,33 +41,6 @@ export function captureWritableOwnershipPreconditions(
   }
 }
 
-const stages: readonly WritableStage[] = [
-  "root-refresh-returned",
-  "snapshot-present",
-  "snapshot-declined",
-  "submission-entered",
-  "submission-refused",
-  "operation-returned",
-  "operation-failed",
-  "operation-cancelled",
-  "parser-accepted",
-  "parser-failed",
-  "final-authority-accepted",
-  "final-authority-declined",
-];
-const guards: readonly WritableGuard[] = [
-  "fixall-document",
-  "fixall-folder",
-  "format-preflight",
-  "snapshot-admission",
-  "disk-utf8",
-  "before-submission",
-  "after-submission",
-  "format-result-authority",
-  "format-return-authority",
-  "fixall-result",
-  "fixall-write-authority",
-];
 type StageRecord = { stage: WritableStage; guard?: WritableGuard };
 export function collectWritableOwnershipStages() {
   const records: StageRecord[] = [];
