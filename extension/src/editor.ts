@@ -1405,6 +1405,7 @@ export class EditorIntegration implements vscode.Disposable {
         document.uri,
         observed.overlayPaths,
         observed.aliases,
+        observed.targets,
       );
       if (!answer || !current()) return;
       const identity = await identify(snapshot.root, document.uri.fsPath);

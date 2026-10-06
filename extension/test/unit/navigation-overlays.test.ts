@@ -10,6 +10,8 @@ import {
   writeFile,
   symlink,
   rm,
+  utimes,
+  stat,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,6 +26,9 @@ import type { Uri, TextDocument } from "vscode";
 const sourcePath = "roles/a/defaults/reverse.yml";
 const alias = "roles/a/templates/reverse.yaml";
 const secondAlias = "roles/a/templates/second.j2";
+const earlier = "roles/b/defaults/earlier.yml";
+const savedAlias = "roles/b/templates/earlier.j2";
+const earlierText = "# 😀é\r\nb_value: 42\r\n";
 const later = "roles/b/defaults/main.yml";
 const text = "😀é\r\n{{ value }}\r\n{# dirty buffer #}";
 const laterText = "b_value: 42\n";
@@ -102,12 +107,20 @@ async function fixture() {
     "roles/a/defaults",
     "roles/a/templates",
     "roles/b/defaults",
+    "roles/b/templates",
     ".git",
     "owned-admin",
   ])
     await mkdir(join(root, directory), { recursive: true });
   await writeFile(join(root, sourcePath), "saved contents");
+  await writeFile(join(root, earlier), earlierText);
   await writeFile(join(root, later), laterText);
+  await symlink(join(root, later), join(root, savedAlias), "file");
+  await symlink(
+    join(root, earlier),
+    join(root, "roles/b/templates/buffer.yml"),
+    "file",
+  );
   await writeFile(join(root, "other.yml"), text);
   await writeFile(join(root, ".git/config"), text);
   await writeFile(join(root, "owned-admin/config"), text);
@@ -128,9 +141,15 @@ async function fixture() {
     exports: {} as { validateNavigation: typeof validateNavigation },
   };
   let afterRead: ((filename: string) => Promise<void>) | undefined;
+  let afterResolve: ((filename: string) => Promise<void>) | undefined;
   const originalRequire = createRequire(import.meta.url);
   const fs = {
     ...originalRequire("node:fs/promises"),
+    realpath: async (filename: string) => {
+      const resolved = await realpath(filename);
+      await afterResolve?.(filename);
+      return resolved;
+    },
     readFile: async (filename: string) => {
       const bytes = await readFile(filename);
       await afterRead?.(filename);
@@ -177,11 +196,21 @@ async function fixture() {
       [sourcePath]: digest,
       [alias]: digest,
       [secondAlias]: digest,
+      [earlier]: hash(earlierText),
+      [savedAlias]: hash(laterText),
       [later]: hash(laterText),
     },
     locations: [
       read,
       { ...read, path: secondAlias },
+      ...[earlier, savedAlias].map((path) => ({
+        path,
+        span: path === earlier ? { start: 10, end: 17 } : { start: 0, end: 7 },
+        line: path === earlier ? 2 : 1,
+        column: 1,
+        text: "b_value",
+        kind: "declaration" as const,
+      })),
       {
         path: later,
         span: { start: 0, end: 7 },
@@ -191,7 +220,37 @@ async function fixture() {
         kind: "declaration",
       },
     ],
-    declarations: [],
+    declarations: [
+      {
+        name: "b_value",
+        role: "b",
+        role_path: "roles/b",
+        provenance: "roles/b/defaults/earlier.yml",
+        key: {
+          path: earlier,
+          span: { start: 10, end: 17 },
+          line: 2,
+          column: 1,
+          text: "b_value",
+        },
+        value: {
+          path: earlier,
+          span: { start: 19, end: 21 },
+          line: 2,
+          column: 10,
+          text: "42",
+        },
+        comments: [
+          {
+            path: earlier,
+            span: { start: 0, end: 8 },
+            line: 1,
+            column: 1,
+            text: "# 😀é",
+          },
+        ],
+      },
+    ],
     completions: [],
     dependencies: {
       schema_version: 1,
@@ -206,6 +265,8 @@ async function fixture() {
             { path: sourcePath, sha256: digest, state: "read" },
             { path: alias, sha256: digest, state: "read" },
             { path: secondAlias, sha256: digest, state: "read" },
+            { path: earlier, sha256: hash(earlierText), state: "read" },
+            { path: savedAlias, sha256: hash(laterText), state: "read" },
             { path: later, sha256: hash(laterText), state: "read" },
           ],
           identity: [],
@@ -239,6 +300,7 @@ async function fixture() {
       document.uri as unknown as Uri,
       paths,
       aliases,
+      observed.targets,
     );
   const retarget = async (destination: string) => {
     await rm(join(root, alias));
@@ -256,6 +318,9 @@ async function fixture() {
     require,
     api,
     actualValidator: module.exports.validateNavigation,
+    setResolve: (hook: typeof afterResolve) => {
+      afterResolve = hook;
+    },
     setRead: (hook: typeof afterRead) => {
       afterRead = hook;
     },
@@ -282,9 +347,76 @@ const changes = [
   "conflicting dirty owner",
   "matching dirty alias",
   "unrelated dirty buffer",
+  "ordinary in-place edit",
+  "ordinary restored-mtime edit",
+  "ordinary equal-content replacement",
+  "ordinary deleted",
+  "ordinary retarget same bytes",
+  "ordinary escape",
+  "ordinary git admin",
+  "ordinary separate admin",
+  "ordinary conflicting dirty owner",
+  "ordinary matching dirty owner",
+  "ordinary conflicting clean owner",
+  "ordinary conflicting dirty alias",
+  "ordinary conflicting clean alias",
+  "ordinary matching clean alias",
+  "ordinary closed conflict",
 ] as const;
 type Change = (typeof changes)[number];
 async function change(f: Fixture, kind: Change) {
+  if (kind === "ordinary in-place edit")
+    await writeFile(join(f.root, earlier), "# changed\r\nb_value: 99\r\n");
+  if (kind === "ordinary restored-mtime edit") {
+    const before = await stat(join(f.root, earlier));
+    await writeFile(join(f.root, earlier), earlierText.replace("42", "99"));
+    await utimes(join(f.root, earlier), before.atime, before.mtime);
+  }
+  if (kind === "ordinary equal-content replacement") {
+    await rm(join(f.root, earlier));
+    await writeFile(join(f.root, earlier), earlierText);
+  }
+  if (kind === "ordinary deleted") await rm(join(f.root, earlier));
+  if (
+    [
+      "ordinary retarget same bytes",
+      "ordinary escape",
+      "ordinary git admin",
+      "ordinary separate admin",
+    ].includes(kind)
+  ) {
+    const destination =
+      kind === "ordinary escape"
+        ? f.external
+        : join(
+            f.root,
+            kind === "ordinary git admin"
+              ? ".git/config"
+              : kind === "ordinary separate admin"
+                ? "owned-admin/config"
+                : "other.yml",
+          );
+    await writeFile(destination, earlierText);
+    await rm(join(f.root, earlier));
+    await symlink(destination, join(f.root, earlier), "file");
+  }
+  if (
+    kind.startsWith("ordinary ") &&
+    (kind.includes("conflict") || kind.includes("matching"))
+  ) {
+    f.documents.push({
+      uri: uri(
+        join(
+          f.root,
+          kind.includes("alias") ? "roles/b/templates/buffer.yml" : earlier,
+        ),
+      ),
+      isClosed: kind === "ordinary closed conflict",
+      isDirty: !kind.includes("clean"),
+      getText: () =>
+        kind.includes("matching") ? earlierText : "conflicting buffer",
+    } as unknown as TextDocument);
+  }
   if (kind === "deleted") await rm(join(f.root, alias));
   if (kind === "second alias deleted") await rm(join(f.root, secondAlias));
   if (kind === "same contents different owner")
@@ -323,7 +455,13 @@ async function change(f: Fixture, kind: Change) {
   }
 }
 const accepted = (kind: string) =>
-  ["stable", "matching dirty alias", "unrelated dirty buffer"].includes(kind);
+  [
+    "stable",
+    "matching dirty alias",
+    "unrelated dirty buffer",
+    "ordinary closed conflict",
+    "ordinary matching clean alias",
+  ].includes(kind);
 for (const kind of changes) {
   test(`mapped template overlay ${kind} is checked again at final target acceptance`, async () => {
     const f = await fixture();
@@ -396,12 +534,40 @@ test("template overlay paths and hashes require shared observed ownership", asyn
   }
 });
 
-for (const phase of ["later read", "after mapping"] as const) {
+test("ordinary declarations retain admitted observations and reject stale target hashes", async () => {
+  const f = await fixture();
+  try {
+    assert.equal(f.observed.targets.size, 6);
+    assert.equal(f.observed.aliases.size, 3);
+    assert.equal(
+      f.observed.targets.get(earlier)?.filename,
+      join(f.root, earlier),
+    );
+    assert.equal(
+      f.observed.targets.get(savedAlias),
+      f.observed.aliases.get(savedAlias),
+    );
+    f.report.target_hashes[earlier] = hash("stale declaration");
+    assert.equal(await f.validate(), undefined);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+for (const phase of [
+  "later read",
+  "after mapping",
+  "primary probe",
+  "final target read",
+] as const) {
   for (const kind of [
     ...changes,
     "dependency generation",
     "query generation",
     "primary version",
+    "primary contents",
+    "root generation",
+    "source generation",
     "cancelled",
   ] as const) {
     test(`actual template query ${kind} at ${phase} without a watcher notification`, async () => {
@@ -422,7 +588,8 @@ for (const phase of ["later read", "after mapping"] as const) {
         joined = 0;
       if (phase === "later read")
         f.setRead(async (filename) => {
-          if (filename === join(f.root, later) && ++reads === 2) {
+          // Two analysis observations precede the two mapped saved targets.
+          if (filename === join(f.root, later) && ++reads === 4) {
             enter();
             await held;
           }
@@ -460,6 +627,26 @@ for (const phase of ["later read", "after mapping"] as const) {
             ...args: Parameters<typeof validateNavigation>
           ) => {
             const answer = await f.actualValidator(...args);
+            if (phase === "final target read") {
+              assert.ok(answer);
+              f.setRead(async (filename) => {
+                if (filename === join(f.root, later)) {
+                  f.setRead(undefined);
+                  enter();
+                  await held;
+                }
+              });
+            }
+            if (phase === "primary probe") {
+              assert.ok(answer);
+              f.setResolve(async (filename) => {
+                if (filename === f.original) {
+                  f.setResolve(undefined);
+                  enter();
+                  await held;
+                }
+              });
+            }
             if (phase === "after mapping") {
               assert.ok(answer);
               enter();
@@ -527,6 +714,15 @@ for (const phase of ["later read", "after mapping"] as const) {
         if (kind === "dependency generation") generation++;
         else if (kind === "query generation") editor.queryRevision++;
         else if (kind === "primary version") f.document.version++;
+        else if (kind === "primary contents")
+          f.document.getText = () => "changed primary";
+        else if (kind === "root generation")
+          editor.rootRevisions.set(
+            folder.uri.toString(),
+            editor.rootRevisions.get(folder.uri.toString()) + 1,
+          );
+        else if (kind === "source generation")
+          editor.documentRevisions.set(f.document, 999);
         else if (kind === "cancelled") {
           assert.ok(cancel);
           cancel();
@@ -546,7 +742,27 @@ for (const phase of ["later read", "after mapping"] as const) {
           "the controlled wire invocation was joined before acceptance",
         );
         if (answer) {
-          assert.equal(answer.locations.size, 3);
+          assert.equal(answer.locations.size, 8);
+          assert.equal(answer.report.target_hashes[earlier], hash(earlierText));
+          const declaration = answer.report.declarations[0];
+          assert.equal(declaration.value.text, "42");
+          assert.equal(declaration.comments[0].text, "# 😀é");
+          assert.deepEqual(answer.locations.get(declaration.key)?.range.start, {
+            line: 1,
+            character: 0,
+          });
+          assert.deepEqual(
+            answer.locations.get(declaration.comments[0])?.range.end,
+            { line: 0, character: 5 },
+          );
+          assert.equal(
+            answer.locations.get(declaration.key)?.uri.fsPath,
+            join(f.root, earlier),
+          );
+          assert.equal(
+            answer.locations.get(answer.report.locations[3])?.uri.fsPath,
+            join(f.root, savedAlias),
+          );
           const location = [...answer.locations.values()].find(
             (location) => location.uri.fsPath === f.original,
           );

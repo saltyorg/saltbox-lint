@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
-import { readFile } from "node:fs/promises";
+import { readFile, lstat } from "node:fs/promises";
 import {
   identify,
   resolveSource,
@@ -11,7 +11,12 @@ import {
 } from "./identity.ts";
 import { SnapshotIndex, hash, type Position } from "./protocol.ts";
 import { range } from "./diagnostics.ts";
-import { aliasCurrent, type ObservedAlias } from "./observations.ts";
+import {
+  sourceCurrent,
+  fileFingerprint,
+  observationFingerprint,
+  type ObservedSource,
+} from "./observations.ts";
 import type {
   QueryLocation,
   QueryOperation,
@@ -54,49 +59,70 @@ export async function validateNavigation(
   index: SnapshotIndex,
   uri: vscode.Uri,
   overlayPaths: ReadonlySet<string> = new Set(),
-  aliases: ReadonlyMap<string, ObservedAlias> = new Map(),
+  aliases: ReadonlyMap<string, ObservedSource> = new Map(),
+  observations: ReadonlyMap<string, ObservedSource> = new Map(),
 ): Promise<NavigationAnswer | undefined> {
   const snapshots = new Map<
     string,
     { text: string; index: SnapshotIndex; uri: vscode.Uri }
   >();
   snapshots.set(report.path, { text, index, uri });
-  const usedAliases = new Map<string, ObservedAlias>();
-  const targetsCurrent = async () => {
-    for (const [target, alias] of usedAliases) {
-      const digest = report.target_hashes[target];
-      for (const document of vscode.workspace.textDocuments) {
-        if (document.isClosed || document.uri.scheme !== "file") continue;
-        let identity;
-        try {
-          identity = await identify(report.root, document.uri.fsPath);
-        } catch {
-          continue;
-        }
+  const usedTargets = new Map<
+    string,
+    { observation: ObservedSource; digest: string; overlay: boolean }
+  >();
+  const buffersCurrent = async () => {
+    for (const document of vscode.workspace.textDocuments) {
+      if (document.isClosed || document.uri.scheme !== "file") continue;
+      let identity;
+      try {
+        identity = await identify(report.root, document.uri.fsPath);
+      } catch {
+        continue;
+      }
+      for (const { observation, digest, overlay } of usedTargets.values())
         if (
-          identity.filename === alias.filename &&
-          ((!overlayPaths.has(target) && document.isDirty) ||
+          identity.filename === observation.filename &&
+          ((!overlay && document.isDirty) ||
             hash(document.getText()) !== digest)
         )
           return false;
-      }
-      if (!(await aliasCurrent(report.root, target, alias, digest)))
-        return false;
     }
     return true;
   };
-  for (const [target, digest] of Object.entries(report.target_hashes)) {
-    if (target === report.path) {
-      if (digest !== hash(text)) return;
-      continue;
+  const identitiesCurrent = async () => {
+    for (const [target, { observation, digest }] of usedTargets)
+      if (!(await sourceCurrent(report.root, target, observation, digest)))
+        return false;
+    return true;
+  };
+  const targetsCurrent = async () => {
+    if (!(await identitiesCurrent()) || !(await buffersCurrent())) return false;
+    for (const { observation, digest, overlay } of usedTargets.values()) {
+      if (overlay) continue;
+      try {
+        const bytes = await readFile(observation.filename);
+        if (!isUtf8(bytes) || hash(bytes) !== digest) return false;
+      } catch (error) {
+        if (unavailableSource(error)) return false;
+        throw error;
+      }
     }
-    if (overlayPaths.has(target)) {
+    // A later read may yield while an earlier mapped target changes. Recheck
+    // every retained owner/fingerprint and current buffer after all reads.
+    return (await identitiesCurrent()) && (await buffersCurrent());
+  };
+  for (const [target, digest] of Object.entries(report.target_hashes)) {
+    if (target !== report.path && overlayPaths.has(target)) {
       // These aliases passed the shared observation's owner/digest checks.
       // Retain that ownership for both this mapping and final acceptance.
       if (digest !== hash(text)) return;
       try {
         const alias = aliases.get(target);
-        if (!alias || !(await aliasCurrent(report.root, target, alias, digest)))
+        if (
+          !alias ||
+          !(await sourceCurrent(report.root, target, alias, digest))
+        )
           return;
         if (
           (
@@ -107,7 +133,7 @@ export async function validateNavigation(
           ).path !== report.path
         )
           return;
-        usedAliases.set(target, alias);
+        usedTargets.set(target, { observation: alias, digest, overlay: true });
       } catch {
         return;
       }
@@ -115,13 +141,33 @@ export async function validateNavigation(
       continue;
     }
     let filename: string;
+    let observation: ObservedSource;
     try {
       const alias = aliases.get(target);
       if (alias) {
-        if (!(await aliasCurrent(report.root, target, alias, digest))) return;
+        if (!(await sourceCurrent(report.root, target, alias, digest))) return;
         filename = alias.filename;
-        usedAliases.set(target, alias);
-      } else filename = await resolveSource(report.root, target);
+        observation = alias;
+      } else {
+        filename = await resolveSource(report.root, target);
+        observation = observations.get(target) ?? {
+          filename,
+          fingerprint:
+            observationFingerprint(await lstat(filename, { bigint: true })) +
+            ":" +
+            digest,
+          rootFingerprint: fileFingerprint(
+            await lstat(report.root, { bigint: true }),
+          ),
+        };
+      }
+      if (!(await sourceCurrent(report.root, target, observation, digest)))
+        return;
+      usedTargets.set(target, {
+        observation,
+        digest,
+        overlay: target === report.path,
+      });
     } catch (error) {
       // A removed or retargeted source no longer belongs to this observation.
       if (
@@ -131,8 +177,12 @@ export async function validateNavigation(
         return;
       throw error;
     }
+    if (target === report.path) {
+      if (digest !== hash(text)) return;
+      continue;
+    }
     const targetURI = vscode.Uri.file(
-      usedAliases.has(target)
+      aliases.has(target)
         ? path.join(report.root, ...target.split("/"))
         : filename,
     );
