@@ -5,13 +5,13 @@ import { ownedCommand } from "../extension/scripts/owned-command.mjs";
 
 const root = process.cwd();
 
-function capture(command, args, signal) {
+function capture(command, args, signal, env = process.env) {
   return ownedCommand(command, args, {
     phase: "project Go source discovery",
     cwd: root,
     signal,
     maxOutputBytes: 16 * 1024 * 1024,
-    env: { ...process.env, LC_ALL: "C" },
+    env: { ...env, LC_ALL: "C" },
   });
 }
 
@@ -87,7 +87,7 @@ export async function sourceFiles(signal) {
   return [...inputs].sort();
 }
 
-export async function packages(files, signal) {
+export async function packages(files, signal, env = process.env) {
   const directories = new Set();
   for (const file of files) {
     if (!file.endsWith(".go")) continue;
@@ -119,6 +119,7 @@ export async function packages(files, signal) {
       ...[...directories].sort(),
     ],
     signal,
+    env,
   );
   const selected = output.split("\0\n").filter(Boolean);
   if (!selected.length)

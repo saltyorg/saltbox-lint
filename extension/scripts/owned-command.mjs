@@ -14,6 +14,7 @@ export function ownedCommand(
     timeoutMs,
     signal,
     returnExitCode = false,
+    retainOutputOnError = false,
     maxOutputBytes = 1024 * 1024,
     ...options
   },
@@ -104,6 +105,7 @@ export function ownedCommand(
         error.exitCode = code;
         error.stderr = stderr;
       }
+      const primaryError = error;
       if (cleanupFailure) {
         error = error
           ? new AggregateError(
@@ -112,6 +114,15 @@ export function ownedCommand(
               { cause: error },
             )
           : cleanupFailure;
+      }
+      // Optional failure evidence uses the same bounded capture as successful
+      // output. Preserve primary/cleanup causes and leave other callers' error
+      // properties unchanged. Inherited stdio has no captured output.
+      if (error && retainOutputOnError && !inherited) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        if (primaryError?.exitCode !== undefined)
+          error.exitCode = primaryError.exitCode;
       }
       const settle = () => {
         if (error) reject(error);

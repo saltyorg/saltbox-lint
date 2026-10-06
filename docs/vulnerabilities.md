@@ -13,6 +13,11 @@ read-only module loading. It neither edits module files nor reads consumer
 repositories. Tool installation uses the same versioned `bin/tools` convention
 as the other developer tools.
 
+Package discovery and scanning use the same explicit `GOFLAGS=-mod=readonly`
+and `GOWORK=off` environment. Inherited custom Go flags and workspaces do not
+change scan selection. Ordinary vet, lint and test discovery retains inherited
+Go build tags.
+
 ## Source coverage and results
 
 The root scan shares the current project package discovery used by vet, lint
@@ -74,6 +79,12 @@ hashes and sizes appear in the manifest. `database.metadata.json` and
 advisory response has its URL, retrieval time, HTTP status, available
 Date/ETag/Last-Modified headers, size and SHA-256 in the manifest. The scanner's
 raw protocol retains the advisory records it analyzes.
+
+Failed scanner commands retain their bounded captured output, including findings
+emitted before a nonzero exit, timeout or cleanup failure. The manifest records
+operational and protocol errors separately and retains complete valid findings
+from an interrupted stream. Malformed finding payloads remain in the evidence
+and require triage; unknown frame shapes cannot establish nonreachability.
 
 Both scopes use one temporary database built from those retrieved bytes.
 The gate compares the metadata and module index again after advisory retrieval
