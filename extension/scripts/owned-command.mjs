@@ -70,6 +70,18 @@ export function ownedCommand(
     let closed;
     let settled = false;
     let cleanupStarted = false;
+    const failCleanup = (message, cause) => {
+      const error = new Error(`${identity}: ${message}`, { cause });
+      // Cleanup is a separate failure. Keep the initiating error visible and
+      // retain both error objects, without treating a denied signal as exit.
+      failure = failure
+        ? new AggregateError(
+            [failure, error],
+            `${failure.message}; ${error.message}`,
+            { cause: failure },
+          )
+        : error;
+    };
     const finish = (error) => {
       if (settled) return;
       settled = true;
@@ -95,10 +107,7 @@ export function ownedCommand(
         process.kill(-child.pid, "SIGKILL");
       } catch (error) {
         if (error.code !== "ESRCH")
-          failure = new Error(
-            `${identity}: owned group cleanup failed: ${error}`,
-            { cause: failure ?? error },
-          );
+          failCleanup(`owned group cleanup failed: ${error}`, error);
       }
       observeGroup();
     };
@@ -129,10 +138,7 @@ export function ownedCommand(
         }
       } catch (error) {
         if (!settled) {
-          failure = new Error(
-            `${identity}: owned group observation failed: ${error}`,
-            { cause: failure ?? error },
-          );
+          failCleanup(`owned group observation failed: ${error}`, error);
           cleanup();
         }
       } finally {
@@ -151,14 +157,10 @@ export function ownedCommand(
         reapTimer = setTimeout(() => {
           child.stdout?.destroy();
           child.stderr?.destroy();
-          finish(
-            new Error(
-              `${identity}: ${groupGone ? "stdio did not close" : "owned group did not disappear"} after owned cleanup`,
-              {
-                cause: failure,
-              },
-            ),
+          failCleanup(
+            `${groupGone ? "stdio did not close" : "owned group did not disappear"} after owned cleanup`,
           );
+          finish(failure);
         }, 5000);
       }, 7000);
     };

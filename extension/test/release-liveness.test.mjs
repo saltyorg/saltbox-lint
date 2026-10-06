@@ -511,6 +511,131 @@ test("source capture preserves NUL records and fails on overflow", async () => {
   );
 });
 
+test("successful capture still rejects a denied owned group cleanup", async (t) => {
+  if (process.platform === "win32") return;
+  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-denial-"));
+  const filename = join(directory, "builder.json");
+  const kill = process.kill.bind(process);
+  const denied = Object.assign(new Error("kill EPERM control"), {
+    code: "EPERM",
+    syscall: "kill",
+  });
+  const mock = t.mock.method(process, "kill", (pid, signal) => {
+    if (pid < 0 && signal === "SIGKILL") {
+      const instance = JSON.parse(readFileSync(filename));
+      if (pid === -instance.pid) throw denied;
+    }
+    return kill(pid, signal);
+  });
+  try {
+    await assert.rejects(
+      ownedCommand(
+        process.execPath,
+        [
+          "-e",
+          `require("node:fs").writeFileSync(${JSON.stringify(filename)}, JSON.stringify({ pid: process.pid })); process.stdout.write("ok")`,
+        ],
+        { phase: "successful capture cleanup control", timeoutMs: 30000 },
+      ),
+      (error) => {
+        assert.match(error.message, /owned group cleanup failed/);
+        assert.equal(error.cause, denied);
+        assert.equal(error instanceof AggregateError, false);
+        return true;
+      },
+    );
+    assert.equal(
+      await groupHasLiveMembers(JSON.parse(readFileSync(filename)).pid),
+      false,
+    );
+  } finally {
+    mock.mock.restore();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("source overflow retains cleanup errors and waits for owned group exit", async (t) => {
+  if (process.platform === "win32") return;
+  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-overflow-"));
+  const filename = join(directory, "builder.json");
+  const controller = new AbortController();
+  const kill = process.kill.bind(process);
+  const denied = Object.assign(new Error("kill EPERM control"), {
+    code: "EPERM",
+    syscall: "kill",
+  });
+  let parent;
+  let descendant;
+  let mock;
+  let settled = false;
+  const result = ownedCommand(
+    process.execPath,
+    [fixture, "output-tree", filename],
+    {
+      phase: "source overflow cleanup control",
+      maxOutputBytes: 1024,
+      timeoutMs: 30000,
+      signal: controller.signal,
+    },
+  ).then(
+    () => {
+      settled = true;
+      throw new Error("Overflow unexpectedly succeeded");
+    },
+    (error) => {
+      settled = true;
+      return error;
+    },
+  );
+  try {
+    parent = await record(filename);
+    descendant = await record(filename + ".child");
+    let deniedKill;
+    const attempted = new Promise((resolve) => {
+      deniedKill = resolve;
+    });
+    mock = t.mock.method(process, "kill", (pid, signal) => {
+      if (pid === -parent.pid && signal === "SIGKILL") {
+        deniedKill();
+        throw denied;
+      }
+      return kill(pid, signal);
+    });
+    assert.equal(await running(parent, "stdout"), true);
+    await attempted;
+    assert.equal(await running(parent), true);
+    assert.equal(await running(descendant), true);
+    assert.equal(await groupHasLiveMembers(parent.pid), true);
+    assert.equal(settled, false, "EPERM does not prove owned group exit");
+    mock.mock.restore();
+    kill(-parent.pid, "SIGKILL");
+    const error = await result;
+    assert.match(
+      error.message,
+      /source overflow cleanup control: .*output exceeds 1024 bytes.*owned group cleanup failed: Error: kill EPERM control/s,
+    );
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.errors.length, 2);
+    assert.match(error.errors[0].message, /output exceeds 1024 bytes/);
+    assert.equal(error.errors[1].cause, denied);
+    assert.equal(await groupHasLiveMembers(parent.pid), false);
+    assert.equal(await endpointAbsent(parent), true);
+    assert.equal(await endpointAbsent(descendant), true);
+  } finally {
+    mock?.mock.restore();
+    controller.abort();
+    if (parent && (await groupHasLiveMembers(parent.pid))) {
+      // Signal only our recorded group after authenticating a live member.
+      assert.ok(
+        (await running(parent)) || (descendant && (await running(descendant))),
+      );
+      kill(-parent.pid, "SIGKILL");
+    }
+    await result;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("staging deadline names its command and closes the owned builder tree", async () => {
   const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-build-"));
   const filename = join(directory, "builder.json");
