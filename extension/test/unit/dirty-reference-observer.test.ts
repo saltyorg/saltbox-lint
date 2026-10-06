@@ -542,3 +542,52 @@ test("retained original instances expose their own closed state and current work
   );
   observer.dispose();
 });
+
+for (const control of [
+  { origin: true, locations: 31, primary: 32, truncated: false },
+  { origin: true, locations: 32, primary: 32, truncated: true },
+  { origin: false, locations: 32, primary: 32, truncated: false },
+  { origin: false, locations: 33, primary: 32, truncated: true },
+  { origin: true, locations: 33, primary: 32, truncated: true },
+]) {
+  test(`native primary response origin=${control.origin} locations=${control.locations} reports its exact bound`, async () => {
+    const f = fixture();
+    const spawn = f.native.spawn;
+    const observer = observeDirtyReference(f.inputs);
+    try {
+      let requests = 0;
+      const pending = observer.request(() => {
+        requests++;
+        return f.promise;
+      });
+      assert.equal(pending, f.promise);
+      assert.equal(f.native.spawn(f.inputs.cli.spellings[0], f.args), f.child);
+      const response = JSON.parse(f.wire) as Record<string, unknown>;
+      response.locations = Array.from(
+        { length: control.locations },
+        () => response.origin,
+      );
+      if (!control.origin) delete response.origin;
+      f.child.stdout.emit("data", Buffer.from(JSON.stringify(response)));
+      f.child.emit("close", 0, null);
+      f.resolve(f.result);
+      assert.equal(await pending, f.result);
+      const result = facts(observer.snapshot().response);
+      assert.equal(
+        (result.primaryLocations as unknown[]).length,
+        control.primary,
+      );
+      assert.equal(result.primaryLocationsTruncated, control.truncated);
+      assert.equal(requests, 1);
+      assert.equal(f.calls(), 1);
+      const output: string[] = [];
+      observer.failure((value) => output.push(value));
+      assert.equal(output.length, 1);
+      assert.ok(Buffer.byteLength(output[0]) <= 16 * 1024);
+      assert.doesNotMatch(output[0], /secret_|[a-f0-9]{64}|lookup/u);
+    } finally {
+      observer.dispose();
+      assert.equal(f.native.spawn, spawn);
+    }
+  });
+}

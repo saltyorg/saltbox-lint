@@ -313,21 +313,19 @@ export function observeDirtyReference(inputs: Inputs) {
     const targets = object(value.target_hashes);
     const length = (value: unknown) =>
       Array.isArray(value) ? count(value.length) : undefined;
-    const primary = [
+    const candidates = [
       value.origin,
       ...(Array.isArray(value.locations)
         ? value.locations.slice(0, locationLimit)
         : []),
-    ]
-      .filter(
-        (location: unknown) =>
-          object(location)?.path === inputs.ownerPath ||
-          object(location)?.path ===
-            aliases.find(
-              (alias) => alias.uri === inputs.document.uri.toString(),
-            )?.path,
-      )
-      .slice(0, locationLimit);
+    ].filter(
+      (location: unknown) =>
+        object(location)?.path === inputs.ownerPath ||
+        object(location)?.path ===
+          aliases.find((alias) => alias.uri === inputs.document.uri.toString())
+            ?.path,
+    );
+    const primary = candidates.slice(0, locationLimit);
     return {
       stage: "response_json_object",
       schemaRecognized: value.schema_version === 1,
@@ -346,8 +344,9 @@ export function observeDirtyReference(inputs: Inputs) {
       dependencyFiles: length(source?.files),
       targetHashes: targets ? count(Object.keys(targets).length) : undefined,
       primaryLocationsTruncated:
-        Array.isArray(value.locations) &&
-        value.locations.length > locationLimit,
+        candidates.length > locationLimit ||
+        (Array.isArray(value.locations) &&
+          value.locations.length > locationLimit),
       primaryLocations: primary.map((location: unknown) => {
         const item = object(location),
           span = object(item?.span);
