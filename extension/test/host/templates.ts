@@ -12,6 +12,7 @@ import type { QueryReport } from "../../src/navigation-protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import { checkPendingWritableOwnership } from "./writable-ownership.ts";
 import { observeDirtyReference } from "./dirty-reference-observer.ts";
+import { synchronizeDirtyAliases } from "./dirty-alias-buffers.ts";
 
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
@@ -235,81 +236,147 @@ export async function runTemplates(): Promise<void> {
     // The CLI overlays every admitted spelling of this physical template.
     // Verify navigation while the buffer differs from all saved spellings.
     await replace(document, original + "{# unsaved template comment #}\n");
-    await vscode.commands.executeCommand("saltboxLint.checkDocument");
-    assert.deepEqual(findings(document), []);
-    await waitFor(async () => {
-      const locations = await vscode.commands.executeCommand<
-        (vscode.Location | vscode.LocationLink)[]
-      >("vscode.executeDefinitionProvider", uri, position);
-      return locations.length === 3;
-    }, "dirty template aliases retain definition navigation");
-    const observer =
-      uri.toString() ===
-      vscode.Uri.joinPath(
-        root,
+    // Earlier editor tabs may be closed while their public models remain
+    // open. Establish coherent overlays for this fixture's physical aliases.
+    const aliases = await synchronizeDirtyAliases({
+      root: root.fsPath,
+      owner: uri.path.includes("reverse")
+        ? vscode.Uri.joinPath(root, "roles/readonly/defaults/reverse.yml")
+            .fsPath
+        : uri.fsPath,
+      primary: document,
+      baseline: originalBytes,
+      knownURIs: [
+        "reverse-alias.j2",
         "roles/readonly/templates/reverse.yaml",
-      ).toString()
-        ? observeDirtyReference({
-            childProcess: createRequire(__filename)(
-              "node:child_process",
-            ) as object,
-            document,
-            documents: () => vscode.workspace.textDocuments,
-            retainedDocuments: () => [...retainedDocuments.values()],
-            tabURIs: () =>
-              vscode.window.tabGroups.all.flatMap((group) =>
-                group.tabs.flatMap((tab) => {
-                  if (tab.input instanceof vscode.TabInputText)
-                    return [tab.input.uri.toString()];
-                  if (tab.input instanceof vscode.TabInputTextDiff)
-                    return [
-                      tab.input.original.toString(),
-                      tab.input.modified.toString(),
-                    ];
-                  return [];
-                }),
-              ),
-            aliases: [
-              "reverse-alias.j2",
-              "roles/readonly/templates/reverse.yaml",
-              "roles/readonly/defaults/reverse.yml",
-              "readonly-alias/reverse.yaml",
-            ].map((path) => ({
-              path,
-              uri: vscode.Uri.joinPath(root, path).toString(),
-            })),
-            root: observedRoot,
-            owner: join(observedRoot, "roles/readonly/defaults/reverse.yml"),
-            ownerPath: "roles/readonly/defaults/reverse.yml",
-            source: uri.fsPath,
-            position,
-            baseline: originalBytes,
-            cli,
-          })
-        : undefined;
-    try {
-      const request = () =>
-        vscode.commands.executeCommand<vscode.Location[]>(
-          "vscode.executeReferenceProvider",
-          uri,
-          position,
+        "roles/readonly/defaults/reverse.yml",
+        "readonly-alias/reverse.yaml",
+        ...["config", "config.yaml", "config.j2"].flatMap((basename) => [
+          "readonly-alias/" + basename,
+          "roles/readonly/templates/" + basename,
+          "roles/readonly-directory/templates/" + basename,
+          "roles/readonly-directory/tasks/" + basename,
+        ]),
+      ].map((path) => vscode.Uri.joinPath(root, path).toString()),
+      documents: () => vscode.workspace.textDocuments,
+      replace,
+      restoreClean: async (alias) => {
+        const primaryEditor = vscode.window.activeTextEditor;
+        const editor = await showTemplateDocument(alias.uri);
+        assert.equal(editor.document, alias);
+        await vscode.commands.executeCommand("workbench.action.files.revert");
+        assert.equal(alias.isDirty, false);
+        await vscode.commands.executeCommand(
+          "workbench.action.closeActiveEditor",
         );
-      const dirtyReferences = await (observer
-        ? observer.request(request)
-        : request());
-      assert.ok(
-        dirtyReferences.some(
+        if (primaryEditor) {
+          const restored = await showTemplateDocument(
+            primaryEditor.document.uri,
+          );
+          assert.equal(restored.document, primaryEditor.document);
+        }
+      },
+    });
+    try {
+      await vscode.commands.executeCommand("saltboxLint.checkDocument");
+      assert.deepEqual(findings(document), []);
+      await waitFor(async () => {
+        const locations = await vscode.commands.executeCommand<
+          (vscode.Location | vscode.LocationLink)[]
+        >("vscode.executeDefinitionProvider", uri, position);
+        return locations.length === 3;
+      }, "dirty template aliases retain definition navigation");
+      const observer =
+        uri.toString() ===
+        vscode.Uri.joinPath(
+          root,
+          "roles/readonly/templates/reverse.yaml",
+        ).toString()
+          ? observeDirtyReference({
+              childProcess: createRequire(__filename)(
+                "node:child_process",
+              ) as object,
+              document,
+              documents: () => vscode.workspace.textDocuments,
+              retainedDocuments: () => [...retainedDocuments.values()],
+              tabURIs: () =>
+                vscode.window.tabGroups.all.flatMap((group) =>
+                  group.tabs.flatMap((tab) => {
+                    if (tab.input instanceof vscode.TabInputText)
+                      return [tab.input.uri.toString()];
+                    if (tab.input instanceof vscode.TabInputTextDiff)
+                      return [
+                        tab.input.original.toString(),
+                        tab.input.modified.toString(),
+                      ];
+                    return [];
+                  }),
+                ),
+              aliases: [
+                "reverse-alias.j2",
+                "roles/readonly/templates/reverse.yaml",
+                "roles/readonly/defaults/reverse.yml",
+                "readonly-alias/reverse.yaml",
+              ].map((path) => ({
+                path,
+                uri: vscode.Uri.joinPath(root, path).toString(),
+              })),
+              root: observedRoot,
+              owner: join(observedRoot, "roles/readonly/defaults/reverse.yml"),
+              ownerPath: "roles/readonly/defaults/reverse.yml",
+              source: uri.fsPath,
+              position,
+              baseline: originalBytes,
+              cli,
+            })
+          : undefined;
+      try {
+        aliases.assertCurrent();
+        const request = () =>
+          vscode.commands.executeCommand<vscode.Location[]>(
+            "vscode.executeReferenceProvider",
+            uri,
+            position,
+          );
+        const dirtyReferences = await (observer
+          ? observer.request(request)
+          : request());
+        assert.ok(
+          dirtyReferences.some(
+            (location) => location.uri.toString() === uri.toString(),
+          ),
+          "dirty template reference aliases use the captured buffer coordinates",
+        );
+        aliases.assertCurrent();
+        const lookupStart = document
+          .getText()
+          .indexOf("lookup('role_var', '_port'");
+        const lookupEnd = document.getText().indexOf(")", lookupStart) + 1;
+        const primaryLocation = dirtyReferences.find(
           (location) => location.uri.toString() === uri.toString(),
-        ),
-        "dirty template reference aliases use the captured buffer coordinates",
-      );
-    } catch (error) {
-      observer?.failure();
-      throw error;
+        )!;
+        assert.deepEqual(
+          primaryLocation.range.start,
+          document.positionAt(lookupStart),
+        );
+        assert.deepEqual(
+          primaryLocation.range.end,
+          document.positionAt(lookupEnd),
+        );
+        assert.equal(
+          document.getText(primaryLocation.range),
+          document.getText().slice(lookupStart, lookupEnd),
+        );
+      } catch (error) {
+        observer?.failure();
+        throw error;
+      } finally {
+        observer?.dispose();
+      }
+      assert.equal(await readFile(uri.fsPath, "utf8"), original);
     } finally {
-      observer?.dispose();
+      await aliases.restore();
     }
-    assert.equal(await readFile(uri.fsPath, "utf8"), original);
     const bad = " \t😀{% if enabled -%}\r\n{{ value }}  ";
     // WorkspaceEdit uses the existing model EOL. Admit the intended CRLF
     // fixture explicitly before measuring any read-only operation.

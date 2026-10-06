@@ -19,6 +19,7 @@ import { build } from "esbuild";
 import { SnapshotIndex, hash } from "../../src/protocol.ts";
 import { observeAnalysis } from "../../src/observations.ts";
 import { Scheduler } from "../../src/scheduler.ts";
+import { synchronizeDirtyAliases } from "../host/dirty-alias-buffers.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
 import type { validateNavigation } from "../../src/navigation.ts";
 import type { Uri, TextDocument } from "vscode";
@@ -133,6 +134,7 @@ async function fixture() {
     languageId: "jinja",
     isClosed: false,
     isDirty: true,
+    eol: 2,
     version: 1,
     getText: () => text,
   };
@@ -332,6 +334,78 @@ async function fixture() {
   };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
+test("dirty fixture synchronizes an earlier nonclosed saved alias before positive navigation", async () => {
+  const f = await fixture();
+  f.document.uri = uri(join(f.root, alias));
+  const saved = await readFile(join(f.root, sourcePath));
+  let aliasText = saved.toString("utf8");
+  const prior = {
+    uri: uri(join(f.root, "reverse-alias.j2")),
+    isClosed: false,
+    isDirty: false,
+    version: 7,
+    eol: 2,
+    getText: () => aliasText,
+  };
+  f.documents.push(prior as unknown as TextDocument);
+  let buffers: Awaited<ReturnType<typeof synchronizeDirtyAliases>> | undefined;
+  let setupEdits = 0;
+  try {
+    // A closed tab does not close this earlier public model. The positive
+    // fixture must synchronize its bytes before asking for dirty navigation.
+    assert.equal(
+      await f.validate(),
+      undefined,
+      "the original conflict remains refused",
+    );
+    buffers = await synchronizeDirtyAliases({
+      root: f.root,
+      owner: join(f.root, sourcePath),
+      primary: f.document,
+      baseline: saved,
+      knownURIs: [f.document.uri.toString(), prior.uri.toString()],
+      documents: () => f.documents,
+      replace: async (document, value) => {
+        assert.equal(document, prior);
+        setupEdits++;
+        aliasText = value;
+        prior.version++;
+        prior.isDirty = true;
+      },
+    });
+    buffers.assertCurrent();
+    assert.equal(setupEdits, 1);
+    const answer = await f.validate();
+    assert.ok(answer, "dirty positive fixture requires coherent alias buffers");
+    assert.equal(
+      answer.locations.get(f.report.locations[0])?.uri,
+      f.document.uri,
+    );
+    assert.deepEqual(answer.locations.get(f.report.locations[0])?.range.start, {
+      line: 1,
+      character: 3,
+    });
+    assert.deepEqual(answer.locations.get(f.report.locations[0])?.range.end, {
+      line: 1,
+      character: 8,
+    });
+    assert.equal(await answer.targetsCurrent(), true);
+    assert.equal(answer.targetsCurrentNow(), true);
+    buffers.assertCurrent();
+    assert.equal(setupEdits, 1, "navigation applies no buffer edits");
+    assert.equal(hash(f.document.getText()), f.report.source_sha256);
+    assert.deepEqual(await readFile(join(f.root, sourcePath)), saved);
+    // The real final acceptance guard still refuses a reintroduced conflict.
+    aliasText = saved.toString("utf8");
+    prior.isDirty = false;
+    assert.equal(await answer.targetsCurrent(), false);
+    assert.equal(answer.targetsCurrentNow(), false);
+  } finally {
+    await buffers?.restore();
+    assert.equal(aliasText, saved.toString("utf8"));
+    await f.cleanup();
+  }
+});
 const changes = [
   "stable",
   "deleted",
