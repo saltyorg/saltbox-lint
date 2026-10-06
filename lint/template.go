@@ -12,9 +12,41 @@ import (
 type templateScan struct {
 	expressions              []Expression
 	diagnostics              []Diagnostic
-	reasons                  []string
+	reasons                  []templateReason
 	configurationUnavailable bool
 }
+
+type templateReasonKind uint8
+
+const (
+	templateReasonOther templateReasonKind = iota
+	templateReasonExpressionGrammar
+	templateReasonSetGrammar
+	templateReasonIfGrammar
+	templateReasonElifGrammar
+)
+
+// Scanner categories stay independent of the text shown in coverage reports.
+type templateReason struct {
+	kind    templateReasonKind
+	message string
+}
+
+func templateReasonMessages(reasons []templateReason) []string {
+	if reasons == nil {
+		return nil
+	}
+	messages := make([]string, len(reasons))
+	for i, reason := range reasons {
+		messages[i] = reason.message
+	}
+	return messages
+}
+
+func (scan templateScan) reasonMessages() []string {
+	return templateReasonMessages(scan.reasons)
+}
+
 type templateDelimiters struct{ starts, ends [3]string }
 type templateBlock struct {
 	name, label string
@@ -29,12 +61,17 @@ func scanTemplate(s *Source) templateScan {
 func scanProjectTemplate(p *Project, s *Source) templateScan {
 	result := templateScan{}
 	if reasons := templateTaskConfigurationReasons(p, s); len(reasons) > 0 {
-		result.reasons = reasons
+		for _, reason := range reasons {
+			result.reasons = append(result.reasons, templateReason{message: reason})
+		}
 		result.configurationUnavailable = true
 		return result
 	}
 	diagnosticLimit := false
-	partial := func(reason string) { result.reasons = append(result.reasons, reason) }
+	partialGrammar := func(kind templateReasonKind, message string) {
+		result.reasons = append(result.reasons, templateReason{kind: kind, message: message})
+	}
+	partial := func(reason string) { partialGrammar(templateReasonOther, reason) }
 	failure := func(span Span, message string) {
 		if len(result.diagnostics) == 128 {
 			if !diagnosticLimit {
@@ -163,7 +200,7 @@ func scanProjectTemplate(p *Project, s *Source) templateScan {
 		}
 		if kind == 0 {
 			if _, ok := parseTemplateExpression(tokens); !ok {
-				partial("expression grammar outside the supported static subset")
+				partialGrammar(templateReasonExpressionGrammar, "expression grammar outside the supported static subset")
 			}
 			result.expressions = append(result.expressions, expression)
 			continue
@@ -200,7 +237,11 @@ func scanProjectTemplate(p *Project, s *Source) templateScan {
 				blocks = append(blocks, templateBlock{name: name, label: label, span: expression.Span})
 			}
 			if !supportedTemplateStatement(expression) {
-				partial("statement argument grammar outside the supported static subset: " + name)
+				kind := templateReasonOther
+				if name == "if" {
+					kind = templateReasonIfGrammar
+				}
+				partialGrammar(kind, "statement argument grammar outside the supported static subset: "+name)
 			}
 		case "set":
 			if len(tokens) == 1 {
@@ -211,7 +252,7 @@ func scanProjectTemplate(p *Project, s *Source) templateScan {
 				blocks = append(blocks, templateBlock{name: "set", span: expression.Span})
 			}
 			if !supportedTemplateStatement(expression) {
-				partial("statement argument grammar outside the supported static subset: set")
+				partialGrammar(templateReasonSetGrammar, "statement argument grammar outside the supported static subset: set")
 			}
 		case "elif", "else":
 			if !reliable {
@@ -235,7 +276,7 @@ func scanProjectTemplate(p *Project, s *Source) templateScan {
 			}
 			if name == "elif" {
 				if !supportedTemplateCondition(tokens[1:]) {
-					partial("statement argument grammar outside the supported static subset: elif")
+					partialGrammar(templateReasonElifGrammar, "statement argument grammar outside the supported static subset: elif")
 				}
 			}
 		case "endif", "endfor", "endmacro", "endcall", "endblock", "endfilter", "endwith", "endautoescape", "endset", "endraw":
@@ -279,8 +320,8 @@ func scanProjectTemplate(p *Project, s *Source) templateScan {
 	if !reliable || diagnosticLimit {
 		result.expressions = nil
 	}
-	slices.Sort(result.reasons)
-	result.reasons = slices.Compact(result.reasons)
+	slices.SortFunc(result.reasons, func(a, b templateReason) int { return strings.Compare(a.message, b.message) })
+	result.reasons = slices.CompactFunc(result.reasons, func(a, b templateReason) bool { return a.message == b.message })
 	return result
 }
 
@@ -567,7 +608,7 @@ func checkTemplateCoverage(p *Project, s *Source) []Diagnostic {
 	if len(scan.reasons) == 0 {
 		return nil
 	}
-	return []Diagnostic{{Path: s.Path, RuleID: "template-partial-coverage", Severity: "warning", Span: Span{0, 0}, Message: "partial template coverage: " + strings.Join(scan.reasons, "; "), Expected: "Only supported static delimiters, block structure and reference spans are checked. Unsupported grammar and runtime values remain unresolved; no template is rendered or changed."}}
+	return []Diagnostic{{Path: s.Path, RuleID: "template-partial-coverage", Severity: "warning", Span: Span{0, 0}, Message: "partial template coverage: " + strings.Join(scan.reasonMessages(), "; "), Expected: "Only supported static delimiters, block structure and reference spans are checked. Unsupported grammar and runtime values remain unresolved; no template is rendered or changed."}}
 }
 
 // checkTemplateRenderer gives the selected template ownership of its existing
@@ -702,8 +743,10 @@ func templateSignature(tokens []Token) bool {
 // simple list guards beyond the general syntax subset. Other scanner limitations
 // make absence of consumption unknown, regardless of selection.
 func templateContractReasons(scan templateScan) []string {
-	return slices.DeleteFunc(slices.Clone(scan.reasons), func(reason string) bool {
-		if reason != "statement argument grammar outside the supported static subset: set" && reason != "statement argument grammar outside the supported static subset: if" && reason != "statement argument grammar outside the supported static subset: elif" && reason != "expression grammar outside the supported static subset" {
+	reasons := slices.DeleteFunc(slices.Clone(scan.reasons), func(reason templateReason) bool {
+		switch reason.kind {
+		case templateReasonSetGrammar, templateReasonIfGrammar, templateReasonElifGrammar, templateReasonExpressionGrammar:
+		default:
 			return false
 		}
 		for _, e := range scan.expressions {
@@ -747,6 +790,7 @@ func templateContractReasons(scan templateScan) []string {
 		}
 		return true
 	})
+	return templateReasonMessages(reasons)
 }
 
 // The legacy contract recognizer reads direct names in list guards, but neither

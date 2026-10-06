@@ -88,7 +88,7 @@ func TestTemplateOwningTaskConfiguration(t *testing.T) {
 				if len(scan.diagnostics) != 0 {
 					t.Fatalf("invented syntax: %+v", scan.diagnostics)
 				}
-				if got := strings.Join(scan.reasons, "; "); tc.reason == "" && got != "" || tc.reason != "" && !strings.Contains(got, tc.reason) {
+				if got := strings.Join(scan.reasonMessages(), "; "); tc.reason == "" && got != "" || tc.reason != "" && !strings.Contains(got, tc.reason) {
 					t.Fatalf("coverage=%q want=%q", got, tc.reason)
 				}
 				if tc.reason != "" && (len(scan.expressions) != 0 || len(Expressions(source)) != 0 || observedSource(source).ParseState != "partial-template") {
@@ -156,7 +156,7 @@ func TestTemplateSourceSpellingAdmission(t *testing.T) {
 				}
 				s := p.Sources["roles/demo/templates/config.j2"]
 				scan := scanTemplate(s)
-				if got := strings.Join(scan.reasons, "; "); tc.reason != "" && !strings.Contains(got, tc.reason) || tc.reason == "" && got != "" {
+				if got := strings.Join(scan.reasonMessages(), "; "); tc.reason != "" && !strings.Contains(got, tc.reason) || tc.reason == "" && got != "" {
 					t.Fatalf("coverage=%q want=%q", got, tc.reason)
 				}
 				if len(scan.diagnostics) != 0 || tc.reason != "" && (len(Expressions(s)) != 0 || !scan.configurationUnavailable) {

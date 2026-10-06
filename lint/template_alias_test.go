@@ -43,7 +43,7 @@ func TestTemplateLeafAliasConfigurationConsumers(t *testing.T) {
 						t.Fatalf("lost logical identity or canonical owner: %+v", source)
 					}
 					scan := scanTemplate(source)
-					if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasons, ";"), "task delimiter overrides") || len(Expressions(source)) != 0 || len(sourceRoleReferences(source)) != 0 {
+					if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "task delimiter overrides") || len(Expressions(source)) != 0 || len(sourceRoleReferences(source)) != 0 {
 						t.Fatalf("alias fabricated default grammar facts: %+v", scan)
 					}
 					if _, read := p.Sources["roles/foreign/defaults/main.yml"]; read && !slices.Contains(selection, root) {
@@ -205,7 +205,7 @@ func TestTemplateDirectoryAliasUsesAdmittedCanonicalOwner(t *testing.T) {
 	if source == nil || source.RolePath != "roles/demo" || len(p.Selected) != 1 {
 		t.Fatalf("directory alias changed shared source identity: %+v", p)
 	}
-	if scan := scanTemplate(source); len(scan.diagnostics) != 0 || !strings.Contains(strings.Join(scan.reasons, ";"), "task delimiter overrides") {
+	if scan := scanTemplate(source); len(scan.diagnostics) != 0 || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "task delimiter overrides") {
 		t.Fatalf("directory alias bypassed task configuration: %+v", scan)
 	}
 }
@@ -366,14 +366,14 @@ func TestTemplateTaskAliasRetargetAfterAdmissionIsPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	scan := scanTemplate(p.Sources["roles/demo/templates/config"])
-	if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasons, ";"), "identity changed") {
+	if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "identity changed") {
 		t.Fatalf("retarget after admission fabricated default syntax: %+v", scan)
 	}
 	if err := os.Remove(alias); err != nil {
 		t.Fatal(err)
 	}
 	scan = scanTemplate(p.Sources["roles/demo/templates/config"])
-	if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasons, ";"), "now missing") {
+	if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "now missing") {
 		t.Fatalf("missing admitted alias fabricated default syntax: %+v", scan)
 	}
 }
@@ -394,7 +394,7 @@ func TestTemplateCrossRoleAliasDeclinesConfiguration(t *testing.T) {
 			name = "roles/other/templates/config"
 		}
 		scan := scanTemplate(p.Sources[name])
-		if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasons, ";"), "source resolution") {
+		if len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "source resolution") {
 			t.Fatalf("cross-role alias guessed supported configuration: %+v", scan)
 		}
 	}

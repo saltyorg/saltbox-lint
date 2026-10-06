@@ -17,7 +17,7 @@ func TestTemplateConflictingClosingDelimitersArePartial(t *testing.T) {
 				text := "#jinja2:" + key + ":'" + end + "'\n{{ traefik_middleware_api " + end + " {{ example_role_traefik_api_enabled " + end + " {{ example_role_traefik_api_endpoint " + end + " {% if count12 == 1.12 ** 2 // 1 %}"
 				source, _ := Parse("roles/example/templates/router.j2", []byte(text))
 				scan := scanTemplate(source)
-				if !scan.configurationUnavailable || !strings.Contains(strings.Join(scan.reasons, ";"), "may split") || len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || len(Expressions(source)) != 0 || len(sourceRoleReferences(source)) != 0 {
+				if !scan.configurationUnavailable || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "may split") || len(scan.diagnostics) != 0 || len(scan.expressions) != 0 || len(Expressions(source)) != 0 || len(sourceRoleReferences(source)) != 0 {
 					t.Fatalf("conflicting config leaked static grammar: %+v", scan)
 				}
 				if observedSource(source).ParseState != "partial-template" || string(source.Data) != text {
@@ -47,7 +47,7 @@ func TestTemplateTokenDelimiterFixtures(t *testing.T) {
 				t.Fatalf("fabricated delimiter error: %+v", scan)
 			}
 			if name == "custom-token-partial.j2" {
-				if !scan.configurationUnavailable || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasons, ";"), "may split") {
+				if !scan.configurationUnavailable || len(scan.expressions) != 0 || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "may split") {
 					t.Fatalf("lost partial reason: %+v", scan)
 				}
 			} else {

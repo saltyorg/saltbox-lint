@@ -110,7 +110,7 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 	}
 	if source.Kind == Template {
 		scan := scanTemplate(source)
-		result.Coverage.Reasons = append(result.Coverage.Reasons, scan.reasons...)
+		result.Coverage.Reasons = append(result.Coverage.Reasons, scan.reasonMessages()...)
 		if len(scan.diagnostics) > 0 {
 			result.State = "unavailable"
 			result.Reasons = append(result.Reasons, "invalid-primary-template")

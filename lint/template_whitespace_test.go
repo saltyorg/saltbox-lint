@@ -58,7 +58,7 @@ func TestTemplateHeaderWhitespaceAndNonspaceControls(t *testing.T) {
 		}
 		text = "#jinja2:variable_start_string:'" + w + "[['\n{{ unfinished"
 		source, _ = Parse("header.j2", []byte(text))
-		if scan := scanTemplate(source); len(scan.diagnostics) != 0 || !strings.Contains(strings.Join(scan.reasons, ";"), "delimiter size or whitespace") {
+		if scan := scanTemplate(source); len(scan.diagnostics) != 0 || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), "delimiter size or whitespace") {
 			t.Fatalf("unsupported whitespace delimiter fabricated grammar: %+v", scan)
 		}
 	}
@@ -93,7 +93,7 @@ func TestTemplateHeaderWhitespaceAndNonspaceControls(t *testing.T) {
 		if tc.errorText == "" && len(scan.diagnostics) != 0 || tc.errorText != "" && !slices.ContainsFunc(scan.diagnostics, func(d Diagnostic) bool { return strings.Contains(d.Message, tc.errorText) }) {
 			t.Fatalf("nonspace control %q: %+v", tc.input, scan)
 		}
-		if tc.partial != "" && !strings.Contains(strings.Join(scan.reasons, ";"), tc.partial) {
+		if tc.partial != "" && !strings.Contains(strings.Join(scan.reasonMessages(), ";"), tc.partial) {
 			t.Fatalf("missing partial reason for %q: %+v", tc.input, scan)
 		}
 	}

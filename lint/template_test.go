@@ -96,7 +96,7 @@ func TestTemplateScanner(t *testing.T) {
 			if tc.errorText != "" && !slices.ContainsFunc(scan.diagnostics, func(d Diagnostic) bool { return strings.Contains(d.Message, tc.errorText) }) {
 				t.Fatalf("missing %q: %+v", tc.errorText, scan.diagnostics)
 			}
-			reasons := strings.Join(scan.reasons, ";")
+			reasons := strings.Join(scan.reasonMessages(), ";")
 			if tc.partial == "" && reasons != "" || tc.partial != "" && !strings.Contains(reasons, tc.partial) {
 				t.Fatalf("partial %q wanted %q", reasons, tc.partial)
 			}
@@ -155,7 +155,7 @@ func TestTemplateBodyTokensPreserveEndAdjacentArithmetic(t *testing.T) {
 					t.Fatalf("token source bytes differ: %+v", token)
 				}
 			}
-			reasons := strings.Join(scan.reasons, ";")
+			reasons := strings.Join(scan.reasonMessages(), ";")
 			if tc.partial == "" && reasons != "" || tc.partial != "" && !strings.Contains(reasons, tc.partial) {
 				t.Fatalf("partial=%q want=%q", reasons, tc.partial)
 			}
@@ -438,6 +438,44 @@ func TestTemplateRendererUnavailableFacts(t *testing.T) {
 	}
 }
 
+func TestTemplateContractReasonsIgnoreDisplayWording(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, message string
+		unavailable          bool
+	}{
+		{"capture", "{% set ignored | default(value=true) %}literal{% endset %}", "statement argument grammar outside the supported static subset: set", false},
+		{"assignment", "{% set ignored = [value] %}", "statement argument grammar outside the supported static subset: set", false},
+		{"if", "{% if [value] %}literal{% endif %}", "statement argument grammar outside the supported static subset: if", false},
+		{"elif", "{% if enabled %}literal{% elif [value] %}literal{% endif %}", "statement argument grammar outside the supported static subset: elif", false},
+		{"output", "{{ [value] }}", "expression grammar outside the supported static subset", true},
+		{"other statement", "{% with value=source %}literal{% endwith %}", "statement argument grammar outside the supported static subset: with", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := Parse("test.j2", []byte(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			scan := scanTemplate(source)
+			if len(scan.diagnostics) != 0 || !slices.Equal(scan.reasonMessages(), []string{tc.message}) {
+				t.Fatalf("unexpected scanner coverage: %+v", scan)
+			}
+			if reasons := templateContractReasons(scan); (len(reasons) > 0) != tc.unavailable {
+				t.Fatalf("contract availability changed: %v", reasons)
+			}
+			scan.reasons[0].message = "changed coverage wording"
+			if tc.name == "other statement" {
+				// An unrelated limitation remains unavailable even if its display
+				// text matches the old prose used to identify an eligible capture.
+				scan.reasons[0].message = "statement argument grammar outside the supported static subset: set"
+			}
+			reasons := templateContractReasons(scan)
+			if (len(reasons) > 0) != tc.unavailable || tc.unavailable && !slices.Equal(reasons, scan.reasonMessages()) {
+				t.Fatalf("display wording changed contract availability: %v", reasons)
+			}
+		})
+	}
+}
+
 func TestTemplateRendererInvalidContextOwnership(t *testing.T) {
 	for _, broken := range []string{traefikDefaultsPath, "roles/example/tasks/broken.yml"} {
 		root := t.TempDir()
@@ -545,7 +583,7 @@ func TestTemplateStoredOutputBounds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			source, _ := Parse("bounded.j2", []byte(tc.input))
 			scan := scanTemplate(source)
-			if len(scan.diagnostics) != tc.diagnostics || !strings.Contains(strings.Join(scan.reasons, ";"), tc.reason) {
+			if len(scan.diagnostics) != tc.diagnostics || !strings.Contains(strings.Join(scan.reasonMessages(), ";"), tc.reason) {
 				t.Fatalf("stored output not bounded or explanation omitted: %+v", scan)
 			}
 			if string(source.Data) != tc.input {

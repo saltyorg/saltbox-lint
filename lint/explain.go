@@ -76,7 +76,7 @@ func Explain(ctx context.Context, opts Options) (Explanation, error) {
 	if source.Kind == Template {
 		result.ExplicitSelection = "selected; template checking and navigation are read-only"
 		result.Unsupported = append(result.Unsupported, "template formatting, fixes, completion edits, rename and runtime evaluation are unavailable")
-		result.Unsupported = append(result.Unsupported, scanTemplate(source).reasons...)
+		result.Unsupported = append(result.Unsupported, scanTemplate(source).reasonMessages()...)
 	}
 	for _, rule := range Registry().Rules {
 		if len(rule.Kinds) == 0 || slices.Contains(rule.Kinds, source.Kind) {
@@ -105,7 +105,7 @@ func observedSource(source *Source) ObservedSource {
 	if source.Kind == Template {
 		result.ParseState = "static-template"
 		scan := scanTemplate(source)
-		result.CoverageReasons = slices.Clone(scan.reasons)
+		result.CoverageReasons = scan.reasonMessages()
 		if len(scan.reasons) > 0 {
 			result.ParseState = "partial-template"
 		}
