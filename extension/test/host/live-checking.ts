@@ -133,9 +133,25 @@ export async function runLiveChecking(): Promise<void> {
     realpathSync.native(executable),
     realpathSync.native(process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!),
   );
-  const runtime = createRequire(__filename)(
-    join(product.extensionPath, "dist", "extension.js"),
-  ) as { deactivate(): Promise<void> };
+  const runtimeRequire = createRequire(__filename);
+  const runtimeModule =
+    runtimeRequire.cache[
+      runtimeRequire.resolve(
+        join(product.extensionUri.fsPath, "dist", "extension.js"),
+      )
+    ];
+  assert.ok(runtimeModule, "installed extension runtime is already cached");
+  assert.equal(
+    runtimeModule.loaded,
+    true,
+    "installed extension runtime is loaded",
+  );
+  const runtime = runtimeModule.exports as { deactivate(): Promise<void> };
+  assert.equal(
+    typeof runtime.deactivate,
+    "function",
+    "installed extension runtime exposes deactivation",
+  );
   const root = vscode.workspace.workspaceFolders![0].uri;
   const configuration = vscode.workspace.getConfiguration("saltboxLint", root);
   assert.equal(configuration.get("checkOnType", false), false);
