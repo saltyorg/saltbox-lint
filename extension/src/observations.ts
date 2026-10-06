@@ -1,5 +1,10 @@
 import { lstat, readFile, stat, realpath } from "node:fs/promises";
-import { identify, unavailableSource } from "./identity.ts";
+import {
+  identify,
+  templatePath,
+  unavailableSource,
+  type Identity,
+} from "./identity.ts";
 import type { BigIntStats } from "node:fs";
 import * as path from "node:path";
 import {
@@ -51,6 +56,113 @@ export interface ObservedSource {
   filename: string;
   fingerprint: string;
   rootFingerprint: string;
+  logical?: LogicalSource;
+}
+
+// A never-created YAML leaf has no disk fingerprint. Retain its original
+// spelling, canonical parent chain and absence instead of treating ENOENT as
+// permission to accept any missing source. Physical owners never use this path.
+export interface LogicalSource extends Identity {
+  sourceFilename: string;
+  rootFingerprint: string;
+  parents: { filename: string; canonical: string; fingerprint: string }[];
+}
+async function absent(filename: string): Promise<boolean> {
+  try {
+    await lstat(filename);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+export async function observeLogicalSource(
+  identity: Identity,
+  sourceFilename: string,
+): Promise<LogicalSource | undefined> {
+  if (
+    templatePath(sourceFilename) ||
+    templatePath(identity.filename) ||
+    templatePath(identity.path) ||
+    !/\.ya?ml$/i.test(sourceFilename) ||
+    identity.path.split("/").includes(".git") ||
+    path.resolve(sourceFilename).split(path.sep).includes(".git") ||
+    (await realpath(identity.root)) !== identity.root ||
+    !(await absent(sourceFilename)) ||
+    !(await absent(identity.filename))
+  )
+    return;
+  const observation: LogicalSource = {
+    ...identity,
+    sourceFilename,
+    rootFingerprint: fileFingerprint(
+      await lstat(identity.root, { bigint: true }),
+    ),
+    parents: [],
+  };
+  const seen = new Set<string>();
+  for (const origin of [sourceFilename, identity.filename]) {
+    let filename = path.dirname(origin);
+    while (!seen.has(filename)) {
+      seen.add(filename);
+      const canonical = await realpath(filename);
+      const relative = path
+        .relative(identity.root, canonical)
+        .split(path.sep)
+        .join("/");
+      if (relative) {
+        sourcePath(relative);
+        if (relative.split("/").includes(".git")) return;
+      }
+      const entry = await lstat(filename, { bigint: true });
+      const target = entry.isSymbolicLink()
+        ? await stat(filename, { bigint: true })
+        : undefined;
+      if (!(target ?? entry).isDirectory()) return;
+      observation.parents.push({
+        filename,
+        canonical,
+        fingerprint: observationFingerprint(entry, target),
+      });
+      if (canonical === identity.root) break;
+      filename = path.dirname(filename);
+    }
+  }
+  return (await logicalSourceCurrent(observation)) ? observation : undefined;
+}
+export async function logicalSourceCurrent(
+  observation: LogicalSource,
+): Promise<boolean> {
+  try {
+    const identity = await identify(
+      observation.root,
+      observation.sourceFilename,
+    );
+    if (
+      identity.filename !== observation.filename ||
+      identity.path !== observation.path ||
+      (await realpath(observation.root)) !== observation.root ||
+      fileFingerprint(await lstat(observation.root, { bigint: true })) !==
+        observation.rootFingerprint
+    )
+      return false;
+    for (const parent of observation.parents) {
+      if ((await realpath(parent.filename)) !== parent.canonical) return false;
+      const entry = await lstat(parent.filename, { bigint: true });
+      const target = entry.isSymbolicLink()
+        ? await stat(parent.filename, { bigint: true })
+        : undefined;
+      if (observationFingerprint(entry, target) !== parent.fingerprint)
+        return false;
+    }
+    return (
+      (await absent(observation.sourceFilename)) &&
+      (await absent(observation.filename))
+    );
+  } catch (error) {
+    if (unavailableSource(error)) return false;
+    throw error;
+  }
 }
 export async function sourceCurrent(
   root: string,
@@ -60,6 +172,15 @@ export async function sourceCurrent(
 ): Promise<boolean> {
   try {
     sourcePath(relative);
+    if (observation.logical)
+      return (
+        observation.logical.root === root &&
+        observation.logical.path === relative &&
+        observation.logical.filename === observation.filename &&
+        observation.logical.rootFingerprint === observation.rootFingerprint &&
+        observation.fingerprint === "missing:" + digest &&
+        (await logicalSourceCurrent(observation.logical))
+      );
     const filename = path.join(root, ...relative.split("/"));
     const identity = await identify(root, filename);
     if (

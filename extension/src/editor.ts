@@ -37,6 +37,9 @@ import {
   fileFingerprint,
   observeAnalysis,
   observationFingerprint,
+  observeLogicalSource,
+  logicalSourceCurrent,
+  type LogicalSource,
 } from "./observations.ts";
 
 export interface CheckStatus {
@@ -51,6 +54,7 @@ export interface CheckStatus {
   reason: string;
 }
 interface Snapshot extends Identity {
+  logical?: LogicalSource;
   sourceFilename: string;
   uri: vscode.Uri;
   version: number;
@@ -75,12 +79,14 @@ interface PendingCheck {
 }
 interface SourceOwner extends Identity {
   physical?: boolean;
+  logical?: LogicalSource;
 }
 function textEdits(edits: EditorEdit[]): vscode.TextEdit[] {
   return edits.map((edit) => vscode.TextEdit.replace(range(edit), edit.text));
 }
 
 export class EditorIntegration implements vscode.Disposable {
+  private physicalSources?: WeakSet<vscode.TextDocument>;
   private readonly roots = new MarkedRoots((error) => this.error(error, false));
   private readonly eligibilityChanged = new vscode.EventEmitter<void>();
   readonly onDidChangeEligibility = this.eligibilityChanged.event;
@@ -382,6 +388,8 @@ export class EditorIntegration implements vscode.Disposable {
     document: vscode.TextDocument,
     identity: SourceOwner,
   ): void {
+    if (identity.physical)
+      (this.physicalSources ??= new WeakSet()).add(document);
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
@@ -491,12 +499,21 @@ export class EditorIntegration implements vscode.Disposable {
           !templatePath(identity.filename) &&
           ["yaml", "ansible"].includes(document.languageId) &&
           /\.ya?ml$/i.test(document.uri.path) &&
+          !this.physicalSources?.has(document) &&
           (!previous ||
             (previous.physical === false &&
+              previous.root === identity.root &&
+              previous.path === identity.path &&
               previous.filename === identity.filename))
-        )
+        ) {
+          const logical =
+            previous?.logical ??
+            (await observeLogicalSource(identity, document.uri.fsPath));
+          if (!logical || !(await logicalSourceCurrent(logical)))
+            throw new SourceIdentityError("Logical source identity changed");
           identity.physical = false;
-        else throw error;
+          identity.logical = logical;
+        } else throw error;
       }
     } catch (error) {
       if (!current()) return false;
@@ -610,8 +627,12 @@ export class EditorIntegration implements vscode.Disposable {
         this.withdrawSource(document);
       return;
     }
+    const owner = this.sourceOwners.get(document.uri.toString());
+    const logical = owner?.logical;
+    if (logical && !(await logicalSourceCurrent(logical))) return;
     const snapshot = {
       ...identity,
+      logical,
       sourceFilename: document.uri.fsPath,
       uri: document.uri,
       version,
@@ -624,12 +645,17 @@ export class EditorIntegration implements vscode.Disposable {
       index: new SnapshotIndex(text),
     };
     if (!this.current(document, snapshot)) return;
-    this.rememberSource(document, identity);
+    this.rememberSource(document, {
+      ...identity,
+      physical: owner?.physical,
+      logical,
+    });
     return snapshot;
   }
   private current(document: vscode.TextDocument, snapshot: Snapshot): boolean {
     return (
       this.eligible(document) &&
+      this.roots.get(snapshot.folder) === snapshot.root &&
       snapshot.rootRevision === this.rootRevision(snapshot.folder) &&
       snapshot.documentRevision === this.documentRevision(document) &&
       snapshot.dependencyRevision ===
@@ -648,10 +674,14 @@ export class EditorIntegration implements vscode.Disposable {
     try {
       // Filesystem notifications may still be queued. Resolve the original
       // spelling again rather than granting writes from its remembered owner.
-      const source = await stat(snapshot.sourceFilename);
+      const source = snapshot.logical
+        ? undefined
+        : await stat(snapshot.sourceFilename);
       const identity = await identify(snapshot.root, snapshot.sourceFilename);
       return (
-        source.isFile() &&
+        (snapshot.logical
+          ? await logicalSourceCurrent(snapshot.logical)
+          : source!.isFile()) &&
         this.current(document, snapshot) &&
         this.roots.get(snapshot.folder) === snapshot.root &&
         identity.filename === snapshot.filename &&
@@ -1405,7 +1435,22 @@ export class EditorIntegration implements vscode.Disposable {
         document.uri,
         observed.overlayPaths,
         observed.aliases,
-        observed.targets,
+        new Map([
+          ...observed.targets,
+          ...(snapshot.logical
+            ? [
+                [
+                  snapshot.path,
+                  {
+                    filename: snapshot.filename,
+                    fingerprint: "missing:" + snapshot.hash,
+                    rootFingerprint: snapshot.logical.rootFingerprint,
+                    logical: snapshot.logical,
+                  },
+                ] as const,
+              ]
+            : []),
+        ]),
       );
       if (!answer || !current()) return;
       const identity = await identify(snapshot.root, document.uri.fsPath);
@@ -1419,6 +1464,7 @@ export class EditorIntegration implements vscode.Disposable {
       // loaded still prevent late acceptance. Do not overwrite lint ownership.
       if (
         !(await answer.targetsCurrent()) ||
+        (snapshot.logical && !(await logicalSourceCurrent(snapshot.logical))) ||
         !current() ||
         this.dependencies.begin() !== dependencyToken
       )
