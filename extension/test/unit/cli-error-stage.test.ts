@@ -431,76 +431,87 @@ test("nested paths, suffixes and localized messages never acquire a guessed clas
 });
 
 test("context comparisons preserve all stderr validity and availability boundaries", () => {
-  const line =
-    "saltbox-lint: inspect context /fixture/group_vars: statat group_vars: permission denied\n";
-  assert.equal(
-    observeCLIErrorStage().context(true, 2).availability,
-    "context_comparison_unavailable",
-  );
-  for (const root of [
-    null,
-    "",
-    "relative",
-    "x".repeat(4097),
-    "/" + "é".repeat(2048),
-    "/fixture\u0080",
-    "/fixture\u2028",
-    "/fixture\ud800",
-  ])
+  for (const platform of ["linux", "win32"] as const) {
+    const root = platform === "win32" ? "C:\\fixture" : "/fixture";
+    const paths = platform === "win32" ? win32 : posix;
+    const line = `saltbox-lint: inspect context ${paths.join(root, "group_vars")}: statat group_vars: permission denied\n`;
     assert.equal(
-      contextFacts(line, root).availability,
+      observeCLIErrorStage().context(true, 2).availability,
       "context_comparison_unavailable",
     );
-  for (const root of ["/" + "x".repeat(4095), "/" + "é".repeat(2047) + "x"])
-    assert.equal(
-      contextFacts(line, root).availability,
-      "context_directory_unknown",
-    );
-  for (const suffix of [
-    "\u0000",
-    "\u007f",
-    "\u0080",
-    "\u009f",
-    "\u2028",
-    "\u2029",
-    "\r",
-    "\nextra",
-  ])
-    assert.equal(
-      contextFacts(line.replace("permission denied", suffix)).directory,
-      "directory_unknown",
-    );
-  for (const message of [
-    line.slice(0, -1),
-    "prefix " + line,
-    line + "extra\n",
-    line.replace("group_vars:", "group_vars :"),
-    line + "x".repeat(256 * 1024),
-  ])
-    assert.equal(contextFacts(message).directory, "directory_unknown");
-  for (const bad of [
-    [0xc2, 0x80],
-    [0xe2, 0x80, 0xa8],
-    [0xf4, 0x90, 0x80, 0x80],
-  ])
-    assert.equal(
-      contextFacts(
-        Buffer.concat([
-          Buffer.from(line.slice(0, -1)),
-          Buffer.from(bad),
-          Buffer.from("\n"),
-        ]),
-      ).directory,
-      "directory_unknown",
-    );
-  const observer = observeCLIErrorStage("/fixture");
-  const bytes = Buffer.from(line);
-  observer.observe(bytes);
-  bytes.fill(0);
-  assert.equal(observer.context(true, 2).errorTextClass, "text_permission");
-  observer.observe(undefined);
-  assert.equal(observer.context(true, 2).directory, "directory_unknown");
-  observer.dispose();
+    for (const root of [
+      null,
+      "",
+      "relative",
+      "x".repeat(4097),
+      "/" + "é".repeat(2048),
+      "/fixture\u0080",
+      "/fixture\u2028",
+      "/fixture\ud800",
+    ])
+      assert.equal(
+        contextFacts(line, root, platform).availability,
+        "context_comparison_unavailable",
+      );
+    for (const root of platform === "win32"
+      ? ["C:\\" + "x".repeat(4093), "C:\\" + "é".repeat(2046) + "x"]
+      : ["/" + "x".repeat(4095), "/" + "é".repeat(2047) + "x"])
+      assert.equal(
+        contextFacts(line, root, platform).availability,
+        "context_directory_unknown",
+      );
+    for (const suffix of [
+      "\u0000",
+      "\u007f",
+      "\u0080",
+      "\u009f",
+      "\u2028",
+      "\u2029",
+      "\r",
+      "\nextra",
+    ])
+      assert.equal(
+        contextFacts(line.replace("permission denied", suffix), root, platform)
+          .directory,
+        "directory_unknown",
+      );
+    for (const message of [
+      line.slice(0, -1),
+      "prefix " + line,
+      line + "extra\n",
+      line.replace("group_vars:", "group_vars :"),
+      line + "x".repeat(256 * 1024),
+    ])
+      assert.equal(
+        contextFacts(message, root, platform).directory,
+        "directory_unknown",
+      );
+    for (const bad of [
+      [0xc2, 0x80],
+      [0xe2, 0x80, 0xa8],
+      [0xf4, 0x90, 0x80, 0x80],
+    ])
+      assert.equal(
+        contextFacts(
+          Buffer.concat([
+            Buffer.from(line.slice(0, -1)),
+            Buffer.from(bad),
+            Buffer.from("\n"),
+          ]),
+          root,
+          platform,
+        ).directory,
+        "directory_unknown",
+      );
+    const observer = observeCLIErrorStage(root, platform);
+    const bytes = Buffer.from(line);
+    observer.observe(bytes);
+    bytes.fill(0);
+    assert.equal(observer.context(true, 2).errorTextClass, "text_permission");
+    observer.observe(undefined);
+    assert.equal(observer.context(true, 2).directory, "directory_unknown");
+    observer.dispose();
+  }
 });
 
 test("Windows root comparisons reject drive-relative and incomplete UNC identities", () => {

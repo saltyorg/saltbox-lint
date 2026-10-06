@@ -6,16 +6,21 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import {
   observeFirstDefinition,
   withFirstDefinitionObservation,
 } from "../host/first-definition-observer.ts";
 
-function setup() {
+function setup(platform: NodeJS.Platform = "linux") {
+  const root = platform === "win32" ? "C:\\fixture" : "/fixture";
+  const paths = platform === "win32" ? win32 : posix;
   const uri = {
-    fsPath: "/fixture/source.yml",
-    toString: () => "file:///fixture/source.yml",
+    fsPath: paths.join(root, "source.yml"),
+    toString: () =>
+      platform === "win32"
+        ? "file:///C:/fixture/source.yml"
+        : "file:///fixture/source.yml",
   };
   const position = { line: 0, character: 2 };
   const document = {
@@ -41,9 +46,13 @@ function setup() {
     childProcess: native,
     document,
     position,
-    root: "/fixture",
+    root,
+    platform,
     source: uri.fsPath,
-    cliPath: "/installed/saltbox-lint",
+    cliPath:
+      platform === "win32"
+        ? "C:\\installed\\saltbox-lint.exe"
+        : "/installed/saltbox-lint",
     cliHash: "a".repeat(64),
     productActive: true,
   };
@@ -54,7 +63,7 @@ function setup() {
     "--operation",
     "definition",
     "--root",
-    "/fixture",
+    root,
     "--stdin-filename",
     uri.fsPath,
     "--offset",
@@ -75,70 +84,77 @@ function setup() {
 }
 
 test("context stderr reports only the known directory and exact nested text branch", async () => {
-  const fixture = setup();
-  const observer = observeFirstDefinition(fixture.inputs);
-  const original = new Error("secret_assertion_value");
-  const messages: string[] = [];
-  try {
-    await assert.rejects(
-      withFirstDefinitionObservation(
-        observer,
-        async () => {
-          const pending = fixture.command();
-          assert.equal(pending, fixture.promise);
-          assert.equal(
-            fixture.native.spawn(fixture.inputs.cliPath, fixture.args),
-            fixture.child,
-          );
-          const bytes = Buffer.from(
-            "saltbox-lint: inspect context /fixture/roles/navsource/handlers: resolve source /fixture/roles/navsource/handlers: lstat /fixture/roles/navsource/handlers: permission denied\n",
-          );
-          let seen: unknown;
-          fixture.child.stderr.on("data", (chunk: unknown) => {
-            seen = chunk;
-          });
-          for (const byte of bytes) {
-            const chunk = Buffer.from([byte]);
-            assert.equal(fixture.child.stderr.emit("data", chunk), true);
-            assert.equal(seen, chunk);
-          }
-          assert.equal(fixture.child.stderr.listenerCount("data"), 1);
-          fixture.child.emit("close", 2, null);
-          fixture.resolve([]);
-          await pending;
-          throw original;
-        },
-        (message) => messages.push(message),
-      ),
-      (error: unknown) => error === original,
+  for (const platform of ["linux", "win32"] as const) {
+    const fixture = setup(platform);
+    const paths = platform === "win32" ? win32 : posix;
+    const absolute = paths.join(
+      fixture.inputs.root,
+      "roles/navsource/handlers",
     );
-    assert.equal(messages.length, 1);
-    const facts: unknown = JSON.parse(
-      messages[0].slice(messages[0].indexOf(" ") + 1),
-    );
-    assert.ok(facts && typeof facts === "object");
-    const child: unknown = Reflect.get(facts, "child");
-    assert.ok(child && typeof child === "object");
-    assert.equal(
-      Reflect.get(child, "errorStage"),
-      "error_source_context_inspect",
-    );
-    assert.deepEqual(Reflect.get(child, "errorContext"), {
-      availability: "context_directory_known",
-      ambiguous: false,
-      directory: "navsource_handlers",
-      branch: "context_resolve_source",
-      errorTextClass: "text_permission",
-    });
-    assert.doesNotMatch(
-      messages[0],
-      /permission denied|secret_assertion_value|inspect context|lstat /,
-    );
-    assert.equal(Object.hasOwn(fixture.child.stderr, "emit"), false);
-  } finally {
-    observer.dispose();
-    fixture.child.stdout.destroy();
-    fixture.child.stderr.destroy();
+    const observer = observeFirstDefinition(fixture.inputs);
+    const original = new Error("secret_assertion_value");
+    const messages: string[] = [];
+    try {
+      await assert.rejects(
+        withFirstDefinitionObservation(
+          observer,
+          async () => {
+            const pending = fixture.command();
+            assert.equal(pending, fixture.promise);
+            assert.equal(
+              fixture.native.spawn(fixture.inputs.cliPath, fixture.args),
+              fixture.child,
+            );
+            const bytes = Buffer.from(
+              `saltbox-lint: inspect context ${absolute}: resolve source ${absolute}: ${platform === "win32" ? "CreateFile" : "lstat"} ${absolute}: permission denied\n`,
+            );
+            let seen: unknown;
+            fixture.child.stderr.on("data", (chunk: unknown) => {
+              seen = chunk;
+            });
+            for (const byte of bytes) {
+              const chunk = Buffer.from([byte]);
+              assert.equal(fixture.child.stderr.emit("data", chunk), true);
+              assert.equal(seen, chunk);
+            }
+            assert.equal(fixture.child.stderr.listenerCount("data"), 1);
+            fixture.child.emit("close", 2, null);
+            fixture.resolve([]);
+            await pending;
+            throw original;
+          },
+          (message) => messages.push(message),
+        ),
+        (error: unknown) => error === original,
+      );
+      assert.equal(messages.length, 1);
+      const facts: unknown = JSON.parse(
+        messages[0].slice(messages[0].indexOf(" ") + 1),
+      );
+      assert.ok(facts && typeof facts === "object");
+      const child: unknown = Reflect.get(facts, "child");
+      assert.ok(child && typeof child === "object");
+      assert.equal(
+        Reflect.get(child, "errorStage"),
+        "error_source_context_inspect",
+      );
+      assert.deepEqual(Reflect.get(child, "errorContext"), {
+        availability: "context_directory_known",
+        ambiguous: false,
+        directory: "navsource_handlers",
+        branch: "context_resolve_source",
+        errorTextClass: "text_permission",
+      });
+      assert.doesNotMatch(
+        messages[0],
+        /permission denied|secret_assertion_value|inspect context|lstat |CreateFile /,
+      );
+      assert.equal(Object.hasOwn(fixture.child.stderr, "emit"), false);
+    } finally {
+      observer.dispose();
+      fixture.child.stdout.destroy();
+      fixture.child.stderr.destroy();
+    }
   }
 });
 
