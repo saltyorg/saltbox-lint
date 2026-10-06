@@ -5,9 +5,71 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestCheckSARIFTraefikRelatedIdentity(t *testing.T) {
+	adapter, err := os.ReadFile("../lint/testdata/traefik/adapter.good.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := "example_role_nginx_web_subdomain: nginx\n"
+	tasks := string(adapter) + string(adapter)
+	var baseline []string
+	for _, test := range []struct {
+		name, defaults, tasks, selection string
+	}{
+		{"two identical includes", defaults, tasks, "."},
+		{"selected defaults", defaults, tasks, "roles/example/defaults/main.yml"},
+		{"moving related includes", defaults, "\n\n" + string(adapter) + "\n\n" + string(adapter), "roles/example/defaults/main.yml"},
+		{"moving primary", "\n\n" + defaults, tasks, "."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			for path, data := range map[string]string{"roles/example/defaults/main.yml": test.defaults, "roles/example/tasks/main.yml": test.tasks} {
+				full := filepath.Join(root, path)
+				if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code, wire, stderr := invoke(t, "", "check", "--root", root, "--format", "sarif", filepath.Join(root, test.selection))
+			if code != 1 || stderr != "" {
+				t.Fatalf("real-rule SARIF response: %d %s", code, stderr)
+			}
+			var log struct {
+				Runs []struct {
+					Results []struct {
+						RuleID       string                `json:"ruleId"`
+						Message      struct{ Text string } `json:"message"`
+						Fingerprints map[string]string     `json:"partialFingerprints"`
+					} `json:"results"`
+				} `json:"runs"`
+			}
+			if err := json.Unmarshal([]byte(wire), &log); err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, result := range log.Runs[0].Results {
+				if result.RuleID == "traefik-adapter-contract" && strings.HasPrefix(result.Message.Text, "namespaced web adapter nginx is missing defaults") {
+					ids = append(ids, result.Fingerprints["saltboxLintContext/v1"])
+				}
+			}
+			if len(ids) != 2 || ids[0] == "" || ids[0] == ids[1] {
+				t.Fatalf("distinct real adapter includes must have distinct identities: %v", ids)
+			}
+			if baseline == nil {
+				baseline = ids
+			} else if !slices.Equal(ids, baseline) {
+				t.Fatalf("selection, related/primary movement or checkout root changed identities: got %v want %v", ids, baseline)
+			}
+		})
+	}
+}
 
 func TestCheckSARIFExitSelectionAndPlainOutput(t *testing.T) {
 	root := t.TempDir()

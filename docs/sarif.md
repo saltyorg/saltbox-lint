@@ -34,16 +34,22 @@ exact nonblank source context, and the span's prefix and suffix within that
 context. YAML parser messages are excluded because they can contain line numbers.
 Identical contexts use their occurrence in the source, rather than the order of
 findings in the report. Two spans on one line remain distinct, as do identical
-findings in nearby repeated syntax. Report-local fix IDs and physical line
-numbers are excluded.
+findings in nearby repeated syntax. Related locations add their root-relative
+paths, messages, source contexts, span prefixes and suffixes, and source
+occurrences to the identity. This distinguishes findings with equal primary
+fields that refer to separate includes, including identical repeated includes.
+Related identities are sorted before hashing. Selecting fewer diagnostics or
+reordering diagnostics or related locations does not change their identities.
+Report-local fix IDs and physical line numbers are excluded.
 
 Inserting blank-only lines before findings preserves their identities. Moving
 the checkout to another absolute directory also preserves identities. Renaming
-a source or changing the selected root so its relative path changes creates a
-new identity. Editing the diagnostic context, message or guidance can create a
-new identity. Inserting or removing an earlier identical context can change
-occurrence identities for later copies. This version does not promise identity
-across arbitrary syntax edits or duplicate reordering.
+a primary or related source, or changing the selected root so its relative path
+changes, creates a new identity. Editing primary or related diagnostic context,
+messages or guidance can create a new identity. Inserting or removing an earlier
+identical context in either source can change occurrence identities for later
+copies. This version does not promise identity across arbitrary syntax edits or
+duplicate reordering.
 
 ## Fixes and validation
 
@@ -73,3 +79,16 @@ To upload, separately configure a supported code-scanning integration with its
 required permissions and repository features. Keep report generation and upload
 as separate steps, and allow generation's findings exit status while failing on
 exit 2. This repository's active workflows do not upload SARIF reports.
+
+The [opt-in workflow example](../examples/github/sarif.yml) is an unwired template
+for this repository. It builds the CLI from the current checkout, generates a
+report for that checkout, and keeps upload in a separate step. It accepts exit
+0 or 1 from generation and rejects every other status, including exit 2. Upload
+defaults to disabled and runs only when the manual `upload` input is true after
+the template is enabled. Copying it into `.github/workflows`, configuring code
+scanning, and requesting an upload are separate operator actions. The template
+uses published, commit-pinned
+[checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1),
+[setup-go v7.0.0](https://github.com/actions/setup-go/releases/tag/v7.0.0), and
+[upload-sarif v4.38.2](https://github.com/github/codeql-action/releases/tag/v4.38.2).
+It does not assume a published linter release already includes SARIF support.

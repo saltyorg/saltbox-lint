@@ -1,0 +1,47 @@
+# Unwired, opt-in example for this repository. Builds the current checkout so
+# it does not claim an unreleased SARIF-capable linter version is published.
+# Upload is disabled by default. Enabling this template and its upload requires
+# the repository owner's code-scanning configuration and authorization.
+name: saltbox lint sarif example
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload generated findings to GitHub code scanning
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  sarif:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build the current checkout
+        env:
+          CGO_ENABLED: '0'
+        run: go build -trimpath -o "$RUNNER_TEMP/saltbox-lint" .
+      - name: Generate SARIF
+        shell: bash
+        run: |
+          exec 3> findings.sarif
+          status=0
+          "$RUNNER_TEMP/saltbox-lint" check --root . --format sarif -- . >&3 || status=$?
+          exec 3>&-
+          case "$status" in
+            0|1) ;; # A valid report may contain findings.
+            *) exit "$status" ;; # Includes usage and operational failures (2).
+          esac
+      - name: Upload SARIF when explicitly requested
+        if: inputs.upload
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: findings.sarif
+          category: saltbox-lint

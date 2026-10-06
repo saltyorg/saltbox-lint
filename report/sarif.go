@@ -162,8 +162,36 @@ func sarifSourceLocation(p *lint.Project, loc Location) sarifLocation {
 // Blank-only lines are omitted, while exact nonblank syntax and span columns
 // distinguish nearby findings. Identical contexts use their source occurrence.
 func sarifFingerprint(p *lint.Project, d Diagnostic) string {
-	data := p.Sources[d.Path].Data
-	start, end := min(max(d.Span.Start, 0), len(data)), min(max(d.Span.End, 0), len(data))
+	message := d.Message
+	if d.RuleID == "yaml-syntax" {
+		// Parser messages can contain physical line numbers. Syntax context
+		// identifies these findings without embedding those moving numbers.
+		message = ""
+	}
+	parts := []any{sarifFingerprintVersion, d.RuleID, d.Path, d.Severity, message, d.Expected}
+	parts = append(parts, sarifLocationContext(p, d.Location)...)
+	if len(d.Related) > 0 {
+		// Equal primary fields can describe separate contextual defects. Each
+		// related source occurrence identifies the include or other cause, even
+		// when only the primary file is selected. Sort encoded identities so
+		// explanatory-location ordering cannot change the fingerprint.
+		related := make([]string, 0, len(d.Related))
+		for _, loc := range d.Related {
+			identity := []any{loc.Path, loc.Message}
+			identity = append(identity, sarifLocationContext(p, loc.Location)...)
+			encoded, _ := json.Marshal(identity)
+			related = append(related, string(encoded))
+		}
+		slices.Sort(related)
+		parts = append(parts, related)
+	}
+	encoded, _ := json.Marshal(parts)
+	return fmt.Sprintf("%x", sha256.Sum256(encoded))
+}
+
+func sarifLocationContext(p *lint.Project, loc Location) []any {
+	data := p.Sources[loc.Path].Data
+	start, end := min(max(loc.Span.Start, 0), len(data)), min(max(loc.Span.End, 0), len(data))
 	lineStart := bytes.LastIndexByte(data[:start], '\n') + 1
 	lineEnd := end
 	if i := bytes.IndexByte(data[end:], '\n'); i >= 0 {
@@ -179,15 +207,7 @@ func sarifFingerprint(p *lint.Project, d Diagnostic) string {
 			occurrence++
 		}
 	}
-	message := d.Message
-	if d.RuleID == "yaml-syntax" {
-		// Parser messages can contain physical line numbers. Syntax context
-		// identifies these findings without embedding those moving numbers.
-		message = ""
-	}
-	parts := []any{sarifFingerprintVersion, d.RuleID, d.Path, d.Severity, message, d.Expected, context, string(data[lineStart:start]), string(data[end:lineEnd]), occurrence}
-	encoded, _ := json.Marshal(parts)
-	return fmt.Sprintf("%x", sha256.Sum256(encoded))
+	return []any{context, string(data[lineStart:start]), string(data[end:lineEnd]), occurrence}
 }
 
 func nonblankLines(text string) []string {

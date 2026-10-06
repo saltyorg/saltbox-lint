@@ -222,6 +222,81 @@ func TestSARIFFingerprints(t *testing.T) {
 	}
 }
 
+func TestSARIFTraefikRelatedContext(t *testing.T) {
+	adapter, err := os.ReadFile("../lint/testdata/traefik/adapter.good.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const defaultsPath = "roles/example/defaults/main.yml"
+	const tasksPath = "roles/example/tasks/main.yml"
+	var rules []lint.Rule
+	for _, rule := range lint.Rules() {
+		if rule.ID == "traefik-adapter-contract" {
+			rules = append(rules, rule)
+		}
+	}
+	makeCase := func(taskPath, tasks string) (*lint.Project, []lint.Diagnostic) {
+		t.Helper()
+		p := &lint.Project{Root: t.TempDir(), Sources: map[string]*lint.Source{}, Selected: map[string]bool{}}
+		for path, text := range map[string]string{defaultsPath: "example_role_nginx_web_subdomain: nginx\n", taskPath: tasks} {
+			source, parse := lint.Parse(path, []byte(text))
+			if len(parse) != 0 {
+				t.Fatalf("invalid real-rule fixture: %+v", parse)
+			}
+			p.Sources[path] = source
+			p.Selected[path] = true
+		}
+		ds := lint.Analyze(p, rules)
+		if len(ds) != 2 || ds[0].Path != defaultsPath || ds[1].Path != defaultsPath || ds[0].Span != ds[1].Span || ds[0].Message != ds[1].Message || ds[0].Expected != ds[1].Expected || len(ds[0].Related) != 1 || len(ds[1].Related) != 1 || ds[0].Related[0].Span == ds[1].Related[0].Span {
+			t.Fatalf("expected equal primary findings with distinct related includes: %+v", ds)
+		}
+		return p, ds
+	}
+	identity := func(result sarifResult) string {
+		return result.PartialFingerprints[sarifFingerprintVersion]
+	}
+	tasks := string(adapter) + string(adapter)
+	p, ds := makeCase(tasksPath, tasks)
+	base, _ := renderSARIF(t, p, ds)
+	first, second := identity(base.Runs[0].Results[0]), identity(base.Runs[0].Results[1])
+	if first == second {
+		t.Fatal("related source occurrences collided")
+	}
+	reversed := slices.Clone(ds)
+	slices.Reverse(reversed)
+	order, _ := renderSARIF(t, p, reversed)
+	if identity(order.Runs[0].Results[0]) != second || identity(order.Runs[0].Results[1]) != first {
+		t.Fatal("fingerprint depends on report ordering")
+	}
+	subset, _ := renderSARIF(t, p, ds[1:])
+	if identity(subset.Runs[0].Results[0]) != second {
+		t.Fatal("related duplicate identity depends on diagnostic subset")
+	}
+	p.Selected[tasksPath] = false
+	selected, _ := renderSARIF(t, p, lint.Analyze(p, rules))
+	if len(selected.Runs[0].Results) != 2 || identity(selected.Runs[0].Results[0]) != first || identity(selected.Runs[0].Results[1]) != second {
+		t.Fatal("related identity depends on contextual source selection")
+	}
+	for _, test := range []struct {
+		name, path, tasks string
+		stable            bool
+	}{
+		{"related blank lines and root move", tasksPath, "\n\n" + string(adapter) + "\n\n" + string(adapter), true},
+		{"related source rename", "roles/example/tasks/other.yml", tasks, false},
+		{"related syntax edit", tasksPath, strings.ReplaceAll(tasks, "'_nginx_web_subdomain', role", "'_nginx_web_subdomain',  role"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			other, findings := makeCase(test.path, test.tasks)
+			result, _ := renderSARIF(t, other, findings)
+			for i, original := range base.Runs[0].Results {
+				if equal := identity(result.Runs[0].Results[i]) == identity(original); equal != test.stable {
+					t.Fatalf("related identity stability = %v, want %v", equal, test.stable)
+				}
+			}
+		})
+	}
+}
+
 func TestSARIFArtifactURIsAndNestedRoots(t *testing.T) {
 	for _, path := range []string{"a #?%😀\\.yml", "a:b.yml", "a:b/file.yml", "folder/a:b.yml"} {
 		p, ds := sample()
