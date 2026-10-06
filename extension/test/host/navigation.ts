@@ -22,6 +22,16 @@ import {
   withFirstDefinitionObservation,
 } from "./first-definition-observer.ts";
 
+export function assertReferenceCanonicalOwner(
+  referenceFilename: string,
+  ownerFilename: string,
+) {
+  assert.equal(
+    realpathSync.native(referenceFilename),
+    realpathSync.native(ownerFilename),
+  );
+}
+
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
   edit.replace(
@@ -832,9 +842,9 @@ export async function runNavigation(): Promise<void> {
     roots[0].uri,
     "roles/readonly/defaults/reverse.yml",
   );
-  assert.equal(
-    realpathSync(aliasLocation.uri.fsPath),
-    realpathSync(canonicalAliasOwner.fsPath),
+  assertReferenceCanonicalOwner(
+    aliasLocation.uri.fsPath,
+    canonicalAliasOwner.fsPath,
   );
   assert.deepEqual(
     readFileSync(aliasLocation.uri.fsPath),
