@@ -3,11 +3,15 @@ import { test } from "node:test";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import {
+  lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
+  rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -18,7 +22,11 @@ import type { Uri, TextDocument } from "vscode";
 import type { validateNavigation } from "../../src/navigation.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
 import { SnapshotIndex, hash } from "../../src/protocol.ts";
-import { observeAnalysis } from "../../src/observations.ts";
+import {
+  fileFingerprint,
+  observationFingerprint,
+  observeAnalysis,
+} from "../../src/observations.ts";
 
 const bundled = await build({
   entryPoints: ["src/navigation.ts"],
@@ -64,6 +72,7 @@ async function fixture() {
     await mkdtemp(join(tmpdir(), "saltbox-navigation-target-alias-")),
   );
   const external = root + "-external";
+  const displacedRoot = root + "-displaced";
   for (const directory of [
     "roles/navsource/tasks",
     "roles/readonly/defaults",
@@ -183,6 +192,7 @@ async function fixture() {
     );
   return {
     root,
+    displacedRoot,
     external,
     report,
     observed,
@@ -197,6 +207,7 @@ async function fixture() {
     },
     cleanup: async () => {
       await rm(root, { recursive: true, force: true });
+      await rm(displacedRoot, { recursive: true, force: true });
       await rm(external, { force: true });
     },
   };
@@ -314,8 +325,40 @@ for (const change of [
           if (filename === join(f.root, owner))
             await f.retarget(join(f.root, "other.yml"));
         });
-      if (change === "root identity")
-        await mkdir(join(f.root, "new-root-entry"));
+      if (change === "root identity") {
+        assert.ok(await f.validate());
+        const observed = f.observed.aliases.get(alias);
+        assert.ok(observed);
+        const originalRoot = await lstat(f.root, { bigint: true });
+        assert.equal(fileFingerprint(originalRoot), observed.rootFingerprint);
+        const entries = await readdir(f.root);
+        // Keep the original directory alive so its identity cannot be reused.
+        // Move the source tree back without replacing its files or alias.
+        await rename(f.root, f.displacedRoot);
+        await mkdir(f.root);
+        assert.notEqual(
+          (await lstat(f.root, { bigint: true })).ino,
+          originalRoot.ino,
+        );
+        for (const entry of entries)
+          await rename(join(f.displacedRoot, entry), join(f.root, entry));
+        assert.equal(await realpath(join(f.root, alias)), observed.filename);
+        assert.equal(await readFile(join(f.root, sourcePath), "utf8"), primary);
+        assert.equal(await readFile(join(f.root, owner), "utf8"), text);
+        assert.equal(
+          observationFingerprint(
+            await lstat(join(f.root, alias), { bigint: true }),
+            await stat(join(f.root, alias), { bigint: true }),
+          ) +
+            ":" +
+            hash(text),
+          observed.fingerprint,
+        );
+        assert.notEqual(
+          fileFingerprint(await lstat(f.root, { bigint: true })),
+          observed.rootFingerprint,
+        );
+      }
       if (change === "unsafe lexical") {
         const unsafe = "roles/readonly/templates/../templates/reverse.yaml";
         const observed = f.observed.aliases.get(alias);
