@@ -1,3 +1,5 @@
+import { posix, win32 } from "node:path";
+
 // Fixed prefixes owned by main.go, cmd/query.go, lint/query.go and
 // lint/discovery.go. Dynamic paths and wrapped errors are never retained.
 const prefixes = [
@@ -86,8 +88,170 @@ const prefixes = [
 const limit = 256 * 1024;
 const unknown = "error_stage_unknown";
 
+// The paths below belong to the original first-definition fixture. Ownership
+// is fixture-declared; these comparisons perform no filesystem inspection.
+const contextKinds = ["defaults", "vars", "tasks", "handlers", "templates"];
+const contextDirectories = [
+  ...["navsource", "navtarget", "resource_navtarget"].flatMap((role) =>
+    contextKinds.map((kind) => ({
+      id: `${role}_${kind}`,
+      relative: `${role === "resource_navtarget" ? "resources/roles/navtarget" : `roles/${role}`}/${kind}`,
+    })),
+  ),
+  ...["group_vars", "host_vars", "inventory", "inventories"].map((name) => ({
+    id: name,
+    relative: name,
+  })),
+];
+
+// Exact text comparisons only. Localized or changed messages stay unknown.
+const errorTexts = [
+  ["Access is denied.", "text_permission"],
+  ["permission denied", "text_permission"],
+  [
+    "The filename, directory name, or volume label syntax is incorrect.",
+    "text_invalid_name",
+  ],
+  ["The directory name is invalid.", "text_non_directory"],
+  ["not a directory", "text_non_directory"],
+  ["The system cannot find the file specified.", "text_missing_file"],
+  ["The system cannot find the path specified.", "text_missing_path"],
+  ["no such file or directory", "text_missing_file_or_path"],
+  ["path escapes from parent", "text_root_escape"],
+  ["too many symlinks", "text_symlink_limit"],
+  ["EvalSymlinks: too many links", "text_symlink_limit"],
+] as const;
+
+interface ContextPattern {
+  segments: Uint8Array[];
+  length: number;
+  directory: string;
+  branch: string;
+  errorTextClass: string;
+  rank: number;
+  exact: boolean;
+}
+
+function contextPatterns(root: unknown, platform: NodeJS.Platform) {
+  if (
+    typeof root !== "string" ||
+    !root.length ||
+    root.length > 4096 ||
+    Buffer.byteLength(root) > 4096 ||
+    /[\p{Cc}\p{Zl}\p{Zp}\uD800-\uDFFF]/u.test(root)
+  )
+    return [];
+  const paths = platform === "win32" ? win32 : posix;
+  if (!paths.isAbsolute(root)) return [];
+  let roots = [root];
+  if (platform === "win32") {
+    const normal = win32.normalize(
+      root.replace(/^\\\\\?\\UNC\\/u, "\\\\").replace(/^\\\\\?\\/u, ""),
+    );
+    if (
+      !/^[a-z]:\\/iu.test(normal) &&
+      !/^\\\\[^\\]+\\[^\\]+(?:\\|$)/u.test(normal)
+    )
+      return [];
+    // Drive case and extended prefixes are lexical variants, not discovered aliases.
+    roots = /^[a-z]:/iu.test(normal)
+      ? [
+          normal[0].toUpperCase() + normal.slice(1),
+          normal[0].toLowerCase() + normal.slice(1),
+        ]
+      : [normal];
+    roots = [
+      ...roots,
+      ...roots.map((value) =>
+        value.startsWith("\\\\")
+          ? "\\\\?\\UNC\\" + value.slice(2)
+          : "\\\\?\\" + value,
+      ),
+    ];
+  }
+  const patterns: ContextPattern[] = [];
+  const texts = errorTexts.map(([text, code]) => ({
+    bytes: Buffer.from(text + "\n"),
+    code,
+  }));
+  for (const knownRoot of new Set(roots)) {
+    for (const directory of contextDirectories) {
+      const absolute = paths.join(knownRoot, directory.relative);
+      const outer = Buffer.from(`saltbox-lint: inspect context ${absolute}: `);
+      function add(
+        segments: Uint8Array[],
+        branch: string,
+        errorTextClass = "text_unknown",
+        rank = 1,
+        exact = false,
+      ) {
+        patterns.push({
+          segments,
+          length: segments.reduce((sum, part) => sum + part.byteLength, 0),
+          directory: directory.id,
+          branch,
+          errorTextClass,
+          rank,
+          exact,
+        });
+      }
+      add([outer], "context_branch_unknown");
+      const resolve = Buffer.from(`resolve source ${absolute}: `);
+      const stat = Buffer.from(
+        `statat ${paths.normalize(directory.relative)}: `,
+      );
+      add([outer, resolve], "context_resolve_source", "text_unknown", 2);
+      add([outer, stat], "context_root_stat", "text_unknown", 2);
+      add(
+        [
+          outer,
+          Buffer.from(`source ${absolute} is outside root ${knownRoot}\n`),
+        ],
+        "context_outside_root",
+        "text_outside_root",
+        3,
+        true,
+      );
+      const operations =
+        platform === "win32"
+          ? ["CreateFile", "readlink"]
+          : ["lstat", "readlink"];
+      const wrapped = operations.map((operation) =>
+        Buffer.from(`${operation} ${absolute}: `),
+      );
+      for (const text of texts) {
+        add([outer, stat, text.bytes], "context_root_stat", text.code, 3, true);
+        // EvalSymlinks also returns fixed errors without an os.PathError wrapper.
+        add(
+          [outer, resolve, text.bytes],
+          "context_resolve_source",
+          text.code,
+          3,
+          true,
+        );
+        for (const operation of wrapped)
+          add(
+            [outer, resolve, operation, text.bytes],
+            "context_resolve_source",
+            text.code,
+            3,
+            true,
+          );
+      }
+    }
+  }
+  return patterns;
+}
+
 /** Classify one complete stderr line without copying or decoding its bytes. */
-export function observeCLIErrorStage() {
+export function observeCLIErrorStage(
+  root?: unknown,
+  platform: NodeJS.Platform = process.platform,
+) {
+  let patterns = contextPatterns(root, platform);
+  const contextAvailable = patterns.length > 0;
+  let contextCandidates = patterns.map((_, index) => index);
+  let contextMatched: number[] = [];
   let candidates = prefixes.map((_, index) => index);
   let matched: number | undefined;
   let bytes = 0;
@@ -151,6 +315,24 @@ export function observeCLIErrorStage() {
         }
         ended = true;
       }
+      contextCandidates = contextCandidates.filter((index) => {
+        const pattern = patterns[index];
+        let offset = bytes;
+        let expected: number | undefined;
+        for (const segment of pattern.segments) {
+          if (offset < segment.byteLength) {
+            expected = segment[offset];
+            break;
+          }
+          offset -= segment.byteLength;
+        }
+        if (expected !== byte) return false;
+        if (bytes + 1 === pattern.length) {
+          contextMatched.push(index);
+          return false;
+        }
+        return true;
+      });
       candidates = candidates.filter((index) => {
         const literal = prefixes[index][0];
         if (literal.charCodeAt(bytes) !== byte) return false;
@@ -184,10 +366,55 @@ export function observeCLIErrorStage() {
         : unknown;
   }
 
+  function context(closed: boolean, exitCode: number | null | undefined) {
+    const fallback = {
+      availability: contextAvailable
+        ? "context_directory_unknown"
+        : "context_comparison_unavailable",
+      ambiguous: false,
+      directory: "directory_unknown",
+      branch: "context_branch_unknown",
+      errorTextClass: "text_unknown",
+    };
+    if (stage(closed, exitCode) !== "error_source_context_inspect")
+      return fallback;
+    const matches = contextMatched
+      .map((index) => patterns[index])
+      .filter((pattern) =>
+        pattern.exact ? bytes === pattern.length : bytes > pattern.length + 1,
+      );
+    const rank = Math.max(0, ...matches.map((pattern) => pattern.rank));
+    const best = matches.filter((pattern) => pattern.rank === rank);
+    if (!best.length) return fallback;
+    const first = best[0];
+    const ambiguous = best.some(
+      (pattern) =>
+        pattern.directory !== first.directory ||
+        pattern.branch !== first.branch ||
+        pattern.errorTextClass !== first.errorTextClass,
+    );
+    if (ambiguous)
+      return {
+        ...fallback,
+        availability: "context_comparison_ambiguous",
+        ambiguous: true,
+      };
+    return {
+      availability: "context_directory_known",
+      ambiguous: false,
+      directory: first.directory,
+      branch: first.branch,
+      errorTextClass: first.errorTextClass,
+    };
+  }
+
   function dispose() {
     candidates = [];
     matched = undefined;
+    contextCandidates = [];
+    contextMatched = [];
+    patterns = [];
     invalid = true;
   }
-  return { observe, stage, dispose };
+  return { observe, stage, context, dispose };
 }

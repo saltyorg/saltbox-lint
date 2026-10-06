@@ -74,6 +74,137 @@ function setup() {
   };
 }
 
+test("context stderr reports only the known directory and exact nested text branch", async () => {
+  const fixture = setup();
+  const observer = observeFirstDefinition(fixture.inputs);
+  const original = new Error("secret_assertion_value");
+  const messages: string[] = [];
+  try {
+    await assert.rejects(
+      withFirstDefinitionObservation(
+        observer,
+        async () => {
+          const pending = fixture.command();
+          assert.equal(pending, fixture.promise);
+          assert.equal(
+            fixture.native.spawn(fixture.inputs.cliPath, fixture.args),
+            fixture.child,
+          );
+          const bytes = Buffer.from(
+            "saltbox-lint: inspect context /fixture/roles/navsource/handlers: resolve source /fixture/roles/navsource/handlers: lstat /fixture/roles/navsource/handlers: permission denied\n",
+          );
+          let seen: unknown;
+          fixture.child.stderr.on("data", (chunk: unknown) => {
+            seen = chunk;
+          });
+          for (const byte of bytes) {
+            const chunk = Buffer.from([byte]);
+            assert.equal(fixture.child.stderr.emit("data", chunk), true);
+            assert.equal(seen, chunk);
+          }
+          assert.equal(fixture.child.stderr.listenerCount("data"), 1);
+          fixture.child.emit("close", 2, null);
+          fixture.resolve([]);
+          await pending;
+          throw original;
+        },
+        (message) => messages.push(message),
+      ),
+      (error: unknown) => error === original,
+    );
+    assert.equal(messages.length, 1);
+    const facts: unknown = JSON.parse(
+      messages[0].slice(messages[0].indexOf(" ") + 1),
+    );
+    assert.ok(facts && typeof facts === "object");
+    const child: unknown = Reflect.get(facts, "child");
+    assert.ok(child && typeof child === "object");
+    assert.equal(
+      Reflect.get(child, "errorStage"),
+      "error_source_context_inspect",
+    );
+    assert.deepEqual(Reflect.get(child, "errorContext"), {
+      availability: "context_directory_known",
+      ambiguous: false,
+      directory: "navsource_handlers",
+      branch: "context_resolve_source",
+      errorTextClass: "text_permission",
+    });
+    assert.doesNotMatch(
+      messages[0],
+      /permission denied|secret_assertion_value|inspect context|lstat /,
+    );
+    assert.equal(Object.hasOwn(fixture.child.stderr, "emit"), false);
+  } finally {
+    observer.dispose();
+    fixture.child.stdout.destroy();
+    fixture.child.stderr.destroy();
+  }
+});
+
+test("Windows context facts distinguish exact root stat and unknown nested paths through the public observer", async () => {
+  for (const [tail, branch, errorTextClass] of [
+    [
+      "statat roles\\navsource\\handlers: The directory name is invalid.",
+      "context_root_stat",
+      "text_non_directory",
+    ],
+    [
+      "resolve source C:\\fixture\\roles\\navsource\\handlers: CreateFile secret_path: Access is denied.",
+      "context_resolve_source",
+      "text_unknown",
+    ],
+    [
+      "statat roles\\navsource\\handlers: private_credential",
+      "context_root_stat",
+      "text_unknown",
+    ],
+  ]) {
+    const fixture = setup();
+    fixture.inputs.root = "C:\\fixture";
+    fixture.args[4] = fixture.inputs.root;
+    const descriptor = Object.getOwnPropertyDescriptor(fixture.native, "spawn");
+    const observer = observeFirstDefinition({
+      ...fixture.inputs,
+      platform: "win32",
+    });
+    try {
+      assert.equal(fixture.command(), fixture.promise);
+      assert.equal(
+        fixture.native.spawn(fixture.inputs.cliPath, fixture.args),
+        fixture.child,
+      );
+      const data = Buffer.from(
+        `saltbox-lint: inspect context C:\\fixture\\roles\\navsource\\handlers: ${tail}\n`,
+      );
+      assert.equal(fixture.child.stderr.emit("data", data), false);
+      data.fill(0);
+      fixture.child.emit("close", 2, null);
+      fixture.resolve([]);
+      await fixture.promise;
+      const facts = observer.snapshot();
+      assert.equal(facts.child?.errorContext.directory, "navsource_handlers");
+      assert.equal(facts.child?.errorContext.branch, branch);
+      assert.equal(facts.child?.errorContext.errorTextClass, errorTextClass);
+      assert.doesNotMatch(
+        JSON.stringify(facts),
+        /secret_path|private_credential|CreateFile|Access is denied/,
+      );
+      assert.equal(fixture.child.stderr.listenerCount("data"), 0);
+      assert.equal(fixture.child.stderr.readableFlowing, null);
+    } finally {
+      observer.dispose();
+      assert.deepEqual(
+        Object.getOwnPropertyDescriptor(fixture.native, "spawn"),
+        descriptor,
+      );
+      assert.equal(Object.hasOwn(fixture.child.stderr, "emit"), false);
+      fixture.child.stdout.destroy();
+      fixture.child.stderr.destroy();
+    }
+  }
+});
+
 test("native stderr exposes only a fixed source-owned error stage after close", async () => {
   const fixture = setup();
   const observer = observeFirstDefinition(fixture.inputs);
@@ -132,6 +263,10 @@ test("native stderr rejects encoded controls and line separators across chunk bo
             Reflect.get(facts.child!, "errorStage"),
             "error_stage_unknown",
             `U+${point.toString(16)} split ${split}`,
+          );
+          assert.equal(
+            facts.child?.errorContext.directory,
+            "directory_unknown",
           );
           assert.doesNotMatch(
             JSON.stringify(facts),

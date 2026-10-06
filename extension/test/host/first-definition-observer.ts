@@ -117,7 +117,10 @@ export function observeFirstDefinition(inputs: Inputs) {
   let retained = 0;
   let installedCommand = false;
   let installedSpawn = false;
-  const errorStage = observeCLIErrorStage();
+  const errorStage = observeCLIErrorStage(
+    inputs.root,
+    inputs.platform ?? process.platform,
+  );
 
   function documentFacts() {
     return {
@@ -429,6 +432,7 @@ export function observeFirstDefinition(inputs: Inputs) {
       child: child && {
         ...child,
         errorStage: errorStage.stage(child.closed, child.exitCode),
+        errorContext: errorStage.context(child.closed, child.exitCode),
       },
       response: responseFacts(),
     };
