@@ -1054,9 +1054,22 @@ export class EditorIntegration implements vscode.Disposable {
       admissionRevision === this.dependencies.admissionRevision(folderKey) &&
       (selected !== undefined ||
         scanRevision === this.scanRevisions.get(folderKey));
-    const retrySelected = () => {
-      if (selected && current())
+    const retry = (root: string) => {
+      if (!current()) return;
+      if (selected) {
         for (const { uri } of selected.values()) this.queueFile(uri, true);
+      } else if (
+        vscode.workspace.isTrusted &&
+        this.roots.get(folderKey) === root &&
+        vscode.workspace.workspaceFolders?.some(
+          (folder) => folder.uri.toString() === folderKey,
+        )
+      ) {
+        // A newer source analysis may have consumed the changed fingerprint
+        // already. Its context event is an echo, but this full scan still owes
+        // complete coverage and must retain the existing queue's full retry.
+        this.queueCoverage(folder);
+      }
     };
     try {
       const root = await this.root(folder);
@@ -1186,7 +1199,7 @@ export class EditorIntegration implements vscode.Disposable {
         this.contextEvent(vscode.Uri.file(path.join(root, ...file.split("/"))));
       if (!current()) return;
       if (observed.changed.size) {
-        retrySelected();
+        retry(root);
         return;
       }
       if (
@@ -1207,7 +1220,7 @@ export class EditorIntegration implements vscode.Disposable {
       ) {
         // Freshness rejects the entire batch, including unchanged peers whose
         // disk events were already consumed by flushFiles.
-        retrySelected();
+        retry(root);
         return;
       }
       for (const relative of unsupported)
