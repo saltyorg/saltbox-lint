@@ -21,6 +21,7 @@ import {
   observeFirstDefinition,
   withFirstDefinitionObservation,
 } from "./first-definition-observer.ts";
+import { navigationEqualityProjection } from "./navigation-equality-projection.ts";
 
 export function assertReferenceCanonicalOwner(
   referenceFilename: string,
@@ -400,7 +401,10 @@ async function runManualImpactFailure(document: vscode.TextDocument) {
     await rm(temporary, { recursive: true, force: true });
   }
 }
-export async function runManualMarkerRefresh(document: vscode.TextDocument) {
+export async function runManualMarkerRefresh(
+  document: vscode.TextDocument,
+  equality?: ReturnType<typeof navigationEqualityProjection>,
+) {
   const workspace = createRequire(__filename)("vscode")
     .workspace as typeof vscode.workspace;
   const descriptor = Object.getOwnPropertyDescriptor(
@@ -551,6 +555,7 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
     // Windows drive letter, while native realpath can retain its casing.
     const contextFilename = await contextPromises.realpath(context.fsPath);
     const contextBytes = await contextPromises.readFile(contextFilename);
+    equality?.restorationHeld(contextBytes);
     const sourceFilename = realpathSync.native(document.uri.fsPath);
     const childProcess = createRequire(__filename)(
       "node:child_process",
@@ -640,8 +645,11 @@ export async function runManualMarkerRefresh(document: vscode.TextDocument) {
       Object.defineProperty(contextPromises, "readFile", readDescriptor);
       Object.defineProperty(childProcess, "spawn", spawnDescriptor);
       try {
-        if (phase.delivered)
+        if (phase.delivered) {
+          equality?.restorationWriteStarted();
           await contextPromises.writeFile(contextFilename, contextBytes);
+          equality?.restorationWriteReturned();
+        }
       } finally {
         await Promise.all(contextJoins);
       }
@@ -919,11 +927,28 @@ export async function runNavigation(): Promise<void> {
   const targetBytes = readFileSync(targetURI.fsPath);
   // Keep the manual control's context writes beside the existing target-save
   // acceptance checks, after the source-only completion and undo assertions.
-  await runManualImpactFailure(document);
-  await runManualMarkerRefresh(document);
-  const openedTarget = await vscode.workspace.openTextDocument(targetURI);
-  assert.equal(openedTarget.isDirty, false);
-  assert.equal(readFileSync(targetURI.fsPath).equals(targetBytes), true);
+  const equality = navigationEqualityProjection(targetBytes);
+  let openedTarget: vscode.TextDocument;
+  try {
+    equality.controlStarted("manual_impact_failure");
+    await runManualImpactFailure(document);
+    equality.controlReturned("manual_impact_failure");
+    equality.controlStarted("manual_marker_refresh");
+    await runManualMarkerRefresh(document, equality);
+    equality.controlReturned("manual_marker_refresh");
+    openedTarget = await vscode.workspace.openTextDocument(targetURI);
+    const targetDirty = openedTarget.isDirty;
+    equality.cleanObserved(!targetDirty);
+    assert.equal(targetDirty, false);
+    const diskBytes = readFileSync(targetURI.fsPath);
+    const matchesOriginal = diskBytes.equals(targetBytes);
+    equality.diskObserved(diskBytes, matchesOriginal);
+    assert.equal(matchesOriginal, true);
+  } catch (error) {
+    return equality.rethrow(error);
+  } finally {
+    equality.dispose();
+  }
   // The preceding control restored disk bytes after an external context write.
   // Resolve this owned clean buffer from disk before the editor-save control.
   await vscode.window.showTextDocument(openedTarget, { preview: false });
