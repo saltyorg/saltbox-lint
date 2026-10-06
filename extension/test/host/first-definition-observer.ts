@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { win32 } from "node:path";
 import { observeCLIErrorStage } from "./cli-error-stage.ts";
+import { parseQuery } from "../../src/navigation-protocol.ts";
+import { sourcePath } from "../../src/protocol.ts";
 
 const captureLimit = 256 * 1024;
 const outputLimit = 16 * 1024;
@@ -58,6 +60,130 @@ function record(value: unknown): Record<string, unknown> | undefined {
 function length(value: unknown): number | undefined {
   return Array.isArray(value) ? count(value.length) : undefined;
 }
+
+// Only normal-mode test-host fixtures and known negative context names receive
+// IDs. Response paths are never converted into dynamic output names.
+const fixtureIDs = new Map<string, string>([
+  ["inventory.yaml", "inventory_yaml"],
+  ["inventory.yml", "inventory_yml"],
+  ["vars.yaml", "vars_yaml"],
+  ["vars.yml", "vars_yml"],
+  ["roles/example/defaults/main.yml", "example_defaults"],
+  ["roles/example/tasks/safe-rule-fixes.yml", "example_safe_rule_fixes"],
+  ["roles/navsource/defaults/main.yml", "navsource_defaults"],
+  ["roles/navsource/tasks/main.yml", "navsource_tasks"],
+  ["roles/navtarget/defaults/main.yml", "navtarget_defaults"],
+  ["roles/navtarget/vars/main.yml", "navtarget_vars"],
+  ["roles/readonly/defaults/reverse.yml", "readonly_reverse_owner"],
+  ["roles/template-origin/tasks/main.yml", "template_origin_tasks"],
+  ["roles/template-origin/templates/alias.j2", "template_origin_alias"],
+  ["reverse-alias.j2", "reverse_alias"],
+  ["standalone.j2", "standalone_template"],
+  ...["config", "config.yaml", "config.j2"].flatMap((basename) =>
+    ["tasks", "templates"].map<[string, string]>((directory) => [
+      `roles/readonly-directory/${directory}/${basename}`,
+      `readonly_directory_${directory === "tasks" ? "task" : "template"}_${basename.replaceAll(".", "_")}`,
+    ]),
+  ),
+  ...[
+    [".saltbox-lint", "marker"],
+    ["closed-config.yaml", "closed_config"],
+    ["config", "config"],
+    ["config.j2", "config_j2"],
+    ["config.yaml", "config_yaml"],
+    ["cross-role-config", "cross_role_config"],
+    ["reverse.yaml", "reverse"],
+    ["watch-config", "watch_config"],
+  ].flatMap<[string, string]>(([basename, id]) => [
+    [`roles/readonly/templates/${basename}`, `readonly_template_${id}`],
+    [`readonly-alias/${basename}`, `readonly_directory_alias_${id}`],
+  ]),
+]);
+
+function fixtureCounts(files: unknown) {
+  const counts = new Map<
+    string,
+    { read: number; missing: number; unavailable: number }
+  >();
+  let unknownFixtureCount = 0;
+  if (Array.isArray(files))
+    for (const value of files) {
+      const file = record(value);
+      const id = typeof file?.path === "string" && fixtureIDs.get(file.path);
+      if (!id) {
+        unknownFixtureCount = count(unknownFixtureCount + 1);
+        continue;
+      }
+      const state = file?.state;
+      if (state !== "read" && state !== "missing" && state !== "unavailable")
+        continue;
+      const entry = counts.get(id) ?? { read: 0, missing: 0, unavailable: 0 };
+      entry[state] = count(entry[state] + 1);
+      counts.set(id, entry);
+    }
+  return {
+    fixtureDependencyCounts: Object.fromEntries(counts),
+    unknownFixtureCount,
+  };
+}
+
+function validSourcePath(value: unknown): value is string {
+  try {
+    sourcePath(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function directoryFailures(source: Record<string, unknown> | undefined) {
+  let invalidDirectories = 0,
+    invalidMembers = 0;
+  const files = new Map<string, unknown>();
+  if (Array.isArray(source?.files))
+    for (const value of source.files) {
+      const file = record(value);
+      if (typeof file?.path === "string") files.set(file.path, file.state);
+    }
+  const directories = new Set<string>();
+  if (Array.isArray(source?.directories))
+    for (const value of source.directories) {
+      const directory = record(value);
+      const relative = directory?.path;
+      const members = directory?.members;
+      if (
+        !validSourcePath(relative) ||
+        directories.has(relative) ||
+        !["directory", "missing", "non-directory"].includes(
+          directory?.state as string,
+        ) ||
+        !Array.isArray(members)
+      )
+        invalidDirectories = count(invalidDirectories + 1);
+      if (typeof relative !== "string") continue;
+      directories.add(relative);
+      const seen = new Set<string>();
+      if (Array.isArray(members))
+        for (const member of members) {
+          if (
+            !validSourcePath(member) ||
+            !member.startsWith(relative + "/") ||
+            seen.has(member) ||
+            files.get(member) !== "read"
+          )
+            invalidMembers = count(invalidMembers + 1);
+          if (typeof member === "string") seen.add(member);
+        }
+      for (const [file, state] of files)
+        if (
+          state === "read" &&
+          file.startsWith(relative + "/") &&
+          !seen.has(file)
+        )
+          invalidMembers = count(invalidMembers + 1);
+    }
+  return { invalidDirectories, invalidMembers };
+}
 function safe(operation: () => void): void {
   try {
     operation();
@@ -87,6 +213,7 @@ export function observeFirstDefinition(inputs: Inputs) {
   let lastResultCount: number | undefined;
   let version: number | undefined;
   let sha256: string | undefined;
+  let sourceSnapshot: string | undefined;
   let offset: number | undefined;
   let firstDocument: ReturnType<typeof documentFacts> | undefined;
   let settledDocument: ReturnType<typeof documentFacts> | undefined;
@@ -188,6 +315,8 @@ export function observeFirstDefinition(inputs: Inputs) {
             if (first) {
               version = inputs.document.version;
               const text = inputs.document.getText();
+              if (Buffer.byteLength(text, "utf8") <= captureLimit)
+                sourceSnapshot = text;
               sha256 = createHash("sha256").update(text).digest("hex");
               offset = Buffer.byteLength(
                 text.slice(0, inputs.document.offsetAt(inputs.position)),
@@ -363,6 +492,22 @@ export function observeFirstDefinition(inputs: Inputs) {
     const sources = dependencies?.sources;
     const firstSource = Array.isArray(sources) ? record(sources[0]) : undefined;
     const hashes = record(value.target_hashes);
+    let queryContractValid: boolean | undefined;
+    if (sourceSnapshot !== undefined && offset !== undefined) {
+      try {
+        parseQuery(
+          text,
+          inputs.root,
+          inputs.source.slice(inputs.root.length + 1).replaceAll("\\", "/"),
+          sourceSnapshot,
+          "definition",
+          offset,
+        );
+        queryContractValid = true;
+      } catch {
+        queryContractValid = false;
+      }
+    }
     return {
       stage: "response_json_object",
       schemaRecognized: value.schema_version === 1,
@@ -390,6 +535,9 @@ export function observeFirstDefinition(inputs: Inputs) {
       dependencyRootMatches: dependencies?.root === inputs.root,
       dependencyRootAvailability: pathAvailability(dependencies?.root),
       dependencyHashMatches: firstSource?.source_sha256 === sha256,
+      ...(queryContractValid === undefined ? {} : { queryContractValid }),
+      ...fixtureCounts(firstSource?.files),
+      ...(queryContractValid === false ? directoryFailures(firstSource) : {}),
     };
   }
   function snapshot() {
@@ -445,6 +593,7 @@ export function observeFirstDefinition(inputs: Inputs) {
     restorations.length = 0;
     chunks = [];
     retained = 0;
+    sourceSnapshot = undefined;
     errorStage.dispose();
   }
   return { snapshot, dispose };

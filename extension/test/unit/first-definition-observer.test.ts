@@ -958,3 +958,216 @@ test("real native output retains ordinary stream behavior and response identity 
   }
   assert.equal(child?.exitCode, 0);
 });
+
+function completeResponse(fixture: ReturnType<typeof setup>) {
+  const sha256 = createHash("sha256")
+    .update(fixture.document.getText())
+    .digest("hex");
+  const target = "roles/navtarget/defaults/main.yml";
+  const location = {
+    path: target,
+    span: { start: 0, end: 19 },
+    line: 1,
+    column: 1,
+    text: "private_declaration",
+  };
+  return {
+    schema_version: 1,
+    root: fixture.inputs.root,
+    path: "source.yml",
+    source_sha256: sha256,
+    operation: "definition",
+    offset: 4,
+    state: "ambiguous",
+    reasons: [],
+    coverage: { complete: false, reasons: ["static-reads-only"] },
+    target_hashes: { [target]: "b".repeat(64) },
+    locations: [{ ...location, kind: "declaration" }],
+    declarations: [
+      {
+        name: "private_name",
+        role: "navtarget",
+        role_path: "roles/navtarget",
+        provenance: "private_provenance",
+        key: location,
+        value: location,
+        comments: [],
+      },
+    ],
+    completions: [],
+    dependencies: {
+      schema_version: 1,
+      root: fixture.inputs.root,
+      generation: "c".repeat(64),
+      complete: true,
+      sources: [
+        {
+          path: "source.yml",
+          source_sha256: sha256,
+          files: [
+            { path: "source.yml", state: "read", sha256 },
+            { path: target, state: "read", sha256: "b".repeat(64) },
+            { path: "inventory.yml", state: "missing" },
+            {
+              path: "roles/readonly-directory/templates/config.yaml",
+              state: "unavailable",
+            },
+          ],
+          identity: [],
+          discovery: [],
+          directories: [
+            {
+              path: "roles/navtarget/defaults",
+              state: "directory",
+              members: [target],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+async function responseProjection(
+  fixture: ReturnType<typeof setup>,
+  response: unknown,
+) {
+  const observer = observeFirstDefinition(fixture.inputs);
+  try {
+    const pending = fixture.command();
+    const wire = Buffer.from(JSON.stringify(response));
+    assert.equal(
+      fixture.native.spawn(fixture.inputs.cliPath, fixture.args),
+      fixture.child,
+    );
+    assert.equal(fixture.child.stdout.emit("data", wire), false);
+    assert.equal(fixture.child.stdout.listenerCount("data"), 0);
+    assert.equal(fixture.child.stdout.readableFlowing, null);
+    wire.fill(0);
+    fixture.child.emit("close", 0, null);
+    fixture.resolve([]);
+    await pending;
+    return observer.snapshot().response;
+  } finally {
+    observer.dispose();
+    assert.equal(Object.hasOwn(fixture.child.stdout, "emit"), false);
+    fixture.child.stdout.destroy();
+    fixture.child.stderr.destroy();
+  }
+}
+
+test("original response projection validates the full query contract and reports fixed fixture counts only", async () => {
+  for (const platform of ["linux", "win32"] as const) {
+    const fixture = setup(platform);
+    const facts = await responseProjection(fixture, completeResponse(fixture));
+    assert.equal(Reflect.get(facts, "queryContractValid"), true);
+    assert.deepEqual(Reflect.get(facts, "fixtureDependencyCounts"), {
+      navtarget_defaults: { read: 1, missing: 0, unavailable: 0 },
+      inventory_yml: { read: 0, missing: 1, unavailable: 0 },
+      readonly_directory_template_config_yaml: {
+        read: 0,
+        missing: 0,
+        unavailable: 1,
+      },
+    });
+    assert.equal(Reflect.get(facts, "unknownFixtureCount"), 1);
+    assert.equal(Object.hasOwn(facts, "invalidDirectories"), false);
+    assert.equal(Object.hasOwn(facts, "invalidMembers"), false);
+    assert.doesNotMatch(
+      JSON.stringify(facts),
+      /private_|secret_|source\.yml|roles\/|inventory\.yml|b{64}|c{64}/,
+    );
+  }
+});
+
+for (const change of [
+  "source digest",
+  "target digest",
+  "root",
+  "offset",
+  "unsafe target",
+  "invalid directory state",
+  "invalid directory member",
+  "duplicate directory member",
+  "omitted directory member",
+  "unknown fixture",
+] as const) {
+  test(`original response projection distinguishes ${change} without exposing input values`, async () => {
+    const fixture = setup();
+    const response = completeResponse(fixture);
+    const source = response.dependencies.sources[0];
+    if (change === "source digest") response.source_sha256 = "d".repeat(64);
+    if (change === "target digest")
+      response.target_hashes["roles/navtarget/defaults/main.yml"] = "d".repeat(
+        64,
+      );
+    if (change === "root") response.root = "/private_root";
+    if (change === "offset") response.offset++;
+    if (change === "unsafe target") source.files[1].path = "../private_file";
+    if (change === "invalid directory state")
+      source.directories[0].state = "private_state";
+    if (change === "invalid directory member")
+      source.directories[0].members[0] = "private_member";
+    if (change === "duplicate directory member")
+      source.directories[0].members.push(source.directories[0].members[0]);
+    if (change === "omitted directory member")
+      source.directories[0].members = [];
+    if (change === "unknown fixture")
+      source.files.push({ path: "private_dependency", state: "unavailable" });
+    const facts = await responseProjection(fixture, response);
+    assert.equal(
+      Reflect.get(facts, "queryContractValid"),
+      change === "unknown fixture",
+    );
+    assert.equal(
+      Reflect.get(facts, "unknownFixtureCount"),
+      change === "unknown fixture" || change === "unsafe target" ? 2 : 1,
+    );
+    if (change !== "unknown fixture") {
+      assert.equal(
+        Reflect.get(facts, "invalidDirectories"),
+        change === "invalid directory state" ? 1 : 0,
+      );
+      assert.equal(
+        Reflect.get(facts, "invalidMembers"),
+        [
+          "unsafe target",
+          "invalid directory member",
+          "duplicate directory member",
+          "omitted directory member",
+        ].includes(change)
+          ? change === "invalid directory member"
+            ? 2
+            : 1
+          : 0,
+      );
+    }
+    assert.doesNotMatch(
+      JSON.stringify(facts),
+      /private_|secret_|source\.yml|roles\/|inventory\.yml|[bcd]{64}/,
+    );
+  });
+}
+
+test("contract validation uses the first original snapshot without another public document read", async () => {
+  const fixture = setup();
+  const response = completeResponse(fixture);
+  const originalText = fixture.document.getText();
+  let reads = 0;
+  fixture.document.getText = () => {
+    assert.equal(reads++, 0);
+    return originalText;
+  };
+  const facts = await responseProjection(fixture, response);
+  assert.equal(Reflect.get(facts, "queryContractValid"), true);
+  assert.equal(reads, 1);
+});
+
+test("oversized original snapshots omit query validity while preserving child capture and fixture bounds", async () => {
+  const fixture = setup();
+  fixture.document.getText = () => "x".repeat(256 * 1024 + 1);
+  const facts = await responseProjection(fixture, completeResponse(fixture));
+  assert.equal(Object.hasOwn(facts, "queryContractValid"), false);
+  assert.equal(Reflect.get(facts, "unknownFixtureCount"), 1);
+  assert.ok(Buffer.byteLength(JSON.stringify(facts)) < 16 * 1024);
+});
