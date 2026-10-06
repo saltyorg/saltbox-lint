@@ -44,6 +44,49 @@ import {
   type LogicalSource,
 } from "./observations.ts";
 
+// Supplied only by the ownership test for its existing invocation. Normal
+// extension callbacks leave this absent; no observation channel is installed.
+export type WritableStage =
+  | "root-refresh-returned"
+  | "snapshot-present"
+  | "snapshot-declined"
+  | "submission-entered"
+  | "submission-refused"
+  | "operation-returned"
+  | "operation-failed"
+  | "operation-cancelled"
+  | "parser-accepted"
+  | "parser-failed"
+  | "final-authority-accepted"
+  | "final-authority-declined";
+export type WritableGuard =
+  | "fixall-document"
+  | "fixall-folder"
+  | "format-preflight"
+  | "snapshot-admission"
+  | "disk-utf8"
+  | "before-submission"
+  | "after-submission"
+  | "format-result-authority"
+  | "format-return-authority"
+  | "fixall-result"
+  | "fixall-write-authority";
+export type WritableStageCollector = (
+  stage: WritableStage,
+  guard?: WritableGuard,
+) => void;
+function writableStage(
+  collect: WritableStageCollector | undefined,
+  stage: WritableStage,
+  guard?: WritableGuard,
+): void {
+  try {
+    collect?.(stage, guard);
+  } catch {
+    // Test evidence must not replace a product result or error.
+  }
+}
+
 export interface CheckStatus {
   state:
     | "eligible"
@@ -1545,38 +1588,60 @@ export class EditorIntegration implements vscode.Disposable {
     document: vscode.TextDocument,
     mode: "canonical" | "lint-fixes",
     token?: vscode.CancellationToken,
+    collect?: WritableStageCollector,
   ): Promise<vscode.TextEdit[]> {
     const result = await this.formattingResult(
       document,
       mode,
       document.version,
       token,
+      collect,
     );
-    return result &&
+    const accepted =
+      result &&
       !token?.isCancellationRequested &&
-      this.writableSnapshotNow(document, result.snapshot)
-      ? result.edits
-      : [];
+      this.writableSnapshotNow(document, result.snapshot);
+    writableStage(
+      collect,
+      accepted ? "final-authority-accepted" : "final-authority-declined",
+      "format-return-authority",
+    );
+    return accepted ? result.edits : [];
   }
   private async formattingResult(
     document: vscode.TextDocument,
     mode: "canonical" | "lint-fixes",
     version: number,
     token?: vscode.CancellationToken,
+    collect?: WritableStageCollector,
   ): Promise<{ snapshot: Snapshot; edits: vscode.TextEdit[] } | undefined> {
-    if (token?.isCancellationRequested || this.isTemplate(document)) return;
+    if (token?.isCancellationRequested || this.isTemplate(document)) {
+      writableStage(collect, "snapshot-declined", "format-preflight");
+      return;
+    }
     const abort = new AbortController();
     const listener = token?.onCancellationRequested(() => abort.abort());
+    let stage: "admission" | "operation" | "parser" | "authority" = "admission";
     try {
       const snapshot = await this.snapshot(document, version);
-      if (!snapshot || abort.signal.aborted || !this.writable(document)) return;
+      if (!snapshot || abort.signal.aborted || !this.writable(document)) {
+        writableStage(collect, "snapshot-declined", "snapshot-admission");
+        return;
+      }
+      writableStage(collect, "snapshot-present");
       if (!document.isDirty && !isUtf8(await readFile(snapshot.filename))) {
         this.output.appendLine(
           `Skipped ${snapshot.path}: invalid UTF-8; editor formatting requires UTF-8.`,
         );
+        writableStage(collect, "submission-refused", "disk-utf8");
         return;
       }
-      if (!this.current(document, snapshot) || abort.signal.aborted) return;
+      if (!this.current(document, snapshot) || abort.signal.aborted) {
+        writableStage(collect, "submission-refused", "before-submission");
+        return;
+      }
+      stage = "operation";
+      writableStage(collect, "submission-entered");
       const wire = await this.formatting.submit(
         document.uri.toString(),
         mode === "canonical" ? 2 : 1,
@@ -1601,58 +1666,112 @@ export class EditorIntegration implements vscode.Disposable {
           ),
         abort.signal,
       );
+      if (abort.signal.aborted) writableStage(collect, "operation-cancelled");
+      else if (wire !== undefined) writableStage(collect, "operation-returned");
+      stage = "authority";
       if (
         wire === undefined ||
         abort.signal.aborted ||
         !this.current(document, snapshot) ||
         !this.writable(document)
-      )
+      ) {
+        writableStage(collect, "submission-refused", "after-submission");
         return;
+      }
+      stage = "parser";
       const plan = parseFormat(wire, snapshot.path, snapshot.text);
+      writableStage(collect, "parser-accepted");
+      stage = "authority";
       if (plan.status === "skipped")
         this.output.appendLine(`Skipped ${snapshot.path}: ${plan.reason}`);
       if (
         !(await this.writableSnapshot(document, snapshot)) ||
         abort.signal.aborted
-      )
+      ) {
+        writableStage(
+          collect,
+          "final-authority-declined",
+          "format-result-authority",
+        );
         return;
+      }
+      writableStage(
+        collect,
+        "final-authority-accepted",
+        "format-result-authority",
+      );
       return { snapshot, edits: textEdits(plan.edits) };
     } catch (error) {
+      if (stage === "operation")
+        writableStage(
+          collect,
+          abort.signal.aborted ? "operation-cancelled" : "operation-failed",
+        );
+      else if (stage === "parser") writableStage(collect, "parser-failed");
       if (!abort.signal.aborted) this.error(error, true);
       return;
     } finally {
       listener?.dispose();
     }
   }
-  async fixAll(uri?: vscode.Uri): Promise<void> {
+  async fixAll(
+    uri?: vscode.Uri,
+    collect?: WritableStageCollector,
+  ): Promise<void> {
     const document = uri
       ? vscode.workspace.textDocuments.find(
           (doc) => doc.uri.toString() === uri.toString(),
         )
       : vscode.window.activeTextEditor?.document;
-    if (!document) return;
+    if (!document) {
+      writableStage(collect, "snapshot-declined", "fixall-document");
+      return;
+    }
     const version = document.version;
     const sourceHash = hash(document.getText());
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)
       ?.uri.toString();
-    if (!folder) return;
+    if (!folder) {
+      writableStage(collect, "snapshot-declined", "fixall-folder");
+      return;
+    }
     await this.roots.refresh(folder);
-    const result = await this.formattingResult(document, "lint-fixes", version);
+    writableStage(collect, "root-refresh-returned");
+    const result = await this.formattingResult(
+      document,
+      "lint-fixes",
+      version,
+      undefined,
+      collect,
+    );
     if (
       !result?.edits.length ||
       !this.writable(document) ||
       document.version !== version ||
       hash(document.getText()) !== sourceHash
-    )
+    ) {
+      writableStage(collect, "final-authority-declined", "fixall-result");
       return;
+    }
     const edit = new vscode.WorkspaceEdit();
     edit.set(document.uri, result.edits);
     if (
       !(await this.writableSnapshot(document, result.snapshot)) ||
       !this.writableSnapshotNow(document, result.snapshot)
-    )
+    ) {
+      writableStage(
+        collect,
+        "final-authority-declined",
+        "fixall-write-authority",
+      );
       return;
+    }
+    writableStage(
+      collect,
+      "final-authority-accepted",
+      "fixall-write-authority",
+    );
     await vscode.workspace.applyEdit(edit);
   }
   change(document: vscode.TextDocument): void {

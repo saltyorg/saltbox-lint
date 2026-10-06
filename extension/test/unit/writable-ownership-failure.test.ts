@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   captureWritableOwnershipPreconditions,
+  collectWritableOwnershipStages,
   reportWritableOwnershipFailure,
 } from "../host/writable-ownership-failure.ts";
 
@@ -19,7 +20,7 @@ function failureRecord(
     (actual) => actual === primary,
   );
   assert.equal(records.length, 1);
-  assert.ok(Buffer.byteLength(records[0]) < 1024);
+  assert.ok(Buffer.byteLength(records[0]) < 4096);
   return JSON.parse(records[0].slice(prefix.length));
 }
 
@@ -323,6 +324,7 @@ test("writable ownership failure reports bounded existing state and preserves th
             buffer_utf8_bytes_equal: "unknown",
             document_closed: "unknown",
             document_dirty: "unknown",
+            invocation_stages: "unknown",
             child_completion: "unknown",
             response_contract_valid: "unknown",
             response_schema_equal: "unknown",
@@ -378,7 +380,7 @@ test("host wiring retains the original readiness deadline, six controls and chil
   assert.match(host, /for \(const retarget of \[false, true\]\)/);
   assert.match(
     host,
-    /const publicPreconditions =\s+mode === "fixAll"\s+\? captureWritableOwnershipPreconditions\(document, uri, bytes\)\s+: undefined;\s+const pending = \(\s+mode === "fixAll" \? editor\.fixAll\(uri\) : editor\.format\(document, mode\)/,
+    /const publicPreconditions =\s+mode === "fixAll"\s+\? captureWritableOwnershipPreconditions\(document, uri, bytes\)\s+: undefined;\s+const pending = \(\s+mode === "fixAll"\s+\? editor\.fixAll\(uri, stages\.collect\)\s+: editor\.format\(document, mode, undefined, stages\.collect\)/,
   );
   // Evidence collection adds no filesystem operation, API request or wait.
   const existingOperations = {
@@ -406,7 +408,10 @@ test("host wiring retains the original readiness deadline, six controls and chil
     "utf8",
   );
   assert.doesNotMatch(
-    helper,
+    helper.replace(
+      /^import type \{ WritableStage, WritableGuard \} from "\.\.\/\.\.\/src\/editor\.ts";\n/,
+      "",
+    ),
     /\b(?:import|require|await|async|process|setTimeout|fetch|addEventListener)\b|\.onDid|\.on\(/,
   );
   assert.match(
@@ -424,4 +429,62 @@ test("host wiring retains the original readiness deadline, six controls and chil
   assert.match(fixture, /err := command\.Run\(\)/);
   assert.match(fixture, /os\.Stdout\.Write\(output\.Bytes\(\)\)/);
   assert.match(fixture, /os\.Exit\(exit\.ExitCode\(\)\)/);
+});
+
+test("invocation collector bounds fixed records and rejects unexpected source values", () => {
+  const collector = collectWritableOwnershipStages();
+  for (let i = 0; i < 40; i++) collector.collect("snapshot-present");
+  assert.equal(collector.records.length, 24);
+  const invalid = collectWritableOwnershipStages();
+  Reflect.apply(invalid.collect, undefined, ["private path", "private hash"]);
+  assert.deepEqual(invalid.records, []);
+  const record = failureRecord({
+    control: "fixAll:retarget",
+    completed: 5,
+    settled: true,
+    acceptedReady: false,
+    stages: collector.records,
+  });
+  assert.equal(record.invocation_stages.length, 24);
+  assert.doesNotMatch(JSON.stringify(record), /private/);
+});
+
+test("failed stage bookkeeping and evidence output preserve the original failure", () => {
+  const collector = collectWritableOwnershipStages();
+  Object.freeze(collector.records);
+  assert.doesNotThrow(() => collector.collect("snapshot-present"));
+  const records = [{ stage: "snapshot-present" as const }];
+  Object.defineProperty(records[0], "stage", {
+    get() {
+      throw new Error("private failure");
+    },
+  });
+  assert.equal(
+    failureRecord({
+      control: "fixAll:retarget",
+      completed: 5,
+      settled: true,
+      acceptedReady: false,
+      stages: records,
+    }).invocation_stages,
+    "unknown",
+  );
+  const primary = new Error("original failure");
+  assert.throws(
+    () =>
+      reportWritableOwnershipFailure(
+        primary,
+        {
+          control: "fixAll:retarget",
+          completed: 5,
+          settled: true,
+          acceptedReady: false,
+          stages: [{ stage: "submission-entered" }],
+        },
+        () => {
+          throw new Error("logger failure");
+        },
+      ),
+    (error) => error === primary,
+  );
 });

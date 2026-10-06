@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { EditorIntegration } from "../../src/editor.ts";
 import {
   captureWritableOwnershipPreconditions,
+  collectWritableOwnershipStages,
   reportWritableOwnershipFailure,
 } from "./writable-ownership-failure.ts";
 import {
@@ -121,12 +122,15 @@ export async function checkPendingWritableOwnership(
         await writeFile(gate, "");
         let settled = false;
         let acceptedReady = false;
+        const stages = collectWritableOwnershipStages();
         const publicPreconditions =
           mode === "fixAll"
             ? captureWritableOwnershipPreconditions(document, uri, bytes)
             : undefined;
         const pending = (
-          mode === "fixAll" ? editor.fixAll(uri) : editor.format(document, mode)
+          mode === "fixAll"
+            ? editor.fixAll(uri, stages.collect)
+            : editor.format(document, mode, undefined, stages.collect)
         ).then((result) => {
           settled = true;
           return result;
@@ -208,6 +212,7 @@ export async function checkPendingWritableOwnership(
             settled,
             acceptedReady,
             publicPreconditions,
+            stages: stages.records,
           });
         } finally {
           await rm(gate, { force: true });

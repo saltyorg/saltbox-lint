@@ -1,3 +1,5 @@
+import type { WritableStage, WritableGuard } from "../../src/editor.ts";
+
 type Mode = "canonical" | "lint-fixes" | "fixAll";
 
 interface PublicPreconditions {
@@ -34,12 +36,76 @@ export function captureWritableOwnershipPreconditions(
   }
 }
 
+const stages: readonly WritableStage[] = [
+  "root-refresh-returned",
+  "snapshot-present",
+  "snapshot-declined",
+  "submission-entered",
+  "submission-refused",
+  "operation-returned",
+  "operation-failed",
+  "operation-cancelled",
+  "parser-accepted",
+  "parser-failed",
+  "final-authority-accepted",
+  "final-authority-declined",
+];
+const guards: readonly WritableGuard[] = [
+  "fixall-document",
+  "fixall-folder",
+  "format-preflight",
+  "snapshot-admission",
+  "disk-utf8",
+  "before-submission",
+  "after-submission",
+  "format-result-authority",
+  "format-return-authority",
+  "fixall-result",
+  "fixall-write-authority",
+];
+type StageRecord = { stage: WritableStage; guard?: WritableGuard };
+export function collectWritableOwnershipStages() {
+  const records: StageRecord[] = [];
+  return {
+    collect(stage: WritableStage, guard?: WritableGuard) {
+      try {
+        if (
+          records.length >= 24 ||
+          !stages.includes(stage) ||
+          (guard !== undefined && !guards.includes(guard))
+        )
+          return;
+        records.push(guard === undefined ? { stage } : { stage, guard });
+      } catch {
+        // A failed collector leaves the invocation unchanged.
+      }
+    },
+    records,
+  };
+}
+function stageRecords(records?: StageRecord[]) {
+  try {
+    if (!Array.isArray(records)) return "unknown";
+    return records
+      .slice(0, 24)
+      .flatMap(({ stage, guard }) =>
+        stages.includes(stage) &&
+        (guard === undefined || guards.includes(guard))
+          ? [guard === undefined ? { stage } : { stage, guard }]
+          : [],
+      );
+  } catch {
+    return "unknown";
+  }
+}
+
 interface WritableOwnershipFailure {
   control: `${Mode}:stable` | `${Mode}:retarget`;
   completed: number;
   settled: boolean;
   acceptedReady: boolean;
   publicPreconditions?: PublicPreconditions;
+  stages?: StageRecord[];
 }
 
 function preconditionRecord(state: WritableOwnershipFailure) {
@@ -88,6 +154,7 @@ export function reportWritableOwnershipFailure(
           pending_settled: state.settled,
           accepted_ready: state.acceptedReady,
           ...preconditionRecord(state),
+          invocation_stages: stageRecords(state.stages),
           child_completion: "unknown",
           response_contract_valid: "unknown",
           response_schema_equal: "unknown",
