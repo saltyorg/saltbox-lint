@@ -8,6 +8,11 @@ checks, actionlint, GoReleaser configuration checks, documentation links and
 generated documentation freshness. Tool caches and ignored build artifacts may
 be populated.
 
+The gate also runs the required, pinned [Go vulnerability scan](vulnerabilities.md)
+for the root module and locally patched Nuri. It requires the Go vulnerability
+database and retains scan/provenance evidence in ignored `bin/vulnerability`.
+Scanner errors and reachable vulnerabilities fail the gate.
+
 The extension's `npm run check` runs TypeScript and the pinned type-aware ESLint
 gate. `npm run lint` checks promise handling and dangerous non-null assertion
 patterns in `extension/src` and its TypeScript tests. The build invokes this

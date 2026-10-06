@@ -218,6 +218,68 @@ func TestNativeGoChecksShareLocalSourceScope(t *testing.T) {
 	}
 }
 
+func TestVulnerabilityGateUsesCanonicalCheckAndRetainsEvidence(t *testing.T) {
+	makefile, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner, err := os.ReadFile("../tools/vulnerability.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pinLine, ok := strings.Cut(string(makefile), "GOVULNCHECK_VERSION := ")
+	if !ok {
+		t.Fatal("scanner pin missing")
+	}
+	pin, _, _ := strings.Cut(pinLine, "\n")
+	if !strings.Contains(string(scanner), `export const scannerVersion = "`+pin+`";`) {
+		t.Fatal("installed and validated scanner pins differ")
+	}
+	for _, line := range []string{
+		"check: tools format-check extension-check docs-check vulnerability-check",
+		"vulnerability-check: $(GOVULNCHECK)",
+		"\tnode --test tools/vulnerability.test.mjs",
+		"\tnode tools/vulnerability.mjs '$(GOVULNCHECK)' bin/vulnerability",
+	} {
+		if !strings.Contains(string(makefile), line+"\n") {
+			t.Errorf("canonical vulnerability gate omits %q", line)
+		}
+	}
+	var ci struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name            string
+				Uses            string
+				Run             string
+				If              string
+				ContinueOnError bool `yaml:"continue-on-error"`
+				With            map[string]string
+			}
+		}
+	}
+	readYAML(t, "../.github/workflows/ci.yml", &ci)
+	gate, artifact := false, false
+	for name, job := range ci.Jobs {
+		for _, step := range job.Steps {
+			if step.Name == "Check, build and package local artifacts" {
+				gate = name == "check" && !step.ContinueOnError && step.If == "" &&
+					strings.Contains(step.Run, "make build release-artifacts") && strings.Contains(step.Run, "make build snapshot")
+			}
+			if step.With["name"] == "vulnerability-evidence" {
+				artifact = name == "check" && !step.ContinueOnError && step.If == "always()" &&
+					strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["path"] == "bin/vulnerability/*" &&
+					step.With["if-no-files-found"] == "error"
+			}
+			if name != "check" && strings.Contains(step.Run, "vulnerability") {
+				t.Fatal("centralized scan unexpectedly repeats outside the canonical check job")
+			}
+		}
+	}
+	if !gate || !artifact {
+		t.Fatalf("required vulnerability check or failure evidence missing: gate=%v artifact=%v", gate, artifact)
+	}
+}
+
 func readYAML(t *testing.T, path string, value any) {
 	t.Helper()
 	data, err := os.ReadFile(path)

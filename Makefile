@@ -4,15 +4,17 @@ SHELL := /bin/bash
 GOLANGCI_VERSION := v2.13.2
 ACTIONLINT_VERSION := v1.7.12
 GORELEASER_VERSION := v2.18.1
+GOVULNCHECK_VERSION := v1.8.0
 TOOLS := $(CURDIR)/bin/tools
 GOLANGCI := $(TOOLS)/golangci-lint-$(GOLANGCI_VERSION)/golangci-lint
 ACTIONLINT := $(TOOLS)/actionlint-$(ACTIONLINT_VERSION)/actionlint
 GORELEASER := $(TOOLS)/goreleaser-$(GORELEASER_VERSION)/goreleaser
+GOVULNCHECK := $(TOOLS)/govulncheck-$(GOVULNCHECK_VERSION)/govulncheck
 VERSION ?= dev
 
-.PHONY: tools catalog check format-check build snapshot extension-check release-artifacts docs-check docs-update rules-update fuzz-check
+.PHONY: tools catalog check format-check build snapshot extension-check release-artifacts docs-check docs-update rules-update fuzz-check vulnerability-check
 
-tools: $(GOLANGCI) $(ACTIONLINT) $(GORELEASER)
+tools: $(GOLANGCI) $(ACTIONLINT) $(GORELEASER) $(GOVULNCHECK)
 
 $(GOLANGCI):
 	GOBIN='$(dir $(GOLANGCI))' go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
@@ -22,6 +24,13 @@ $(ACTIONLINT):
 
 $(GORELEASER):
 	GOBIN='$(dir $(GORELEASER))' go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
+
+$(GOVULNCHECK):
+	GOBIN='$(dir $(GOVULNCHECK))' go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+
+vulnerability-check: $(GOVULNCHECK)
+	node --test tools/vulnerability.test.mjs
+	node tools/vulnerability.mjs '$(GOVULNCHECK)' bin/vulnerability
 
 # Refreshes the tracked embedded catalog through Saltbox's managed Ansible
 # wrappers. Ordinary checks, builds, and snapshots use the frozen catalog.
@@ -52,7 +61,7 @@ docs-check:
 	node tools/docs/platforms.mjs --check
 	node tools/docs/check.mjs
 
-check: tools format-check extension-check docs-check
+check: tools format-check extension-check docs-check vulnerability-check
 	node tools/go-check.mjs tidy
 	node tools/go-check.mjs go vet
 	node tools/go-check.mjs '$(GOLANGCI)' run

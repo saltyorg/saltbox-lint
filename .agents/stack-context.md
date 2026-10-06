@@ -1,7 +1,7 @@
 # Stack Context
 
 Generated: 2026-09-12
-Updated: 2026-10-05 for the type-aware extension correctness gate
+Updated: 2026-10-06 for pinned source vulnerability checks
 
 ## Stack
 - Go 1.27.1; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
@@ -33,9 +33,10 @@ Updated: 2026-10-05 for the type-aware extension correctness gate
 - Native CI source checks run independently on all six release targets; a shared matrix runs packaged acceptance after packaging. `CI required` aggregates all jobs; matrix/release parity is tested. Native lint and extension release tests run everywhere; five named npm phases have failing deadlines and match `make check`. Only Windows arm64 lacks race support.
 - Extension gates (included in make check): npm run build includes TypeScript plus ESLint 10.12.0/typescript-eslint 8.71.0 correctness rules, followed by unit/release suites and format:check. Installed VSIX host tests run on six native CI targets at minimum/current SDKs, with same-architecture Alpine musl probes. Shared CLI probes execute standalone archives and VSIX binaries and verify formatting/fix preservation and idempotence.
 - make check: non-mutating gofmt/module-tidiness checks, vet, pinned golangci-lint and root plus patched Nuri race suites; workflow/example actionlint and GoReleaser validation.
-- Local and native root Go vet/lint/test/race checks share tools/go-check.mjs and current tracked plus nonignored untracked package directories. Go retains target/build constraints and ordinary ignored-directory/nested-module boundaries. Module tidiness uses an ephemeral snapshot of those current source inputs, including embeds/local replacements, so installed developer dependencies cannot change discovery. Published source can use its SOURCE-PROVENANCE.json input inventory without Git. Nuri remains its own explicit three-package suite.
+- Local and native root Go vet/lint/test/race checks share tools/go-check.mjs and tools/go-source.mjs with current tracked plus nonignored untracked package directories. Go retains target/build constraints and ordinary ignored-directory/nested-module boundaries. Module tidiness uses an ephemeral snapshot of those current source inputs, including embeds/local replacements, so installed developer dependencies cannot change discovery. Published source can use its SOURCE-PROVENANCE.json input inventory without Git. Nuri remains its own explicit three-package test suite.
 - make build runs that gate before the CGO-free binary; make snapshot runs it before six native CLI archives, eight VSIXs, checksums and hash-linked corresponding source with vendored modules, Nuri WASM build inputs and Oniguruma source.
 - Packaging uses exact npm 11.19.0, vsce 3.9.2 and yauzl 3.4.0 pins; build tools are development-only. Source/archive/ZIP verification remains separate from editor runtime.
-- Makefile pins golangci-lint v2.13.2, actionlint v1.7.12 and GoReleaser v2.18.1; workflow actions are commit-pinned. Tools live under ignored bin/tools.
+- Makefile pins golangci-lint v2.13.2, actionlint v1.7.12, GoReleaser v2.18.1 and govulncheck v1.8.0; workflow actions are commit-pinned. Tools live under ignored bin/tools.
+- Required vulnerability-check runs source/symbol scans including tests for root packages and five maintained/shipped Nuri roots. It shares one retrieved official database, records response and source identities, fails reachable findings and operational/inconclusive errors, and retains all module/package discoveries. Unversioned main/replaced module advisories fail pending local-source evidence. Canonical Linux CI uploads vulnerability-evidence once; six native suites remain unchanged. Runtime CLI lint stays offline. Goldmark v1.7.17 and x/text v0.39.0 carry the initial reachable advisory fixes.
 - make catalog is the explicit managed-wrapper refresh. Normal gates use embedded data and require no Saltbox Ansible venv.
 - See docs/terminal-rendering-results.md for measured adoption/defer decisions and delivery evidence status.
