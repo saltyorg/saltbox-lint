@@ -19,6 +19,8 @@ require (
 
 replace github.com/frostybee/nuri => ./third_party/nuri
 
+replace github.com/goccy/go-yaml => ./third_party/go-yaml
+
 require (
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect

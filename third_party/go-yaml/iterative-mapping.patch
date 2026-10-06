@@ -1,0 +1,159 @@
+--- a/parser/parser.go
++++ b/parser/parser.go
+@@ -440,6 +440,90 @@
+ }
+ 
+ func (p *parser) parseMap(ctx *context) (*ast.MappingNode, error) {
++	// Each frame represents the old same-column recursive call, but shares one
++	// append-only value slice. Nested mapping values still recurse normally.
++	// Keeping the unwind explicit preserves footer ownership and consumption
++	// when a flow terminator exposes comments to an earlier sibling frame.
++	type frame struct {
++		key   *Token
++		first int
++		head  *ast.CommentGroupNode
++	}
++	keyTk := ctx.currentToken()
++	value, err := p.parseMapEntry(ctx)
++	if err != nil {
++		return nil, err
++	}
++	mapNode, err := newMappingNode(ctx, &Token{Token: value.GetToken()}, false, value)
++	if err != nil {
++		return nil, err
++	}
++	frames := []frame{{key: keyTk}}
++	next := func() *Token {
++		if ctx.isComment() {
++			return ctx.nextNotCommentToken()
++		}
++		return ctx.currentToken()
++	}
++	tk := next()
++	for len(frames) != 0 {
++		current := frames[len(frames)-1]
++		finish := tk.Column() != current.key.Column()
++		if !finish {
++			typ := tk.Type()
++			if ctx.isFlow && typ == token.SequenceEndType {
++				finish = true
++			} else {
++				if !p.isMapToken(tk) {
++					return nil, errors.ErrSyntax("non-map value is specified", tk.RawToken())
++				}
++				cm := p.parseHeadComment(ctx)
++				if typ == token.MappingEndType {
++					ctx.goNext()
++					finish = true
++				} else {
++					key := ctx.currentToken()
++					value, err := p.parseMapEntry(ctx)
++					if err != nil {
++						return nil, err
++					}
++					frames = append(frames, frame{key: key, first: len(mapNode.Values), head: cm})
++					mapNode.Values = append(mapNode.Values, value)
++					tk = next()
++					continue
++				}
++			}
++		}
++		if finish {
++			var footer *ast.CommentGroupNode
++			if ctx.isComment() && current.key.Column() <= ctx.currentToken().Column() {
++				footer = p.parseFootComment(ctx, current.key.Column())
++				if len(mapNode.Values)-current.first == 1 {
++					mapNode.Values[current.first].FootComment = footer
++					footer.SetPath(mapNode.Values[current.first].Key.GetPath())
++					footer = nil
++				} else {
++					footer.SetPath(mapNode.GetPath())
++				}
++			}
++			if len(frames) == 1 {
++				mapNode.FootComment = footer
++				return mapNode, nil
++			}
++			if err := setHeadComment(current.head, mapNode.Values[current.first]); err != nil {
++				return nil, err
++			}
++			if footer != nil {
++				mapNode.Values[len(mapNode.Values)-1].FootComment = footer
++			}
++			frames = frames[:len(frames)-1]
++			tk = ctx.currentToken()
++		}
++	}
++	return mapNode, nil
++}
++
++func (p *parser) parseMapEntry(ctx *context) (*ast.MappingValueNode, error) {
+ 	keyTk := ctx.currentToken()
+ 	if keyTk.Group == nil {
+ 		return nil, errors.ErrSyntax("unexpected map key", keyTk.RawToken())
+@@ -477,64 +561,7 @@
+ 		}
+ 		keyValueNode = node
+ 	}
+-	mapNode, err := newMappingNode(ctx, &Token{Token: keyValueNode.GetToken()}, false, keyValueNode)
+-	if err != nil {
+-		return nil, err
+-	}
+-	var tk *Token
+-	if ctx.isComment() {
+-		tk = ctx.nextNotCommentToken()
+-	} else {
+-		tk = ctx.currentToken()
+-	}
+-	for tk.Column() == keyTk.Column() {
+-		typ := tk.Type()
+-		if ctx.isFlow && typ == token.SequenceEndType {
+-			// [
+-			// key: value
+-			// ] <=
+-			break
+-		}
+-		if !p.isMapToken(tk) {
+-			return nil, errors.ErrSyntax("non-map value is specified", tk.RawToken())
+-		}
+-		cm := p.parseHeadComment(ctx)
+-		if typ == token.MappingEndType {
+-			// a: {
+-			//  b: c
+-			// } <=
+-			ctx.goNext()
+-			break
+-		}
+-		node, err := p.parseMap(ctx)
+-		if err != nil {
+-			return nil, err
+-		}
+-		if len(node.Values) != 0 {
+-			if err := setHeadComment(cm, node.Values[0]); err != nil {
+-				return nil, err
+-			}
+-		}
+-		mapNode.Values = append(mapNode.Values, node.Values...)
+-		if node.FootComment != nil {
+-			mapNode.Values[len(mapNode.Values)-1].FootComment = node.FootComment
+-		}
+-		tk = ctx.currentToken()
+-	}
+-	if ctx.isComment() {
+-		if keyTk.Column() <= ctx.currentToken().Column() {
+-			// If the comment is in the same or deeper column as the last element column in map value,
+-			// treat it as a footer comment for the last element.
+-			if len(mapNode.Values) == 1 {
+-				mapNode.Values[0].FootComment = p.parseFootComment(ctx, keyTk.Column())
+-				mapNode.Values[0].FootComment.SetPath(mapNode.Values[0].Key.GetPath())
+-			} else {
+-				mapNode.FootComment = p.parseFootComment(ctx, keyTk.Column())
+-				mapNode.FootComment.SetPath(mapNode.GetPath())
+-			}
+-		}
+-	}
+-	return mapNode, nil
++	return keyValueNode, nil
+ }
+ 
+ func (p *parser) validateMapKeyValueNextToken(ctx *context, keyTk, tk *Token) error {

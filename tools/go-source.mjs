@@ -5,6 +5,47 @@ import { ownedCommand } from "../extension/scripts/owned-command.mjs";
 
 const root = process.cwd();
 
+// This replacement retains its complete public API and production packages.
+// Ordinary root package discovery keeps nested modules separate; maintained
+// modules receive their own canonical test, vet, lint, tidy and scanner scope.
+export function maintainedModules(files) {
+  const directory = "third_party/go-yaml";
+  if (!files.includes(`${directory}/go.mod`)) return [];
+  const directories = new Set();
+  for (const file of files) {
+    if (!file.startsWith(`${directory}/`) || !file.endsWith(".go")) continue;
+    const parts = file
+      .slice(directory.length + 1)
+      .split("/")
+      .slice(0, -1);
+    if (
+      parts.some(
+        (part) =>
+          part === "testdata" ||
+          part === "vendor" ||
+          part.startsWith(".") ||
+          part.startsWith("_"),
+      )
+    )
+      continue;
+    if (
+      parts.some((_, index) =>
+        existsSync(join(directory, ...parts.slice(0, index + 1), "go.mod")),
+      )
+    )
+      continue;
+    directories.add(parts.length ? `./${parts.join("/")}` : ".");
+  }
+  return [
+    {
+      directory,
+      name: "go-yaml",
+      path: "github.com/goccy/go-yaml",
+      packages: [...directories].sort(),
+    },
+  ];
+}
+
 function capture(command, args, signal, env = process.env) {
   return ownedCommand(command, args, {
     phase: "project Go source discovery",

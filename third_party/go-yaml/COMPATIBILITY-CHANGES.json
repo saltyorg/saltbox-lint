@@ -1,0 +1,17 @@
+{
+  "decode.go": {
+    "before": "6feae18f43474f9ce2e326ffcb728450e81099d5cdb86de54b14786cca1ee054",
+    "after": "cb42cd3b0f0c232e3691c578d42db23683c5927e1117216bbf00c10049bc012c",
+    "reason": "behavior-preserving Go1.27 lint compatibility"
+  },
+  "encode.go": {
+    "before": "319423c333cc822c88b2e93b4ffe9944b79c6173deab96f927757c2630309e1c",
+    "after": "b430a1ee1ac536012a03c8fa0197d332dae6f5f7e79b1d8da45f4fa4d0c01a2a",
+    "reason": "behavior-preserving Go1.27 lint compatibility"
+  },
+  "parser/token.go": {
+    "before": "09f59077b4d9a634fd2bad85328509d62713bc1facf8d76f1f56a868125cb3e4",
+    "after": "b7893a696cd87cdd4a9240e5cacfb944c39a795b8489d73ab3e789e04c97f7a4",
+    "reason": "behavior-preserving Go1.27 lint compatibility"
+  }
+}

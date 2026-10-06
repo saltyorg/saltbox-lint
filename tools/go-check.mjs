@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ownedCommand } from "../extension/scripts/owned-command.mjs";
 
-import { sourceFiles, packages } from "./go-source.mjs";
+import { sourceFiles, packages, maintainedModules } from "./go-source.mjs";
 
 const root = process.cwd();
 const interruption = new AbortController();
@@ -35,7 +35,16 @@ async function tidy(files) {
       mkdirSync(dirname(target), { recursive: true });
       cpSync(file, target);
     }
-    return await run("go", ["mod", "tidy", "-diff"], snapshot);
+    let result = await run("go", ["mod", "tidy", "-diff"], snapshot);
+    for (const module of maintainedModules(files)) {
+      if (result) break;
+      result = await run(
+        "go",
+        ["mod", "tidy", "-diff"],
+        join(snapshot, module.directory),
+      );
+    }
+    return result;
   } finally {
     rmSync(snapshot, { recursive: true, force: true });
   }
@@ -46,13 +55,24 @@ try {
   if (!command)
     throw new Error("Usage: node tools/go-check.mjs tidy | COMMAND ARGS...");
   const files = await sourceFiles(interruption.signal);
-  process.exitCode =
+  let result =
     command === "tidy"
       ? await tidy(files)
       : await run(command, [
           ...args,
           ...(await packages(files, interruption.signal)),
         ]);
+  if (command !== "tidy") {
+    for (const module of maintainedModules(files)) {
+      if (result) break;
+      result = await run(
+        command,
+        [...args, ...module.packages],
+        join(root, module.directory),
+      );
+    }
+  }
+  process.exitCode = result;
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

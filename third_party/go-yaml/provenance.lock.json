@@ -1,0 +1,17 @@
+{
+  "module": "github.com/goccy/go-yaml",
+  "version": "v1.19.2",
+  "tagCommit": "92bc79cb5f685e999ad131473168fc45215d12d9",
+  "moduleSum": "h1:PmFC1S6h8ljIz6gMRBopkjP1TVT7xuwrButHID66PoM=",
+  "license": "MIT",
+  "licenseSHA256": "43fe703ea9ebe27f0a6e5d2a1f6dd094fbe324251c743498f3ec19986d7349cd",
+  "upstreamParserSHA256": "d340597d7b4de92f47742416d022b03de990d7bde8b9d30e62457a8ddac112d2",
+  "originalInputs": "UPSTREAM-SHA256.json",
+  "formatChanges": "FORMAT-CHANGES.json",
+  "intentionalPatch": "parser/parser.go",
+  "scope": "complete production packages and public API; upstream ast/lexer/parser/printer/token tests and parser/testdata only",
+  "maintenance": "Remove the replacement when a published upstream release provides equivalent iterative sibling accumulation and passes the preservation and allocation regressions. Compare every upstream update against the recorded original source inventory and this patch.",
+  "compatibilityChanges": "COMPATIBILITY-CHANGES.json",
+  "intentionalPatchDiff": "iterative-mapping.patch",
+  "compatibilityPatchDiff": "lint-compatibility.patch"
+}

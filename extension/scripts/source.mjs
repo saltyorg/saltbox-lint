@@ -94,6 +94,11 @@ export async function createSource() {
     );
   for (const path of ["LICENSE", "THIRD-PARTY-NOTICE"])
     copy(join(root, "third_party/nuri", path), join(licenses, "nuri", path));
+  for (const path of ["LICENSE", "THIRD-PARTY-NOTICE", "provenance.lock.json"])
+    copy(
+      join(root, "third_party/go-yaml", path),
+      join(licenses, "go-yaml", path),
+    );
   copy(join(deps, "onig-6.9.10/COPYING"), join(licenses, "oniguruma-COPYING"));
   copy(
     join(run("go", ["env", "GOROOT"]).trim(), "LICENSE"),

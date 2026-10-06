@@ -1,0 +1,5 @@
+github.com/goccy/go-yaml v1.19.2
+Copyright (c) 2019 goccy
+MIT License, reproduced in LICENSE.
+Published tag commit: 92bc79cb5f685e999ad131473168fc45215d12d9
+Saltbox Lint maintains the local parser correction described in PATCHES.md.

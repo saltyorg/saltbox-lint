@@ -186,6 +186,18 @@ func TestGoSourceArchiveScope(t *testing.T) {
 	}
 }
 
+func TestGoChecksIncludeUnimportedMaintainedReplacement(t *testing.T) {
+	f := newGoScopeFixture(t)
+	f.write("third_party/go-yaml/go.mod", "module github.com/goccy/go-yaml\n\ngo 1.27.1\n")
+	f.write("third_party/go-yaml/yaml.go", "package yaml\n")
+	f.write("third_party/go-yaml/unimported/contract_test.go", "package unimported\nimport \"testing\"\nfunc TestContract(t *testing.T) { t.Fatal(\"maintained module contract failure\") }\n")
+	f.checkOK("tidy")
+	out, err := f.check("go", "test")
+	if err == nil || !strings.Contains(string(out), "maintained module contract failure") {
+		t.Fatalf("unimported maintained test must join root gate: %v\n%s", err, out)
+	}
+}
+
 type goScopeFixture struct {
 	t        *testing.T
 	root     string
