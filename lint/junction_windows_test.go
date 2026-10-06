@@ -1,10 +1,13 @@
 package lint
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,12 +55,20 @@ func junction(t *testing.T, name, target string) {
 
 func TestWindowsJunctionReferenceContext(t *testing.T) {
 	root := t.TempDir()
+	gitTest(t, root, "init", "-q")
 	text := "# 😀é\r\n- debug: {msg: \"😀 {{ lookup('role_var', '_port', role='navtarget') }}\"}\r\n"
 	filename := putFile(t, root, "roles/navsource/tasks/main.yml", text)
 	putFile(t, root, "roles/navtarget/defaults/main.yml", "navtarget_role_port: 1234\nnavtarget_name: navalias\nnavalias_port: 4321\n")
 	putFile(t, root, "roles/navtarget/vars/main.yml", "navtarget_role_port: 5678\n")
 	putFile(t, root, "roles/readonly-directory/tasks/config.yaml", "{{ value }}")
+	template := "{{ lookup('role_var', '_port', role='navtarget') }}"
+	putFile(t, root, "roles/readonly-directory/tasks/config", template)
+	putFile(t, root, "roles/readonly-directory/templates/config", template)
+	gitTest(t, root, "add", ".")
 	alias := filepath.Join(root, "roles/readonly-directory/templates")
+	if err := os.RemoveAll(alias); err != nil {
+		t.Fatal(err)
+	}
 	junction(t, alias, filepath.Join(root, "roles/readonly-directory/tasks"))
 
 	result, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: "definition", Offset: strings.Index(text, "_port") + 2})
@@ -70,6 +81,22 @@ func TestWindowsJunctionReferenceContext(t *testing.T) {
 	for _, path := range []string{"roles/navtarget/defaults/main.yml", "roles/navtarget/vars/main.yml"} {
 		if _, found := result.TargetHashes[path]; !found {
 			t.Fatalf("missing declaration target %s", path)
+		}
+	}
+	references, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: "references", Offset: strings.Index(text, "_port") + 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lexical := "roles/readonly-directory/templates/config"
+	if !slices.ContainsFunc(references.Locations, func(location QueryLocation) bool { return location.Path == lexical && location.Kind == "read" }) {
+		t.Fatal("junction lost extensionless lexical reference")
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(template)))
+	for _, name := range []string{lexical, "roles/readonly-directory/tasks/config"} {
+		if !slices.ContainsFunc(references.Dependencies.Sources[0].Files, func(file DependencyFile) bool {
+			return file.Path == name && file.State == "read" && file.SHA256 == digest
+		}) {
+			t.Fatalf("junction lost physical read observation: %s", name)
 		}
 	}
 	if got, err := os.ReadFile(filename); err != nil || string(got) != text {

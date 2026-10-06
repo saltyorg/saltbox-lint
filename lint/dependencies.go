@@ -169,11 +169,33 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 				}
 			}
 		}
+		// A template spelling can admit an extensionless physical owner which
+		// has no separate parser source. Export the owner of its already opened
+		// read so navigation can retain both identities without inventing a
+		// source or replacing a conflicting canonical source observation.
+		for _, file := range sortedKeys(files) {
+			found := p.Sources[file]
+			if found == nil || found.Kind != Template || found.diskIdentity == nil {
+				continue
+			}
+			owner := found.diskIdentity.path
+			files[owner] = true
+			if _, exists := hashes[owner]; !exists {
+				hashes[owner] = hashes[file]
+			}
+			for i := range record.Directories {
+				directory := &record.Directories[i]
+				if strings.HasPrefix(owner, directory.Path+"/") && !slices.Contains(directory.Members, owner) {
+					directory.Members = append(directory.Members, owner)
+					slices.Sort(directory.Members)
+				}
+			}
+		}
 		for _, file := range sortedKeys(files) {
 			dep := DependencyFile{Path: file, State: "unavailable"}
-			if found := p.Sources[file]; found != nil {
+			if digest, found := hashes[file]; found {
 				dep.State = "read"
-				dep.SHA256 = hashes[file]
+				dep.SHA256 = digest
 			}
 			if dep.State != "read" {
 				if _, err := ownedSourcePath(p.Root, filepath.Join(p.Root, filepath.FromSlash(file))); errors.Is(err, fs.ErrNotExist) {

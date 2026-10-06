@@ -284,3 +284,59 @@ func TestQueryNestedLiteralLookup(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryReferencesRetainsExtensionlessTemplateAliasOwner(t *testing.T) {
+	root := t.TempDir()
+	gitTest(t, root, "init", "-q")
+	putFile(t, root, ".saltbox-lint", "")
+	text := "# 😀é\r\n- debug: {msg: \"😀 {{ lookup('role_var', '_port', role='navtarget') }}\"}\r\n"
+	filename := putFile(t, root, "roles/navsource/tasks/main.yml", text)
+	putFile(t, root, "roles/navtarget/defaults/main.yml", "navtarget_role_port: 1234\n")
+	putFile(t, root, "roles/readonly/tasks/main.yml", "[]\n")
+	owner := "roles/readonly/tasks/config"
+	alias := "roles/readonly/templates/config"
+	template := " \t😀\r\n{{ lookup('role_var', '_port', role='navtarget') }}  "
+	ownerFilename := putFile(t, root, owner, template)
+	putFile(t, root, alias, template)
+	gitTest(t, root, "add", ".")
+	aliasDirectory := filepath.Dir(filepath.Join(root, alias))
+	if err := os.RemoveAll(aliasDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(ownerFilename), aliasDirectory); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Query(t.Context(), QueryRequest{Root: root, Filename: filename, Source: []byte(text), Operation: "references", Offset: strings.Index(text, "_port") + 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(result.Locations, func(location QueryLocation) bool { return location.Kind == "read" && location.Path == alias }) {
+		t.Fatal("missing admitted lexical template reference")
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(template)))
+	for _, name := range []string{owner, alias} {
+		if !slices.ContainsFunc(result.Dependencies.Sources[0].Files, func(file DependencyFile) bool {
+			return file.Path == name && file.State == "read" && file.SHA256 == digest
+		}) {
+			t.Fatalf("missing exact template owner observation: %s", name)
+		}
+	}
+	project, err := Load(t.Context(), Options{Root: root, Paths: []string{root}, StdinFilename: filename, Stdin: []byte(text), IncludeAnalysis: true, referenceContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Sources[owner] != nil {
+		t.Fatal("physical observation fabricated an unclassified parser source")
+	}
+	for _, directory := range result.Dependencies.Sources[0].Directories {
+		if strings.HasPrefix(owner, directory.Path+"/") && !slices.Contains(directory.Members, owner) {
+			t.Fatal("physical read missing from observed directory members")
+		}
+	}
+	if _, found := result.TargetHashes[owner]; found {
+		t.Fatal("physical observation fabricated an unparsed reference target")
+	}
+	if got, err := os.ReadFile(ownerFilename); err != nil || string(got) != template {
+		t.Fatal("query changed template bytes")
+	}
+}

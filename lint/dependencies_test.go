@@ -173,3 +173,39 @@ func TestEscapedNegativeDependencyIsUnavailable(t *testing.T) {
 	}
 	t.Fatal("missing negative dependency")
 }
+
+func TestTemplateAliasDependencyPreservesConflictingCanonicalOverlay(t *testing.T) {
+	root := t.TempDir()
+	gitTest(t, root, "init", "-q")
+	owner := "roles/demo/defaults/main.yml"
+	alias := "roles/demo/templates/main.yml"
+	saved := "demo_role_value: old\n"
+	overlay := []byte("demo_role_value: new\n")
+	filename := putFile(t, root, owner, saved)
+	putFile(t, root, alias, saved)
+	gitTest(t, root, "add", ".")
+	directory := filepath.Dir(filepath.Join(root, alias))
+	if err := os.RemoveAll(directory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(filename), directory); err != nil {
+		t.Fatal(err)
+	}
+	project, err := Load(t.Context(), Options{Root: root, Paths: []string{filename}, StdinFilename: filename, Stdin: overlay, IncludeAnalysis: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observations := map[string]DependencyFile{}
+	for _, file := range project.Dependencies.Sources[0].Files {
+		observations[file.Path] = file
+	}
+	if observations[owner].SHA256 != fmt.Sprintf("%x", sha256.Sum256(overlay)) || observations[alias].SHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(saved))) {
+		t.Fatal("alias replaced conflicting canonical overlay observation")
+	}
+	if observations[owner].State != "read" || observations[alias].State != "read" {
+		t.Fatal("exact source reads disappeared")
+	}
+	if got, err := os.ReadFile(filename); err != nil || string(got) != saved {
+		t.Fatal("dependency capture changed saved source")
+	}
+}
