@@ -6,6 +6,7 @@ import ts from "typescript";
 import {
   createLiveControlEvidence,
   captureLiveInvocationFailure,
+  captureLivePendingInvocations,
   noteLiveOperation,
   noteLiveControlStage,
   reportLiveControlFailure,
@@ -298,6 +299,10 @@ test("collector faults and reporter faults preserve actual primary failure ident
       controlledInvocations: new Map(),
       overflow: false,
       captureLiveInvocationFailure,
+      captureLivePendingInvocations,
+      primaryFilenames: new Map(),
+      small: {},
+      heavy: {},
       evidence,
       fixtureRecords: [],
       checkpoints: [],
@@ -307,6 +312,7 @@ test("collector faults and reporter faults preserve actual primary failure ident
         counts: { fixtures: number; checkpoints: number },
         _write: undefined,
         invocations: ReturnType<typeof captureLiveInvocationFailure>,
+        pendingInvocations: ReturnType<typeof captureLivePendingInvocations>,
       ) =>
         reportLiveControlFailure(
           state,
@@ -315,6 +321,7 @@ test("collector faults and reporter faults preserve actual primary failure ident
             throw new Error("report failed");
           },
           invocations,
+          pendingInvocations,
         ),
     };
     await assert.rejects(
@@ -563,5 +570,482 @@ test("invocation evidence is capped, fault tolerant and strict about fields and 
     const invalid = structuredClone(record);
     mutate(invalid);
     assert.throws(() => validateLiveControlFailureRecord(invalid));
+  }
+});
+
+function pendingContext(evidence = createLiveControlEvidence()) {
+  const small = {};
+  const heavy = {};
+  return {
+    evidence,
+    small,
+    heavy,
+    primaryFilenames: new Map([
+      [small, "/private/small"],
+      [heavy, "/private/heavy"],
+    ]),
+  };
+}
+function pendingRecord(
+  value: ReturnType<typeof captureLivePendingInvocations>,
+) {
+  const messages: string[] = [];
+  reportLiveControlFailure(
+    createLiveControlEvidence(),
+    { fixtures: 2, checkpoints: 13 },
+    (message) => messages.push(message),
+    "unknown",
+    value,
+  );
+  assert.equal(messages.length, 1);
+  assert.ok(Buffer.byteLength(messages[0]) <= liveControlEvidenceLimit);
+  assert.doesNotMatch(
+    messages[0],
+    /private|pid|signal|exitCode|sha256|revision/,
+  );
+  const record: unknown = JSON.parse(
+    messages[0].slice("SALTBOX_LIVE_CONTROL_FAILURE ".length),
+  );
+  validateLiveControlFailureRecord(record);
+  return record;
+}
+
+test("failure projection retains selected closed invocation and later unclosed successor without inferring action success", () => {
+  const context = pendingContext();
+  noteLiveOperation(context.evidence, "manual", "entered");
+  noteLiveOperation(context.evidence, "manual", "deadline");
+  const selected = {
+    primary: "/private/heavy",
+    started: 10,
+    closed: 30,
+    cancelled: true,
+  };
+  const successor = { primary: "/private/heavy", started: 40 };
+  const value = captureLivePendingInvocations(
+    [{ primary: "/private/small", started: 1, closed: 2 }, selected, successor],
+    new Map([["manual", selected]]),
+    false,
+    context,
+    () => 15040,
+  );
+  assert.deepEqual(value, {
+    selected: 2,
+    suppressed: 0,
+    entries: [
+      {
+        ordinal: 2,
+        primary: "context-heavy",
+        controls: ["manual"],
+        elapsedMs: 15030,
+        close: "observed",
+        cancelled: true,
+      },
+      {
+        ordinal: 3,
+        primary: "context-heavy",
+        controls: [],
+        elapsedMs: 15000,
+        close: "unknown",
+        cancelled: "unknown",
+      },
+    ],
+  });
+  const record = pendingRecord(value);
+  assert.ok(record.operations.every((item) => item.completion === "unknown"));
+});
+
+test("failure projection uses one capture clock and no clock or path-derived category values", () => {
+  const context = pendingContext();
+  let reads = 0;
+  const calls = [
+    { primary: "/private/small", started: 10, cancelled: false },
+    { primary: "/private/heavy", started: 20 },
+    { primary: "/private/unrecognized", started: 30 },
+    { started: 40 },
+  ];
+  const value = captureLivePendingInvocations(
+    calls,
+    new Map(),
+    false,
+    context,
+    () => {
+      reads++;
+      return 50.9;
+    },
+  );
+  assert.ok(value !== "unknown");
+  assert.equal(reads, 1);
+  assert.deepEqual(
+    value.entries.map((item) => item.primary),
+    ["small", "context-heavy", "unknown", "unknown"],
+  );
+  assert.deepEqual(
+    value.entries.map((item) => item.elapsedMs),
+    [40, 30, 20, 10],
+  );
+  assert.deepEqual(
+    value.entries.map((item) => item.cancelled),
+    [false, "unknown", "unknown", "unknown"],
+  );
+  assert.equal(value.selected, "unknown");
+  pendingRecord(value);
+  assert.deepEqual(calls, [
+    { primary: "/private/small", started: 10, cancelled: false },
+    { primary: "/private/heavy", started: 20 },
+    { primary: "/private/unrecognized", started: 30 },
+    { started: 40 },
+  ]);
+});
+
+test("unheld or unentered selection stays unknown and closed nonselected records are omitted", () => {
+  const context = pendingContext();
+  const closed = { started: 10, closed: 20 };
+  const pending = { started: 30 };
+  for (const evidence of [context.evidence, undefined]) {
+    const value = captureLivePendingInvocations(
+      [closed, pending],
+      new Map([["manual", closed]]),
+      false,
+      { ...context, evidence },
+      () => 40,
+    );
+    assert.ok(value !== "unknown");
+    assert.equal(value.selected, "unknown");
+    assert.deepEqual(
+      value.entries.map((item) => item.ordinal),
+      [2],
+    );
+  }
+  noteLiveOperation(context.evidence, "manual", "deadline");
+  const missing = captureLivePendingInvocations(
+    [pending],
+    new Map([["manual", closed]]),
+    false,
+    context,
+    () => 40,
+  );
+  assert.ok(missing !== "unknown");
+  assert.equal(missing.selected, "unknown");
+  assert.deepEqual(
+    missing.entries.map((item) => item.ordinal),
+    [1],
+  );
+  const empty = captureLivePendingInvocations(
+    [],
+    new Map(),
+    false,
+    context,
+    () => 40,
+  );
+  assert.deepEqual(empty, { selected: "unknown", suppressed: 0, entries: [] });
+});
+
+test("selected invocation precedes up to sixteen entries and truncation remains explicit within original byte cap", () => {
+  const context = pendingContext();
+  noteLiveOperation(context.evidence, "manual", "deadline");
+  const calls = Array.from({ length: 256 }, () => ({
+    primary: "/private/heavy",
+    started: 0,
+    closed: undefined,
+  }));
+  const selected = calls[255];
+  const controls = new Map(
+    liveControlNames.map((control) => [control, selected]),
+  );
+  const value = captureLivePendingInvocations(
+    calls,
+    controls,
+    false,
+    context,
+    () => Number.MAX_SAFE_INTEGER,
+  );
+  assert.ok(value !== "unknown");
+  assert.equal(value.selected, 256);
+  assert.equal(value.entries.length, 16);
+  assert.equal(value.suppressed, 240);
+  assert.deepEqual(
+    value.entries.map((item) => item.ordinal),
+    [256, ...Array.from({ length: 15 }, (_, index) => index + 1)],
+  );
+  assert.deepEqual(value.entries[0].controls, [...liveControlNames]);
+  const record = pendingRecord(value);
+  for (const name of liveOperationNames) {
+    const count = record.operations.find((item) => item.operation === name)!;
+    count.entered = count.completed = liveOperationCountLimit;
+    count.completion = "observed";
+  }
+  const messages: string[] = [];
+  const evidence = createLiveControlEvidence()!;
+  evidence.operations = record.operations.map(({ entered, completed }) => ({
+    entered,
+    completed,
+  }));
+  reportLiveControlFailure(
+    evidence,
+    { fixtures: 2, checkpoints: 13 },
+    (message) => messages.push(message),
+    captureLiveInvocationFailure(calls, controls, false),
+    value,
+  );
+  assert.equal(messages.length, 1);
+  assert.ok(Buffer.byteLength(messages[0]) <= liveControlEvidenceLimit);
+});
+
+test("saturated counts and faulty collectors stay unknown without mutating held records", () => {
+  const context = pendingContext();
+  const calls = [{ started: 0 }];
+  let reads = 0;
+  const clock = () => {
+    reads++;
+    throw new Error("private clock");
+  };
+  assert.equal(
+    captureLivePendingInvocations(calls, new Map(), true, context, clock),
+    "unknown",
+  );
+  assert.equal(
+    captureLivePendingInvocations(
+      Array.from({ length: 257 }, () => calls[0]),
+      new Map(),
+      false,
+      context,
+      clock,
+    ),
+    "unknown",
+  );
+  assert.equal(reads, 0);
+  assert.equal(
+    captureLivePendingInvocations(calls, new Map(), false, context, clock),
+    "unknown",
+  );
+  assert.equal(reads, 1);
+  for (const fault of [
+    () =>
+      captureLivePendingInvocations(
+        [
+          {
+            get started(): number {
+              throw new Error("private started");
+            },
+          },
+        ],
+        new Map(),
+        false,
+        context,
+        () => 1,
+      ),
+    () =>
+      captureLivePendingInvocations(
+        calls,
+        new Map(),
+        false,
+        {
+          ...context,
+          primaryFilenames: new (class extends Map<object, string> {
+            override get(): never {
+              throw new Error("private identity");
+            }
+          })(),
+        },
+        () => 1,
+      ),
+    () =>
+      captureLivePendingInvocations(
+        calls,
+        new Map(),
+        false,
+        {
+          ...context,
+          evidence: {
+            ...createLiveControlEvidence()!,
+            get deadline(): never {
+              throw new Error("private deadline");
+            },
+          },
+        },
+        () => 1,
+      ),
+  ])
+    assert.equal(fault(), "unknown");
+  assert.deepEqual(calls, [{ started: 0 }]);
+  pendingRecord("unknown");
+});
+
+test("invalid or saturated monotonic ages remain unknown", () => {
+  const context = pendingContext();
+  for (const [started, captured] of [
+    [NaN, 1],
+    [Infinity, 1],
+    [-1, 1],
+    [2, 1],
+    [0, Infinity],
+    [0, Number.MAX_SAFE_INTEGER + 1],
+  ]) {
+    const value = captureLivePendingInvocations(
+      [{ started }],
+      new Map(),
+      false,
+      context,
+      () => captured,
+    );
+    assert.ok(value !== "unknown");
+    assert.equal(value.entries[0].elapsedMs, "unknown");
+    pendingRecord(value);
+  }
+});
+
+test("pending projection rejects added private fields, inferred claims and invalid bounds", () => {
+  const value = captureLivePendingInvocations(
+    [{ started: 1 }],
+    new Map(),
+    false,
+    pendingContext(),
+    () => 2,
+  );
+  const base = pendingRecord(value);
+  assert.ok(base.pendingInvocations !== "unknown");
+  const record = { ...base, pendingInvocations: base.pendingInvocations };
+  for (const mutate of [
+    (r) => {
+      Reflect.set(r.pendingInvocations.entries[0], "pid", 1);
+    },
+    (r) => {
+      Reflect.set(
+        r.pendingInvocations.entries[0],
+        "primary",
+        "/private/primary",
+      );
+    },
+    (r) => {
+      r.pendingInvocations.entries[0].controls = ["manual", "manual"];
+    },
+    (r) => {
+      Reflect.set(r.pendingInvocations.entries[0], "controls", [
+        "unknown-control",
+      ]);
+    },
+    (r) => {
+      r.pendingInvocations.entries[0].elapsedMs = -1;
+    },
+    (r) => {
+      r.pendingInvocations.entries[0].elapsedMs = Infinity;
+    },
+    (r) => {
+      r.pendingInvocations.entries[0].ordinal = 0;
+    },
+    (r) => {
+      Reflect.set(r.pendingInvocations.entries[0], "close", "cancelled");
+    },
+    (r) => {
+      Reflect.set(r.pendingInvocations.entries[0], "cancelled", "success");
+    },
+    (r) => {
+      r.pendingInvocations.entries[0].close = "observed";
+    },
+    (r) => {
+      r.pendingInvocations.selected = 2;
+    },
+    (r) => {
+      r.pendingInvocations.suppressed = 1;
+    },
+    (r) => {
+      r.pendingInvocations.entries.push(r.pendingInvocations.entries[0]);
+    },
+    (r) => {
+      r.pendingInvocations.entries = Array.from(
+        { length: 17 },
+        () => r.pendingInvocations.entries[0],
+      );
+    },
+  ] as ((r: typeof record) => void)[]) {
+    const invalid = structuredClone(record);
+    mutate(invalid);
+    assert.throws(() => validateLiveControlFailureRecord(invalid));
+  }
+});
+
+test("actual primary failure hook preserves the original error when the new projection clock or held inputs fail", async () => {
+  const original = new Error("original pending control failure");
+  const run = declaration("runLiveChecking");
+  const hook = run.body!.statements.find(ts.isTryStatement)!.catchClause!;
+  const failedBranch = run.body!.statements.find(
+    (item): item is ts.IfStatement =>
+      ts.isIfStatement(item) && item.expression.getText(source) === "failed",
+  )!;
+  for (const fault of ["clock", "primary", "deadline", "started"] as const) {
+    const input = pendingContext();
+    const evidence =
+      fault === "deadline"
+        ? {
+            ...input.evidence!,
+            get deadline(): never {
+              throw new Error("private deadline");
+            },
+          }
+        : input.evidence;
+    const invocations =
+      fault === "started"
+        ? [
+            {
+              get started(): never {
+                throw new Error("private started");
+              },
+            },
+          ]
+        : [{ started: 0 }];
+    const primaryFilenames =
+      fault === "primary"
+        ? new (class extends Map<object, string> {
+            override get(): never {
+              throw new Error("private primary");
+            }
+          })()
+        : input.primaryFilenames;
+    let captured: ReturnType<typeof captureLivePendingInvocations> | undefined;
+    const context = {
+      ...input,
+      error: original,
+      failed: false,
+      primaryFailure: undefined,
+      invocations,
+      controlledInvocations: new Map(),
+      overflow: false,
+      evidence,
+      primaryFilenames,
+      captureLiveInvocationFailure,
+      captureLivePendingInvocations: (
+        ...args: Parameters<typeof captureLivePendingInvocations>
+      ) => {
+        captured = captureLivePendingInvocations(
+          ...(args.slice(0, 4) as [
+            (typeof args)[0],
+            (typeof args)[1],
+            boolean,
+            (typeof args)[3],
+          ]),
+          () => {
+            if (fault === "clock") throw new Error("private clock");
+            return 1;
+          },
+        );
+        return captured;
+      },
+      fixtureRecords: [],
+      checkpoints: [],
+      cleanupFailures: [],
+      reportLiveControlFailure,
+    };
+    await assert.rejects(
+      runInNewContext(
+        javascript(
+          `async function reject() { ${hook.block.getText(source)} ${failedBranch.getText(source)} } reject();`,
+        ),
+        context,
+      ) as Promise<void>,
+      (error: unknown) => error === original,
+    );
+    assert.equal(captured, "unknown");
+    assert.equal(context.primaryFailure, original);
+    assert.equal(context.failed, true);
   }
 });

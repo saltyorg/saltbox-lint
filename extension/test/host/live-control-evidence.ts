@@ -7,6 +7,9 @@ import {
   liveOperationCountLimit,
   liveCloseObservations,
   liveInvocationCountLimit,
+  livePendingInvocationLimit,
+  livePrimaryCategories,
+  type LivePrimaryCategory,
   type LiveCloseObservation,
   type LiveControlName,
   type LiveControlStage,
@@ -36,6 +39,91 @@ interface InvocationCounts {
 }
 interface HeldInvocation {
   closed?: number;
+}
+interface PendingInvocation extends HeldInvocation {
+  primary?: string;
+  started: number;
+  cancelled?: boolean;
+}
+interface PendingInvocations {
+  selected: number | "unknown";
+  suppressed: number;
+  entries: {
+    ordinal: number;
+    primary: LivePrimaryCategory;
+    controls: LiveControlName[];
+    elapsedMs: number | "unknown";
+    close: LiveCloseObservation;
+    cancelled: boolean | "unknown";
+  }[];
+}
+
+// Read only the held records at the existing failure hook. The selected record
+// precedes unclosed candidates; neither close nor cancellation settles an action.
+export function captureLivePendingInvocations<Document>(
+  invocations: readonly PendingInvocation[],
+  controlled: ReadonlyMap<LiveControlName, PendingInvocation>,
+  overflow: boolean,
+  context: {
+    evidence: LiveControlEvidence | undefined;
+    primaryFilenames: ReadonlyMap<Document, string>;
+    small: Document;
+    heavy: Document;
+  },
+  now: () => number = () => performance.now(),
+): PendingInvocations | "unknown" {
+  try {
+    if (overflow || invocations.length > liveInvocationCountLimit)
+      return "unknown";
+    const captured = now();
+    const deadline = context.evidence?.deadline;
+    const selected = liveControlNames.find((control) => control === deadline);
+    const selectedInvocation = selected ? controlled.get(selected) : undefined;
+    const selectedIndex = selectedInvocation
+      ? invocations.indexOf(selectedInvocation)
+      : -1;
+    const candidates: number[] = selectedIndex < 0 ? [] : [selectedIndex];
+    for (let index = 0; index < invocations.length; index++)
+      if (index !== selectedIndex && invocations[index].closed === undefined)
+        candidates.push(index);
+    const small = context.primaryFilenames.get(context.small);
+    const heavy = context.primaryFilenames.get(context.heavy);
+    return {
+      selected: selectedIndex < 0 ? "unknown" : selectedIndex + 1,
+      suppressed: Math.max(0, candidates.length - livePendingInvocationLimit),
+      entries: candidates.slice(0, livePendingInvocationLimit).map((index) => {
+        const invocation = invocations[index];
+        const elapsed = captured - invocation.started;
+        return {
+          ordinal: index + 1,
+          primary:
+            small !== undefined && invocation.primary === small
+              ? "small"
+              : heavy !== undefined && invocation.primary === heavy
+                ? "context-heavy"
+                : "unknown",
+          controls: liveControlNames.filter(
+            (control) => controlled.get(control) === invocation,
+          ),
+          elapsedMs:
+            Number.isFinite(captured) &&
+            Number.isFinite(invocation.started) &&
+            invocation.started >= 0 &&
+            elapsed >= 0 &&
+            elapsed <= Number.MAX_SAFE_INTEGER
+              ? Math.floor(elapsed)
+              : "unknown",
+          close: invocation.closed === undefined ? "unknown" : "observed",
+          cancelled:
+            typeof invocation.cancelled === "boolean"
+              ? invocation.cancelled
+              : "unknown",
+        };
+      }),
+    };
+  } catch {
+    return "unknown";
+  }
 }
 
 // Uses only invocations retained by the existing launch and close callbacks.
@@ -81,6 +169,7 @@ interface LiveControlFailureRecord {
   controls: { control: LiveControlName; stage: LiveControlStage }[];
   completed: CompletedCounts;
   invocations: InvocationCounts | "unknown";
+  pendingInvocations: PendingInvocations | "unknown";
 }
 export function createLiveControlEvidence(): LiveControlEvidence | undefined {
   try {
@@ -136,6 +225,7 @@ export function validateLiveControlFailureRecord(
     "deadline",
     "invocations",
     "operations",
+    "pendingInvocations",
     "schemaVersion",
   ]);
   assert.equal(record.schemaVersion, 1);
@@ -205,6 +295,66 @@ export function validateLiveControlFailureRecord(
       assert.ok(liveCloseObservations.includes(item.close));
     }
   }
+  if (record.pendingInvocations !== "unknown") {
+    const pending = record.pendingInvocations;
+    assert.deepEqual(Object.keys(pending).sort(), [
+      "entries",
+      "selected",
+      "suppressed",
+    ]);
+    const ordinal = (value: number) =>
+      Number.isSafeInteger(value) &&
+      value > 0 &&
+      value <= liveInvocationCountLimit;
+    assert.ok(pending.selected === "unknown" || ordinal(pending.selected));
+    assert.ok(
+      Number.isSafeInteger(pending.suppressed) &&
+        pending.suppressed >= 0 &&
+        pending.suppressed <= liveInvocationCountLimit,
+    );
+    assert.ok(pending.entries.length <= livePendingInvocationLimit);
+    assert.ok(
+      pending.entries.length + pending.suppressed <= liveInvocationCountLimit,
+    );
+    assert.ok(
+      pending.suppressed === 0 ||
+        pending.entries.length === livePendingInvocationLimit,
+    );
+    const ordinals = new Set<number>();
+    let previousPendingOrdinal = 0;
+    for (const item of pending.entries) {
+      assert.deepEqual(Object.keys(item).sort(), [
+        "cancelled",
+        "close",
+        "controls",
+        "elapsedMs",
+        "ordinal",
+        "primary",
+      ]);
+      assert.ok(ordinal(item.ordinal) && !ordinals.has(item.ordinal));
+      ordinals.add(item.ordinal);
+      assert.ok(livePrimaryCategories.includes(item.primary));
+      assert.deepEqual(
+        item.controls,
+        liveControlNames.filter((control) => item.controls.includes(control)),
+      );
+      assert.ok(
+        item.elapsedMs === "unknown" ||
+          (Number.isSafeInteger(item.elapsedMs) && item.elapsedMs >= 0),
+      );
+      assert.ok(liveCloseObservations.includes(item.close));
+      assert.ok(
+        item.cancelled === "unknown" || typeof item.cancelled === "boolean",
+      );
+      if (item.ordinal !== pending.selected) {
+        assert.equal(item.close, "unknown");
+        assert.ok(item.ordinal > previousPendingOrdinal);
+        previousPendingOrdinal = item.ordinal;
+      }
+    }
+    if (pending.selected !== "unknown")
+      assert.equal(pending.entries[0]?.ordinal, pending.selected);
+  }
   assert.deepEqual(Object.keys(record.completed).sort(), [
     "checkpoints",
     "fixtures",
@@ -228,6 +378,7 @@ export function reportLiveControlFailure(
   completed: CompletedCounts,
   write?: (message: string) => void,
   invocations: InvocationCounts | "unknown" = "unknown",
+  pendingInvocations: PendingInvocations | "unknown" = "unknown",
 ): void {
   try {
     if (!evidence || evidence.overflow) return;
@@ -250,6 +401,7 @@ export function reportLiveControlFailure(
         stage: evidence.controls[index],
       })),
       invocations,
+      pendingInvocations,
       completed: {
         fixtures: completed.fixtures,
         checkpoints: completed.checkpoints,

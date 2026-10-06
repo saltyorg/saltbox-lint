@@ -21,6 +21,7 @@ import {
   noteLiveControlStage,
   reportLiveControlFailure,
   captureLiveInvocationFailure,
+  captureLivePendingInvocations,
   type LiveControlEvidence,
 } from "./live-control-evidence.ts";
 import type {
@@ -615,6 +616,12 @@ export async function runLiveChecking(): Promise<void> {
         invocations,
         controlledInvocations,
         overflow,
+      ),
+      captureLivePendingInvocations(
+        invocations,
+        controlledInvocations,
+        overflow,
+        { evidence, primaryFilenames, small, heavy },
       ),
     );
   } finally {

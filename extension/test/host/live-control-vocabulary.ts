@@ -45,3 +45,10 @@ export const liveOperationCountLimit = 64;
 export const liveCloseObservations = ["observed", "unknown"] as const;
 export type LiveCloseObservation = (typeof liveCloseObservations)[number];
 export const liveInvocationCountLimit = 256;
+export const livePendingInvocationLimit = 16;
+export const livePrimaryCategories = [
+  "small",
+  "context-heavy",
+  "unknown",
+] as const;
+export type LivePrimaryCategory = (typeof livePrimaryCategories)[number];
