@@ -16,6 +16,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { EditorIntegration } from "../../src/editor.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
+import { createHash } from "node:crypto";
+import {
+  observeFirstDefinition,
+  withFirstDefinitionObservation,
+} from "./first-definition-observer.ts";
 
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
@@ -704,10 +709,36 @@ export async function runNavigation(): Promise<void> {
   const editor = await vscode.window.showTextDocument(document);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
   let locations: Awaited<ReturnType<typeof definitions>> = [];
-  await waitFor(async () => {
-    locations = await definitions(document);
-    return locations.length === 3;
-  }, "real definitions resolve all declaration layers");
+  const cliPath = process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!;
+  const cliCanonicalPath = realpathSync.native(cliPath);
+  const product = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
+  const productCLI = join(
+    product.extensionPath,
+    "bin",
+    "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+  );
+  const observer = observeFirstDefinition({
+    commands: createRequire(__filename)("vscode").commands as object,
+    childProcess: createRequire(__filename)("node:child_process") as object,
+    document,
+    position: document.positionAt(document.getText().indexOf("_port") + 2),
+    root: realpathSync.native(roots[0].uri.fsPath),
+    source: realpathSync.native(document.uri.fsPath),
+    cliPath,
+    cliCanonicalPath,
+    cliProductPath:
+      realpathSync.native(productCLI) === cliCanonicalPath
+        ? productCLI
+        : undefined,
+    cliHash: createHash("sha256").update(readFileSync(cliPath)).digest("hex"),
+    productActive: product.isActive,
+  });
+  await withFirstDefinitionObservation(observer, () =>
+    waitFor(async () => {
+      locations = await definitions(document);
+      return locations.length === 3;
+    }, "real definitions resolve all declaration layers"),
+  );
   assert.equal(locations.length, 3);
   for (const location of locations) {
     const declaration = await vscode.workspace.openTextDocument(
