@@ -42,11 +42,12 @@ export async function identify(
 export function identifyNow(root: string, filename: string): Identity {
   let canonical: string;
   try {
-    canonical = realpathSync(filename);
+    // Match promises.realpath's native spelling, including Windows drive case.
+    canonical = realpathSync.native(filename);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     canonical = path.join(
-      realpathSync(path.dirname(filename)),
+      realpathSync.native(path.dirname(filename)),
       path.basename(filename),
     );
   }

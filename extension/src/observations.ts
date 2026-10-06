@@ -156,7 +156,7 @@ function identityRead(root: string, filename: string) {
 function canonicalRead(filename: string) {
   return authorityRead(
     () => realpath(filename),
-    () => realpathSync(filename),
+    () => realpathSync.native(filename),
   );
 }
 function entryRead(filename: string) {
