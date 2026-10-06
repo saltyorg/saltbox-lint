@@ -173,6 +173,13 @@ function contextFacts(
   return facts;
 }
 
+const additionalContextRoles = [
+  ["example", "example"],
+  ["readonly", "readonly"],
+  ["readonly-directory", "readonly_directory"],
+  ["template-origin", "template_origin"],
+] as const;
+
 test("context wrappers retain their exact source-owned formats", () => {
   const source = readFileSync(
     resolve(import.meta.dirname, "../../../lint/discovery.go"),
@@ -226,8 +233,14 @@ test("all fixture directory IDs require a complete full-path outer boundary", ()
         name,
         name,
       ]),
+      ...additionalContextRoles.flatMap(([role, id]) =>
+        ["defaults", "vars", "tasks", "handlers", "templates"].map((kind) => [
+          `${id}_${kind}`,
+          `roles/${role}/${kind}`,
+        ]),
+      ),
     ];
-    assert.equal(directories.length, 19);
+    assert.equal(directories.length, 39);
     for (const [id, relative] of directories) {
       const absolute = paths.join(root, relative);
       const prefix = `saltbox-lint: inspect context ${absolute}: `;
@@ -255,6 +268,190 @@ test("all fixture directory IDs require a complete full-path outer boundary", ()
           ).directory,
           "directory_unknown",
         );
+    }
+  }
+});
+
+test("root-selected fixture families retain exact nested forms under bytewise observation", () => {
+  for (const platform of ["linux", "win32"] as const) {
+    const root = platform === "win32" ? "C:\\fixture-é😀" : "/fixture-é😀";
+    const paths = platform === "win32" ? win32 : posix;
+    for (const [role, id] of additionalContextRoles) {
+      for (const kind of [
+        "defaults",
+        "vars",
+        "tasks",
+        "handlers",
+        "templates",
+      ]) {
+        const relative = `roles/${role}/${kind}`;
+        const absolute = paths.join(root, relative);
+        const cases = [
+          [
+            `statat ${paths.normalize(relative)}: Access is denied.`,
+            "context_root_stat",
+            "text_permission",
+          ],
+          [
+            `resolve source ${absolute}: ${platform === "win32" ? "CreateFile" : "lstat"} ${absolute}: permission denied`,
+            "context_resolve_source",
+            "text_permission",
+          ],
+          [
+            `resolve source ${absolute}: readlink ${absolute}: The directory name is invalid.`,
+            "context_resolve_source",
+            "text_non_directory",
+          ],
+          [
+            `resolve source ${absolute}: EvalSymlinks: too many links`,
+            "context_resolve_source",
+            "text_symlink_limit",
+          ],
+          [
+            `source ${absolute} is outside root ${root}`,
+            "context_outside_root",
+            "text_outside_root",
+          ],
+        ];
+        for (const [tail, branch, errorTextClass] of cases) {
+          const observer = observeCLIErrorStage(root, platform);
+          const bytes = Buffer.from(
+            `saltbox-lint: inspect context ${absolute}: ${tail}\n`,
+          );
+          for (const byte of bytes) observer.observe(Buffer.from([byte]));
+          bytes.fill(0);
+          assert.deepEqual(observer.context(true, 2), {
+            availability: "context_directory_known",
+            ambiguous: false,
+            directory: `${id}_${kind}`,
+            branch,
+            errorTextClass,
+          });
+          assert.equal(observer.stage(true, 2), "error_source_context_inspect");
+          assert.equal(
+            observer.context(false, 2).directory,
+            "directory_unknown",
+          );
+          assert.equal(
+            observer.context(true, 0).directory,
+            "directory_unknown",
+          );
+          observer.dispose();
+          assert.equal(
+            observer.context(true, 2).directory,
+            "directory_unknown",
+          );
+        }
+      }
+    }
+  }
+});
+
+test("added fixture families keep mismatched paths, wrappers and arbitrary roles unknown", () => {
+  for (const platform of ["linux", "win32"] as const) {
+    const root = platform === "win32" ? "C:\\fixture" : "/fixture";
+    const paths = platform === "win32" ? win32 : posix;
+    for (const [role, id] of additionalContextRoles) {
+      const absolute = paths.join(root, `roles/${role}/templates`);
+      const outer = `saltbox-lint: inspect context ${absolute}: `;
+      for (const tail of [
+        `statat ${paths.normalize(`roles/${role}/tasks`)}: permission denied`,
+        `statat ${absolute}: permission denied`,
+        `resolve source ${absolute}extra: permission denied`,
+        `source ${absolute} is outside root ${root}extra`,
+      ]) {
+        const facts = contextFacts(outer + tail + "\n", root, platform);
+        assert.equal(facts.directory, `${id}_templates`);
+        assert.equal(facts.branch, "context_branch_unknown");
+        assert.equal(facts.errorTextClass, "text_unknown");
+      }
+      for (const tail of [
+        `resolve source ${absolute}: open ${absolute}: permission denied`,
+        `resolve source ${absolute}: readlink private_path: permission denied`,
+        `resolve source ${absolute}: permission denied extra`,
+        `resolve source ${absolute}: Accès refusé.`,
+        `resolve source ${absolute}: secret_credential permission denied`,
+      ]) {
+        const facts = contextFacts(outer + tail + "\n", root, platform);
+        assert.equal(facts.directory, `${id}_templates`);
+        assert.equal(facts.branch, "context_resolve_source");
+        assert.equal(facts.errorTextClass, "text_unknown");
+        assert.doesNotMatch(
+          JSON.stringify(facts),
+          /private_path|secret_credential|Accès|permission denied/,
+        );
+      }
+      for (const control of ["\0", "\t", "\r", "\u0085", "\u2028", "\u2029"]) {
+        const facts = contextFacts(
+          outer +
+            `statat ${paths.normalize(`roles/${role}/templates`)}: ${control}permission denied\n`,
+          root,
+          platform,
+        );
+        assert.equal(facts.directory, "directory_unknown");
+      }
+    }
+    for (const relative of [
+      "roles/unknown/defaults",
+      "roles/readonly-alias/templates",
+      "readonly-alias",
+      "resources/roles/example/defaults",
+      "roles/template-origin-extra/tasks",
+    ]) {
+      const absolute = paths.join(root, relative);
+      assert.equal(
+        contextFacts(
+          `saltbox-lint: inspect context ${absolute}: statat ${paths.normalize(relative)}: permission denied\n`,
+          root,
+          platform,
+        ).directory,
+        "directory_unknown",
+      );
+    }
+  }
+});
+
+test("added fixture families recognize only the known Windows root variants at every split", () => {
+  const root = "c:/fixture-é😀";
+  for (const [role, id] of additionalContextRoles) {
+    for (const spelling of [
+      "C:\\fixture-é😀",
+      "c:\\fixture-é😀",
+      "\\\\?\\C:\\fixture-é😀",
+      "\\\\?\\c:\\fixture-é😀",
+    ]) {
+      const absolute = win32.join(spelling, `roles/${role}/defaults`);
+      const bytes = Buffer.from(
+        `saltbox-lint: inspect context ${absolute}: statat roles\\${role}\\defaults: The directory name is invalid.\n`,
+      );
+      for (let split = 0; split <= bytes.length; split++) {
+        const observer = observeCLIErrorStage(root, "win32");
+        observer.observe(bytes.subarray(0, split));
+        observer.observe(bytes.subarray(split));
+        assert.deepEqual(observer.context(true, 2), {
+          availability: "context_directory_known",
+          ambiguous: false,
+          directory: `${id}_defaults`,
+          branch: "context_root_stat",
+          errorTextClass: "text_non_directory",
+        });
+        observer.dispose();
+      }
+    }
+    for (const changed of [
+      "C:\\FIXTUR~1",
+      "C:\\private-root",
+      "D:\\fixture-é😀",
+    ]) {
+      const absolute = win32.join(changed, `roles/${role}/defaults`);
+      assert.equal(
+        contextFacts(
+          `saltbox-lint: inspect context ${absolute}: statat roles\\${role}\\defaults: permission denied\n`,
+          root,
+          "win32",
+        ).directory,
+        "directory_unknown",
+      );
     }
   }
 });

@@ -84,13 +84,19 @@ function setup(platform: NodeJS.Platform = "linux") {
 }
 
 test("context stderr reports only the known directory and exact nested text branch", async () => {
-  for (const platform of ["linux", "win32"] as const) {
+  for (const [platform, role, id] of (["linux", "win32"] as const).flatMap(
+    (platform) =>
+      [
+        ["navsource", "navsource_handlers"],
+        ["example", "example_handlers"],
+        ["readonly", "readonly_handlers"],
+        ["readonly-directory", "readonly_directory_handlers"],
+        ["template-origin", "template_origin_handlers"],
+      ].map(([role, id]) => [platform, role, id] as const),
+  )) {
     const fixture = setup(platform);
     const paths = platform === "win32" ? win32 : posix;
-    const absolute = paths.join(
-      fixture.inputs.root,
-      "roles/navsource/handlers",
-    );
+    const absolute = paths.join(fixture.inputs.root, `roles/${role}/handlers`);
     const observer = observeFirstDefinition(fixture.inputs);
     const original = new Error("secret_assertion_value");
     const messages: string[] = [];
@@ -141,7 +147,7 @@ test("context stderr reports only the known directory and exact nested text bran
       assert.deepEqual(Reflect.get(child, "errorContext"), {
         availability: "context_directory_known",
         ambiguous: false,
-        directory: "navsource_handlers",
+        directory: id,
         branch: "context_resolve_source",
         errorTextClass: "text_permission",
       });

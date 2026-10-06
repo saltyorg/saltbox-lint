@@ -92,9 +92,17 @@ const unknown = "error_stage_unknown";
 // is fixture-declared; these comparisons perform no filesystem inspection.
 const contextKinds = ["defaults", "vars", "tasks", "handlers", "templates"];
 const contextDirectories = [
-  ...["navsource", "navtarget", "resource_navtarget"].flatMap((role) =>
+  ...[
+    "navsource",
+    "navtarget",
+    "resource_navtarget",
+    "example",
+    "readonly",
+    "readonly-directory",
+    "template-origin",
+  ].flatMap((role) =>
     contextKinds.map((kind) => ({
-      id: `${role}_${kind}`,
+      id: `${role.replaceAll("-", "_")}_${kind}`,
       relative: `${role === "resource_navtarget" ? "resources/roles/navtarget" : `roles/${role}`}/${kind}`,
     })),
   ),
