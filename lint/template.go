@@ -873,7 +873,7 @@ func templateForTarget(tokens []Token, pos *int, depth int) bool {
 				return false
 			}
 			*pos += 1
-		} else if token.Kind != "name" || token.Text == "in" || token.Text == "true" || token.Text == "True" || token.Text == "false" || token.Text == "False" || token.Text == "none" || token.Text == "None" {
+		} else if !templateAssignableName(token) || token.Text == "in" {
 			return false
 		}
 		if *pos >= len(tokens) || tokens[*pos].Text != "," {
