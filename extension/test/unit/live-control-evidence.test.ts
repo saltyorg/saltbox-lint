@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import {
   createLiveControlEvidence,
+  captureLiveInvocationFailure,
   noteLiveOperation,
   noteLiveControlStage,
   reportLiveControlFailure,
@@ -166,6 +167,7 @@ for (const name of liveControlNames) {
       launchControl: undefined as
         | ((invocation: { closed?: number; cancelled?: boolean }) => void)
         | undefined,
+      controlledInvocations: new Map(),
       controlNumber: 0,
       heavy,
       slow: "fixed test workload",
@@ -292,6 +294,10 @@ test("collector faults and reporter faults preserve actual primary failure ident
       error: original,
       failed: false,
       primaryFailure: undefined,
+      invocations: [],
+      controlledInvocations: new Map(),
+      overflow: false,
+      captureLiveInvocationFailure,
       evidence,
       fixtureRecords: [],
       checkpoints: [],
@@ -299,10 +305,17 @@ test("collector faults and reporter faults preserve actual primary failure ident
       reportLiveControlFailure: (
         state: LiveControlEvidence | undefined,
         counts: { fixtures: number; checkpoints: number },
+        _write: undefined,
+        invocations: ReturnType<typeof captureLiveInvocationFailure>,
       ) =>
-        reportLiveControlFailure(state, counts, () => {
-          throw new Error("report failed");
-        }),
+        reportLiveControlFailure(
+          state,
+          counts,
+          () => {
+            throw new Error("report failed");
+          },
+          invocations,
+        ),
     };
     await assert.rejects(
       runInNewContext(
@@ -395,6 +408,7 @@ for (const stoppedStage of [
       launchControl: undefined as
         | ((invocation: { closed?: number; cancelled?: boolean }) => void)
         | undefined,
+      controlledInvocations: new Map(),
       controlNumber: 0,
       heavy: {},
       slow: "fixed test workload",
@@ -448,3 +462,106 @@ for (const stoppedStage of [
     close.resolve();
   });
 }
+
+test("held invocation projection distinguishes controlled close from later closes and actions", () => {
+  const controlled: { closed?: number } = {};
+  const successor: { closed?: number } = {};
+  const mapping = new Map([["manual" as const, controlled]]);
+  const calls = [controlled, successor];
+  let value = captureLiveInvocationFailure(calls, mapping, false);
+  assert.ok(value !== "unknown");
+  assert.equal(value.launches, 2);
+  assert.equal(value.closes, 0);
+  assert.equal(value.pendingCloses, 2);
+  assert.equal(
+    value.controls.find((item) => item.control === "manual")!.close,
+    "unknown",
+  );
+  controlled.closed = 1;
+  value = captureLiveInvocationFailure(calls, mapping, false);
+  assert.ok(value !== "unknown");
+  assert.equal(
+    value.controls.find((item) => item.control === "manual")!.close,
+    "observed",
+  );
+  assert.equal(value.closes, 1);
+  successor.closed = 2;
+  value = captureLiveInvocationFailure(calls, mapping, false);
+  assert.ok(value !== "unknown");
+  assert.equal(value.pendingCloses, 0);
+  const messages: string[] = [];
+  reportLiveControlFailure(
+    createLiveControlEvidence(),
+    { fixtures: 0, checkpoints: 0 },
+    (message) => messages.push(message),
+    value,
+  );
+  const record = JSON.parse(
+    messages[0].slice("SALTBOX_LIVE_CONTROL_FAILURE ".length),
+  );
+  validateLiveControlFailureRecord(record);
+  assert.ok(record.operations.every((item) => item.completion === "unknown"));
+  assert.doesNotMatch(messages[0], /cancelled|manualOwner|descendant/);
+});
+
+test("invocation evidence is capped, fault tolerant and strict about fields and counts", () => {
+  const calls = Array.from({ length: 256 }, () => ({ closed: 1 }));
+  const value = captureLiveInvocationFailure(calls, new Map(), false);
+  assert.ok(value !== "unknown");
+  assert.equal(value.launches, 256);
+  assert.equal(value.closes, 256);
+  assert.equal(value.pendingCloses, 0);
+  assert.equal(captureLiveInvocationFailure(calls, new Map(), true), "unknown");
+  assert.equal(
+    captureLiveInvocationFailure([...calls, {}], new Map(), false),
+    "unknown",
+  );
+  assert.equal(
+    captureLiveInvocationFailure(
+      [
+        {
+          get closed(): number {
+            throw new Error("private");
+          },
+        },
+      ],
+      new Map(),
+      false,
+    ),
+    "unknown",
+  );
+  const messages: string[] = [];
+  reportLiveControlFailure(
+    createLiveControlEvidence(),
+    { fixtures: 0, checkpoints: 0 },
+    (message) => messages.push(message),
+    value,
+  );
+  const record = JSON.parse(
+    messages[0].slice("SALTBOX_LIVE_CONTROL_FAILURE ".length),
+  );
+  for (const mutate of [
+    (r) => {
+      r.invocations.launches = 257;
+    },
+    (r) => {
+      r.invocations.closes = -1;
+    },
+    (r) => {
+      r.invocations.pendingCloses = 1;
+    },
+    (r) => {
+      r.invocations.controls[0].close = "cancelled";
+    },
+    (r) => {
+      r.invocations.controls[0].owner = "manual";
+    },
+    (r) => {
+      r.invocations.pid = 10;
+    },
+  ] as ((r: typeof record) => void)[]) {
+    const invalid = structuredClone(record);
+    mutate(invalid);
+    assert.throws(() => validateLiveControlFailureRecord(invalid));
+  }
+});

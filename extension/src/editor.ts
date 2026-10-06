@@ -27,6 +27,7 @@ import type {
   SharedFix,
 } from "./protocol.ts";
 import { runProcess } from "./process.ts";
+import type { ProcessFailureObserver } from "./process-failure.ts";
 import { range, renderDiagnostics } from "./diagnostics.ts";
 import { Scheduler, typingPreempted } from "./scheduler.ts";
 import { LiveChecks } from "./live-checks.ts";
@@ -1621,6 +1622,7 @@ export class EditorIntegration implements vscode.Disposable {
     mode: "canonical" | "lint-fixes",
     token?: vscode.CancellationToken,
     collect?: WritableStageCollector,
+    observeFailure?: ProcessFailureObserver,
   ): Promise<vscode.TextEdit[]> {
     const result = await this.formattingResult(
       document,
@@ -1628,6 +1630,7 @@ export class EditorIntegration implements vscode.Disposable {
       document.version,
       token,
       collect,
+      observeFailure,
     );
     const accepted =
       result &&
@@ -1646,6 +1649,7 @@ export class EditorIntegration implements vscode.Disposable {
     version: number,
     token?: vscode.CancellationToken,
     collect?: WritableStageCollector,
+    observeFailure?: ProcessFailureObserver,
   ): Promise<{ snapshot: Snapshot; edits: vscode.TextEdit[] } | undefined> {
     if (token?.isCancellationRequested || this.isTemplate(document)) {
       writableStage(collect, "snapshot-declined", "format-preflight");
@@ -1695,6 +1699,7 @@ export class EditorIntegration implements vscode.Disposable {
               input: snapshot.text,
             },
             signal,
+            observeFailure,
           ),
         abort.signal,
       );
@@ -1745,6 +1750,7 @@ export class EditorIntegration implements vscode.Disposable {
   async fixAll(
     uri?: vscode.Uri,
     collect?: WritableStageCollector,
+    observeFailure?: ProcessFailureObserver,
   ): Promise<void> {
     const document = uri
       ? vscode.workspace.textDocuments.find(
@@ -1772,6 +1778,7 @@ export class EditorIntegration implements vscode.Disposable {
       version,
       undefined,
       collect,
+      observeFailure,
     );
     if (
       !result?.edits.length ||

@@ -20,6 +20,7 @@ import {
   noteLiveOperation,
   noteLiveControlStage,
   reportLiveControlFailure,
+  captureLiveInvocationFailure,
   type LiveControlEvidence,
 } from "./live-control-evidence.ts";
 import type {
@@ -242,6 +243,7 @@ export async function runLiveChecking(): Promise<void> {
       changed = performance.now();
   });
   const evidence = createLiveControlEvidence();
+  const controlledInvocations = new Map<LiveControlName, Invocation>();
   const fixtureRecords: LiveFixture[] = [];
   let bufferUnchanged = true;
   let finalRecord: LiveCheckRecord | undefined;
@@ -414,6 +416,11 @@ export async function runLiveChecking(): Promise<void> {
       });
       noteLiveControlStage(evidence, name, "waiting-for-launch");
       launchControl = (invocation) => {
+        try {
+          controlledInvocations.set(name, invocation);
+        } catch {
+          // Evidence bookkeeping cannot change the original control.
+        }
         noteLiveControlStage(evidence, name, "action-pending");
         const started = performance.now();
         assert.equal(
@@ -584,10 +591,16 @@ export async function runLiveChecking(): Promise<void> {
   } catch (error) {
     failed = true;
     primaryFailure = error;
-    reportLiveControlFailure(evidence, {
-      fixtures: fixtureRecords.length,
-      checkpoints: checkpoints.length,
-    });
+    reportLiveControlFailure(
+      evidence,
+      { fixtures: fixtureRecords.length, checkpoints: checkpoints.length },
+      undefined,
+      captureLiveInvocationFailure(
+        invocations,
+        controlledInvocations,
+        overflow,
+      ),
+    );
   } finally {
     launchControl = undefined;
     try {

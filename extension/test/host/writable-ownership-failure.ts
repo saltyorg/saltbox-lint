@@ -1,4 +1,8 @@
 import {
+  processFailureCategories,
+  type ProcessFailureCategory,
+} from "../../src/process-failure.ts";
+import {
   writableStages as stages,
   writableGuards as guards,
   type WritableStage,
@@ -84,6 +88,34 @@ interface WritableOwnershipFailure {
   acceptedReady: boolean;
   publicPreconditions?: PublicPreconditions;
   stages?: StageRecord[];
+  processFailure?: ProcessFailureCategory;
+}
+
+export function collectWritableProcessFailure() {
+  let first: ProcessFailureCategory | undefined;
+  return {
+    collect(category: ProcessFailureCategory) {
+      try {
+        if (first === undefined && processFailureCategories.includes(category))
+          first = category;
+      } catch {
+        // Evidence collection cannot replace the original failure.
+      }
+    },
+    get category() {
+      return first;
+    },
+  };
+}
+function processFailureRecord(state: WritableOwnershipFailure) {
+  try {
+    const category = state.processFailure;
+    return category !== undefined && processFailureCategories.includes(category)
+      ? category
+      : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 function preconditionRecord(state: WritableOwnershipFailure) {
@@ -133,6 +165,7 @@ export function reportWritableOwnershipFailure(
           accepted_ready: state.acceptedReady,
           ...preconditionRecord(state),
           invocation_stages: stageRecords(state.stages),
+          process_rejection: processFailureRecord(state),
           child_completion: "unknown",
           response_contract_valid: "unknown",
           response_schema_equal: "unknown",

@@ -5,6 +5,7 @@ import { writableStages, writableGuards } from "../../src/writable-trace.ts";
 import {
   captureWritableOwnershipPreconditions,
   collectWritableOwnershipStages,
+  collectWritableProcessFailure,
   reportWritableOwnershipFailure,
 } from "../host/writable-ownership-failure.ts";
 
@@ -326,6 +327,7 @@ test("writable ownership failure reports bounded existing state and preserves th
             document_closed: "unknown",
             document_dirty: "unknown",
             invocation_stages: "unknown",
+            process_rejection: "unknown",
             child_completion: "unknown",
             response_contract_valid: "unknown",
             response_schema_equal: "unknown",
@@ -381,7 +383,7 @@ test("host wiring retains the original readiness deadline, six controls and chil
   assert.match(host, /for \(const retarget of \[false, true\]\)/);
   assert.match(
     host,
-    /const publicPreconditions =\s+mode === "fixAll"\s+\? captureWritableOwnershipPreconditions\(document, uri, bytes\)\s+: undefined;\s+const pending = \(\s+mode === "fixAll"\s+\? editor\.fixAll\(uri, stages\.collect\)\s+: editor\.format\(document, mode, undefined, stages\.collect\)/,
+    /const publicPreconditions =\s+mode === "fixAll"\s+\? captureWritableOwnershipPreconditions\(document, uri, bytes\)\s+: undefined;\s+const pending = \(\s+mode === "fixAll"\s+\? editor\.fixAll\(uri, stages\.collect, processFailure\.collect\)\s+: editor\.format\(\s*document,\s*mode,\s*undefined,\s*stages\.collect,\s*processFailure\.collect,?\s*\)/,
   );
   // Evidence collection adds no filesystem operation, API request or wait.
   const existingOperations = {
@@ -410,7 +412,7 @@ test("host wiring retains the original readiness deadline, six controls and chil
   );
   assert.doesNotMatch(
     helper.replace(
-      /^import \{[^}]+\} from "\.\.\/\.\.\/src\/writable-trace\.ts";\n/,
+      /^import \{[^}]+\} from "\.\.\/\.\.\/src\/(?:writable-trace|process-failure)\.ts";\n/gm,
       "",
     ),
     /\b(?:import|require|await|async|process|setTimeout|fetch|addEventListener)\b|\.onDid|\.on\(/,
@@ -519,4 +521,58 @@ test("failed stage bookkeeping and evidence output preserve the original failure
       ),
     (error) => error === primary,
   );
+});
+
+test("process rejection evidence accepts only the first fixed label and exports no payload", () => {
+  for (const category of [
+    "setup",
+    "spawn",
+    "stdin",
+    "termination",
+    "cancelled",
+    "timeout",
+    "output-limit",
+    "stderr",
+    "exit-status",
+    "utf8",
+  ] as const) {
+    const collector = collectWritableProcessFailure();
+    Reflect.apply(collector.collect, undefined, ["private raw error"]);
+    assert.equal(collector.category, undefined);
+    collector.collect(category);
+    collector.collect("spawn");
+    assert.equal(collector.category, category);
+    const record = failureRecord({
+      control: "canonical:stable",
+      completed: 0,
+      settled: true,
+      acceptedReady: false,
+      processFailure: collector.category,
+    });
+    assert.equal(record.process_rejection, category);
+    assert.equal(record.child_completion, "unknown");
+    assert.doesNotMatch(JSON.stringify(record), /private/);
+  }
+  const state = {
+    control: "canonical:stable" as const,
+    completed: 0,
+    settled: false,
+    acceptedReady: false,
+  };
+  for (const value of ["private raw error", 2, {}, null])
+    assert.equal(
+      failureRecord(
+        Object.assign({}, state, { processFailure: value }) as Parameters<
+          typeof failureRecord
+        >[0],
+      ).process_rejection,
+      "unknown",
+    );
+  const fault = Object.assign({}, state);
+  Object.defineProperty(fault, "processFailure", {
+    get() {
+      throw new Error("private payload");
+    },
+  });
+  assert.equal(failureRecord(fault).process_rejection, "unknown");
 });

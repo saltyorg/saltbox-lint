@@ -40,3 +40,8 @@ export type LiveOperationName = (typeof liveOperationNames)[number];
 export type LiveOperationEvent = "entered" | "completed" | "deadline";
 export const liveControlEvidenceLimit = 8192;
 export const liveOperationCountLimit = 64;
+
+// These describe held spawn/close observations, not descendant or action state.
+export const liveCloseObservations = ["observed", "unknown"] as const;
+export type LiveCloseObservation = (typeof liveCloseObservations)[number];
+export const liveInvocationCountLimit = 256;

@@ -5,6 +5,9 @@ import {
   liveOperationNames,
   liveControlEvidenceLimit,
   liveOperationCountLimit,
+  liveCloseObservations,
+  liveInvocationCountLimit,
+  type LiveCloseObservation,
   type LiveControlName,
   type LiveControlStage,
   type LiveOperationName,
@@ -25,6 +28,46 @@ interface CompletedCounts {
   fixtures: number;
   checkpoints: number;
 }
+interface InvocationCounts {
+  launches: number;
+  closes: number;
+  pendingCloses: number;
+  controls: { control: LiveControlName; close: LiveCloseObservation }[];
+}
+interface HeldInvocation {
+  closed?: number;
+}
+
+// Uses only invocations retained by the existing launch and close callbacks.
+// Unknown close is never a claim about cancellation or command completion.
+export function captureLiveInvocationFailure(
+  invocations: readonly HeldInvocation[],
+  controlled: ReadonlyMap<LiveControlName, HeldInvocation>,
+  overflow: boolean,
+): InvocationCounts | "unknown" {
+  try {
+    if (overflow || invocations.length > liveInvocationCountLimit)
+      return "unknown";
+    const closes = invocations.filter(
+      (item) => item.closed !== undefined,
+    ).length;
+    return {
+      launches: invocations.length,
+      closes,
+      pendingCloses: invocations.length - closes,
+      controls: liveControlNames.map((control) => ({
+        control,
+        close:
+          controlled.get(control)?.closed === undefined
+            ? "unknown"
+            : "observed",
+      })),
+    };
+  } catch {
+    return "unknown";
+  }
+}
+
 interface LiveControlFailureRecord {
   schemaVersion: 1;
   boundary: "existing-live-control-hooks";
@@ -37,6 +80,7 @@ interface LiveControlFailureRecord {
   }[];
   controls: { control: LiveControlName; stage: LiveControlStage }[];
   completed: CompletedCounts;
+  invocations: InvocationCounts | "unknown";
 }
 export function createLiveControlEvidence(): LiveControlEvidence | undefined {
   try {
@@ -90,6 +134,7 @@ export function validateLiveControlFailureRecord(
     "completed",
     "controls",
     "deadline",
+    "invocations",
     "operations",
     "schemaVersion",
   ]);
@@ -135,6 +180,31 @@ export function validateLiveControlFailureRecord(
     assert.deepEqual(Object.keys(item).sort(), ["control", "stage"]);
     assert.ok(liveControlStages.includes(item.stage));
   }
+  if (record.invocations !== "unknown") {
+    const counts = record.invocations;
+    assert.ok(counts && typeof counts === "object");
+    assert.deepEqual(Object.keys(counts).sort(), [
+      "closes",
+      "controls",
+      "launches",
+      "pendingCloses",
+    ]);
+    for (const count of [counts.launches, counts.closes, counts.pendingCloses])
+      assert.ok(
+        Number.isSafeInteger(count) &&
+          count >= 0 &&
+          count <= liveInvocationCountLimit,
+      );
+    assert.equal(counts.closes + counts.pendingCloses, counts.launches);
+    assert.deepEqual(
+      counts.controls.map((item) => item.control),
+      [...liveControlNames],
+    );
+    for (const item of counts.controls) {
+      assert.deepEqual(Object.keys(item).sort(), ["close", "control"]);
+      assert.ok(liveCloseObservations.includes(item.close));
+    }
+  }
   assert.deepEqual(Object.keys(record.completed).sort(), [
     "checkpoints",
     "fixtures",
@@ -157,6 +227,7 @@ export function reportLiveControlFailure(
   evidence: LiveControlEvidence | undefined,
   completed: CompletedCounts,
   write?: (message: string) => void,
+  invocations: InvocationCounts | "unknown" = "unknown",
 ): void {
   try {
     if (!evidence || evidence.overflow) return;
@@ -178,6 +249,7 @@ export function reportLiveControlFailure(
         control,
         stage: evidence.controls[index],
       })),
+      invocations,
       completed: {
         fixtures: completed.fixtures,
         checkpoints: completed.checkpoints,
