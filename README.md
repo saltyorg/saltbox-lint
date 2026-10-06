@@ -293,7 +293,7 @@ the source or suggested edits.
 The persistent `--color auto|always|never` flag controls human findings and
 detailed rule help. `auto` styles capable terminals unless `NO_COLOR` has a
 nonempty value. Explicit `always` and `never` override `NO_COLOR`. Color does
-not select a format: concise, JSON, GitHub annotations, and diff patches remain
+not select a format: concise, JSON, SARIF, GitHub annotations, and diff patches remain
 plain even with `--color always`.
 
 The persistent `--theme auto|dark|light` flag selects One Dark Pro or One Light.
@@ -394,6 +394,12 @@ use line ranges; single-line annotations also include columns. Summary appends
 are bounded to 100 findings/64 KiB and explicitly count omitted findings.
 Annotations and JSON still represent the full diagnostic set. File identity and
 cross-repository summary environment details are in [migration guidance](https://github.com/saltyorg/saltbox-lint/blob/main/docs/rule-migration.md).
+
+`--format sarif` emits a deterministic SARIF 2.1.0 log with registry rule help,
+UTF-16 locations, related locations, and versioned finding fingerprints. It
+keeps the same findings and exit statuses as JSON. See the
+[SARIF guide](https://github.com/saltyorg/saltbox-lint/blob/main/docs/sarif.md)
+for local generation, identity behavior, and the optional upload example.
 
 `saltbox-lint rules` keeps its compact one-rule-per-line listing.
 `saltbox-lint rules RULE_ID` uses the same destination-aware width and color

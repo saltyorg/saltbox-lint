@@ -39,6 +39,85 @@ export function smokeBinary(executable, version, target) {
         (d) => d.rule_id === "jinja-layout",
       ),
     );
+    const sarif = call([
+      "check",
+      "--root",
+      directory,
+      "--format",
+      "sarif",
+      "--color",
+      "always",
+      path,
+    ]);
+    assert.equal(sarif.status, 1, sarif.stderr);
+    assert.equal(sarif.stderr, "");
+    assert.ok(!sarif.stdout.includes("\x1b"));
+    const sarifReport = JSON.parse(sarif.stdout);
+    assert.equal(sarifReport.version, "2.1.0");
+    const sarifRun = sarifReport.runs[0];
+    assert.equal(sarifRun.tool.driver.version, version);
+    assert.equal(sarifRun.columnKind, "utf16CodeUnits");
+    assert.deepEqual(
+      sarifRun.results.map((result) => result.ruleId),
+      JSON.parse(check.stdout).diagnostics.map((d) => d.rule_id),
+    );
+    for (const result of sarifRun.results) {
+      assert.equal(
+        sarifRun.tool.driver.rules[result.ruleIndex].id,
+        result.ruleId,
+      );
+      assert.equal(
+        decodeURIComponent(
+          result.locations[0].physicalLocation.artifactLocation.uri,
+        ),
+        "unicode 😀.yml",
+      );
+      assert.match(
+        result.partialFingerprints["saltboxLintContext/v1"],
+        /^[a-f0-9]{64}$/,
+      );
+      assert.ok(!Object.hasOwn(result, "fixes"));
+    }
+    assert.equal(
+      call(["check", "--root", directory, "--format", "sarif", path]).stdout,
+      sarif.stdout,
+    );
+    const sarifDiff = call(["check", "--format", "sarif", "--diff", path]);
+    assert.equal(sarifDiff.status, 2);
+    assert.equal(sarifDiff.stdout, "");
+    const sarifClean = call(
+      [
+        "check",
+        "--root",
+        directory,
+        "--format",
+        "sarif",
+        "--stdin-filename",
+        path,
+        "-",
+      ],
+      "value: true\r\n",
+    );
+    assert.equal(sarifClean.status, 0, sarifClean.stderr);
+    assert.deepEqual(JSON.parse(sarifClean.stdout).runs[0].results, []);
+    const sarifParse = call(
+      [
+        "check",
+        "--root",
+        directory,
+        "--format",
+        "sarif",
+        "--stdin-filename",
+        path,
+        "-",
+      ],
+      "value: [\n",
+    );
+    assert.equal(sarifParse.status, 1, sarifParse.stderr);
+    assert.equal(
+      JSON.parse(sarifParse.stdout).runs[0].results[0].ruleId,
+      "yaml-syntax",
+    );
     const metadata = call(["rules", "--format", "json", "--color", "always"]);
     assert.equal(metadata.status, 0, metadata.stderr);
     assert.equal(metadata.stderr, "");
@@ -176,7 +255,7 @@ export function smokeBinary(executable, version, target) {
       "fix must preserve valid bytes",
     );
     console.log(
-      `PASS native ${target}: version, registry, explanations, Unicode path, diagnostics, WASM highlighting, Unicode/CRLF formatting, stdin, errors, diff, fixes and idempotence`,
+      `PASS native ${target}: version, registry, explanations, SARIF, Unicode path, diagnostics, WASM highlighting, Unicode/CRLF formatting, stdin, errors, diff, fixes and idempotence`,
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

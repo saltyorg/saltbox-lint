@@ -31,6 +31,12 @@ func utf16Column(s *lint.Source, offset int) int {
 	return 1 + len(utf16.Encode([]rune(string(s.Data[start:offset]))))
 }
 
+// utf16Range adapts original half-open byte spans for UTF-16 consumers.
+func utf16Range(s *lint.Source, span Span) Range {
+	start, end := s.Position(span.Start), s.Position(span.End)
+	return Range{Position{start.Line, utf16Column(s, span.Start)}, Position{end.Line, utf16Column(s, span.End)}}
+}
+
 func singleLine(s string) string {
 	return strings.NewReplacer("\r", "\\r", "\n", "\\n").Replace(s)
 }

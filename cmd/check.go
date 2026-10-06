@@ -39,7 +39,7 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 	flags.StringVar(&opts.root, "root", "", "Source root for identities and context")
 	flags.StringVar(&opts.stdinFilename, "stdin-filename", "", "Working-directory-relative filename for '-' input")
 	flags.StringVar(&opts.stdinSourceFilename, "stdin-source-filename", "", "Original source spelling for stdin classification; must resolve to the same source owner")
-	flags.StringVar(&opts.format, "format", "auto", "Output format: auto, human, concise, json, github (auto uses human on a terminal)")
+	flags.StringVar(&opts.format, "format", "auto", "Output format: auto, human, concise, json, github, sarif (auto uses human on a terminal)")
 	flags.BoolVar(&opts.fix, "fix", false, "Apply verified formatting fixes and recheck")
 	flags.BoolVar(&opts.diff, "diff", false, "Print unified formatting changes without writing")
 	flags.BoolVar(&opts.includeAnalysis, "include-analysis", false, "Include versioned dependency records in JSON output")
@@ -49,11 +49,11 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 
 func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options, error) {
 	switch opts.format {
-	case "auto", "human", "concise", "json", "github":
+	case "auto", "human", "concise", "json", "github", "sarif":
 	default:
 		return lint.Options{}, fmt.Errorf("unknown output format %q", opts.format)
 	}
-	if opts.diff && (opts.format == "json" || opts.format == "github") {
+	if opts.diff && (opts.format == "json" || opts.format == "github" || opts.format == "sarif") {
 		return lint.Options{}, fmt.Errorf("--diff cannot use structured output")
 	}
 	if opts.includeAnalysis && opts.format != "json" {
@@ -156,7 +156,12 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMod
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
-	if err := renderCheck(command.Context(), command.OutOrStdout(), project, diagnostics, format, human); err != nil {
+	if format == "sarif" {
+		err = report.Render(command.OutOrStdout(), project, diagnostics, report.Options{Format: format, Version: command.Root().Version})
+	} else {
+		err = renderCheck(command.Context(), command.OutOrStdout(), project, diagnostics, format, human)
+	}
+	if err != nil {
 		return err
 	}
 	if len(diagnostics) > 0 {

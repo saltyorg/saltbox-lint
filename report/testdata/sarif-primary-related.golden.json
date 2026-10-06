@@ -1,0 +1,548 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "saltbox-lint",
+          "version": "1.2.3",
+          "informationUri": "https://github.com/saltyorg/saltbox-lint",
+          "rules": [
+            {
+              "id": "ansible-source-header",
+              "shortDescription": {
+                "text": "Keep ordered role source headers"
+              },
+              "fullDescription": {
+                "text": "Role defaults, tasks, handlers and vars start with the standard ordered header and a document marker within 20 lines. Extra metadata and continuation comments are allowed. Complete unambiguous metadata can be reordered with its comments; incomplete headers remain manual."
+              },
+              "help": {
+                "text": "Role defaults, tasks, handlers and vars start with the standard ordered header and a document marker within 20 lines. Extra metadata and continuation comments are allowed. Complete unambiguous metadata can be reordered with its comments; incomplete headers remain manual.\n\nValid example:\n####################\n# Title: Example\n# Author(s): someone\n# URL: https://example.com\n# GNU General Public License v3.0\n---\n[]\n\n\nInvalid example:\n[]\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#ansible-source-header"
+            },
+            {
+              "id": "ansible-static-import",
+              "shortDescription": {
+                "text": "Use dynamic Ansible includes"
+              },
+              "fullDescription": {
+                "text": "Static task and role imports are rejected on actual tasks, with the corresponding include alternative. This semantic change is not an automatic fix."
+              },
+              "help": {
+                "text": "Static task and role imports are rejected on actual tasks, with the corresponding include alternative. This semantic change is not an automatic fix.\n\nValid example:\n- include_tasks: example.yml\n\n\nInvalid example:\n- import_tasks: example.yml\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#ansible-static-import"
+            },
+            {
+              "id": "ansible-tag-name",
+              "shortDescription": {
+                "text": "Use literal kebab-case Ansible tags"
+              },
+              "fullDescription": {
+                "text": "Actual task, play, role and include-apply tags must be literal lowercase kebab-case strings. Quote string spellings of YAML typed values."
+              },
+              "help": {
+                "text": "Actual task, play, role and include-apply tags must be literal lowercase kebab-case strings. Quote string spellings of YAML typed values.\n\nValid example:\n- debug: {msg: ok}\n  tags: good-tag\n\n\nInvalid example:\n- debug: {msg: ok}\n  tags: Bad_tag\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#ansible-tag-name"
+            },
+            {
+              "id": "ansible-when-list",
+              "shortDescription": {
+                "text": "Split when conjunctions into block lists"
+              },
+              "fullDescription": {
+                "text": "Represent an unparenthesized top-level logical and in a structural when scalar or list item as separate block-list items. Preserve explicit groups as indivisible conditions, retain operand order, and group nontrivial individual conditions. Keep conjunctions beneath or, negation, comparisons, filters, calls and conditional results intact. Other condition fields and Jinja conditions are outside this convention."
+              },
+              "help": {
+                "text": "Represent an unparenthesized top-level logical and in a structural when scalar or list item as separate block-list items. Preserve explicit groups as indivisible conditions, retain operand order, and group nontrivial individual conditions. Keep conjunctions beneath or, negation, comparisons, filters, calls and conditional results intact. Other condition fields and Jinja conditions are outside this convention.\n\nValid example:\n- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when:\n    - (value is defined)\n    - value\n\n\nInvalid example:\n- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: (value is defined) and value\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#ansible-when-list"
+            },
+            {
+              "id": "ansible-when-parentheses",
+              "shortDescription": {
+                "text": "Group nontrivial when conditions"
+              },
+              "fullDescription": {
+                "text": "Enclose the complete when condition in parentheses unless it is a single variable read, including direct field/item access or a standalone lookup, query or q call. Operations outside a lookup still need grouping. Unparenthesized top-level conjunctions belong to ansible-when-list instead; complete explicit groups remain valid. Check each indivisible when list item on structural Ansible owners; preserve nested precedence. Other condition fields and Jinja conditions are outside this convention."
+              },
+              "help": {
+                "text": "Enclose the complete when condition in parentheses unless it is a single variable read, including direct field/item access or a standalone lookup, query or q call. Operations outside a lookup still need grouping. Unparenthesized top-level conjunctions belong to ansible-when-list instead; complete explicit groups remain valid. Check each indivisible when list item on structural Ansible owners; preserve nested precedence. Other condition fields and Jinja conditions are outside this convention.\n\nValid example:\n- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when:\n    - lookup('role_var', '_metrics_enabled', role='traefik')\n    - (value is defined)\n\n\nInvalid example:\n- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: value is defined\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#ansible-when-parentheses"
+            },
+            {
+              "id": "cloudflare-auth-contract",
+              "shortDescription": {
+                "text": "Read normalized Cloudflare authentication"
+              },
+              "fullDescription": {
+                "text": "Runtime expressions use normalized Cloudflare authentication variables instead of raw account members. Literal text and unrelated object attributes are not global account reads."
+              },
+              "help": {
+                "text": "Runtime expressions use normalized Cloudflare authentication variables instead of raw account members. Literal text and unrelated object attributes are not global account reads.\n\nValid example:\nvalue: '{{ cloudflare_scoped_token }}'\n\n\nInvalid example:\nvalue: '{{ cloudflare.api }}'\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#cloudflare-auth-contract"
+            },
+            {
+              "id": "computed-default-documentation",
+              "shortDescription": {
+                "text": "Exclude computed defaults from inventory docs"
+              },
+              "fullDescription": {
+                "text": "Owner-local computed _lookup defaults carry one of the two supported documentation-exclusion directives on the immediately preceding physical line. Safe block declarations can receive a Skip docs comment without changing their YAML data."
+              },
+              "help": {
+                "text": "Owner-local computed _lookup defaults carry one of the two supported documentation-exclusion directives on the immediately preceding physical line. Safe block declarations can receive a Skip docs comment without changing their YAML data.\n\nValid example:\n# Skip docs\nexample_role_secret_lookup: value\n\n\nInvalid example:\nexample_role_secret_lookup: value\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#computed-default-documentation"
+            },
+            {
+              "id": "defaults-sections",
+              "shortDescription": {
+                "text": "Keep canonical defaults sections ordered"
+              },
+              "fullDescription": {
+                "text": "Recognized defaults section banners are unique and follow their canonical relative order; optional and unknown sections do not create requirements."
+              },
+              "help": {
+                "text": "Recognized defaults section banners are unique and follow their canonical relative order; optional and unknown sections do not create requirements.\n\nValid example:\n################################\n# Basics\n################################\n################################\n# Docker\n################################\n\n\nInvalid example:\n################################\n# Docker\n################################\n################################\n# Basics\n################################\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#defaults-sections"
+            },
+            {
+              "id": "docker-aggregate-contract",
+              "shortDescription": {
+                "text": "Compose Docker aggregates in override order"
+              },
+              "fullDescription": {
+                "text": "Read explicit role-local default before custom layers; preserve the supported network and host formulas, and keep custom environments solely in their final aggregate combine layer. Group conditional bases before combining the custom layer so it applies across every branch."
+              },
+              "help": {
+                "text": "Read explicit role-local default before custom layers; preserve the supported network and host formulas, and keep custom environments solely in their final aggregate combine layer. Group conditional bases before combining the custom layer so it applies across every branch.\n\nValid example:\nexample_role_docker_ports_default: [80]\nexample_role_docker_ports_custom: []\nexample_role_docker_ports: \"{{ lookup('role_var', '_docker_ports_default', role='example') + lookup('role_var', '_docker_ports_custom', role='example') }}\"\n\n\nInvalid example:\nexample_role_docker_networks: []\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-aggregate-contract"
+            },
+            {
+              "id": "docker-empty-layers",
+              "shortDescription": {
+                "text": "Omit redundant empty Docker layers"
+              },
+              "fullDescription": {
+                "text": "Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change."
+              },
+              "help": {
+                "text": "Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change.\n\nValid example:\nexample_role_docker_ports_default: [80]\nexample_role_docker_ports_custom: []\n\n\nInvalid example:\nexample_role_docker_ports_default: []\nexample_role_docker_ports_custom: []\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-empty-layers"
+            },
+            {
+              "id": "docker-healthcheck-mode",
+              "shortDescription": {
+                "text": "Allow shell healthchecks explicitly"
+              },
+              "fullDescription": {
+                "text": "CMD-SHELL needs the exact cmd-shell allowance on its test key. The allowance affects only shell mode and cannot suppress shape or Jinja diagnostics."
+              },
+              "help": {
+                "text": "CMD-SHELL needs the exact cmd-shell allowance on its test key. The allowance affects only shell mode and cannot suppress shape or Jinja diagnostics.\n\nValid example:\nexample_role_docker_healthcheck:\n  test: # saltbox-lint allow cmd-shell\n    - CMD-SHELL\n    - curl --fail || exit 1\n\n\nInvalid example:\nexample_role_docker_healthcheck:\n  test:\n    - CMD-SHELL\n    - curl --fail || exit 1\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-healthcheck-mode"
+            },
+            {
+              "id": "docker-healthcheck-shape",
+              "shortDescription": {
+                "text": "Use explicit Docker healthcheck block lists"
+              },
+              "fullDescription": {
+                "text": "Healthchecks declare exactly one test block list: NONE alone, CMD plus a nonempty executable and optional scalar argv, or CMD-SHELL plus one nonempty scalar command. Numeric and boolean values follow Ansible string normalization; null and collections are invalid. Otherwise valid flow lists with preservable scalar spellings and comments can be converted."
+              },
+              "help": {
+                "text": "Healthchecks declare exactly one test block list: NONE alone, CMD plus a nonempty executable and optional scalar argv, or CMD-SHELL plus one nonempty scalar command. Numeric and boolean values follow Ansible string normalization; null and collections are invalid. Otherwise valid flow lists with preservable scalar spellings and comments can be converted.\n\nValid example:\nexample_role_docker_healthcheck:\n  test:\n    - CMD\n    - curl\n\n\nInvalid example:\nexample_role_docker_healthcheck:\n  test: [CMD, curl]\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-healthcheck-shape"
+            },
+            {
+              "id": "docker-helper-arguments",
+              "shortDescription": {
+                "text": "Pass public Docker lifecycle helper arguments"
+              },
+              "fullDescription": {
+                "text": "Docker lifecycle include vars use optional var_prefix, never the private _var_prefix fact."
+              },
+              "help": {
+                "text": "Docker lifecycle include vars use optional var_prefix, never the private _var_prefix fact.\n\nValid example:\n- include_tasks: /docker/create_docker_container.yml\n  vars: {var_prefix: example}\n\n\nInvalid example:\n- include_tasks: /docker/create_docker_container.yml\n  vars: {_var_prefix: example}\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-helper-arguments"
+            },
+            {
+              "id": "docker-image-contract",
+              "shortDescription": {
+                "text": "Compose Docker images from role defaults"
+              },
+              "fullDescription": {
+                "text": "A role Docker image declaration has repository and tag companion defaults and reads both through explicit owner-targeted role_var lookups."
+              },
+              "help": {
+                "text": "A role Docker image declaration has repository and tag companion defaults and reads both through explicit owner-targeted role_var lookups.\n\nValid example:\nexample_role_docker_image_repo: example/app\nexample_role_docker_image_tag: latest\nexample_role_docker_image: \"{{ lookup('role_var', '_docker_image_repo', role='example') }}:{{ lookup('role_var', '_docker_image_tag', role='example') }}\"\n\n\nInvalid example:\nexample_role_docker_image: example/app:latest\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-image-contract"
+            },
+            {
+              "id": "docker-vars-policy",
+              "shortDescription": {
+                "text": "Keep shared Docker suffix policies consistent"
+              },
+              "fullDescription": {
+                "text": "Actual docker_vars lookup specs share one policy across Docker resources. Only literal omit:true declarations permit sparse fallback accesses, including implicit Ansible conditions. Invalid required sibling context is reported on the selected dependent source."
+              },
+              "help": {
+                "text": "Actual docker_vars lookup specs share one policy across Docker resources. Only literal omit:true declarations permit sparse fallback accesses, including implicit Ansible conditions. Invalid required sibling context is reported on the selected dependent source.\n\nValid example:\n- debug: {msg: ok}\n\n\nInvalid example:\n- debug: {msg: '{{ _docker_vars._docker_memory | default(0) }}'}\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-vars-policy"
+            },
+            {
+              "id": "git-clone-resource",
+              "shortDescription": {
+                "text": "Keep Git actions in the shared clone resource"
+              },
+              "fullDescription": {
+                "text": "Only the exact canonical Saltbox clone resource may invoke Git. Task and handler lists, nested blocks and action forms share this policy."
+              },
+              "help": {
+                "text": "Only the exact canonical Saltbox clone resource may invoke Git. Task and handler lists, nested blocks and action forms share this policy.\n\nValid example:\n- include_tasks: /resources/tasks/git/clone_git_repo.yml\n\n\nInvalid example:\n- git: {repo: example}\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#git-clone-resource"
+            },
+            {
+              "id": "jinja-conditional-length",
+              "shortDescription": {
+                "text": "Wrap long inline conditionals"
+              },
+              "fullDescription": {
+                "text": "A wholly inline Jinja conditional, including one without else, must not occupy a source line longer than 160 Unicode characters."
+              },
+              "help": {
+                "text": "A wholly inline Jinja conditional, including one without else, must not occupy a source line longer than 160 Unicode characters.\n\nValid example:\nv: \"{{ a if enabled else b }}\"\n\nInvalid example:\nv: \"{{ 'this deliberately long value makes the complete physical source line exceed the conditional length limit' if a_long_condition_name_that_keeps_the_expression_inline else another_long_fallback_value }}\""
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#jinja-conditional-length"
+            },
+            {
+              "id": "jinja-layout",
+              "shortDescription": {
+                "text": "Align multiline Jinja expressions"
+              },
+              "fullDescription": {
+                "text": "Align operators, conditional branches, call arguments and dictionary keys with their structural owner. Keep non-block closing braces beside the final token."
+              },
+              "help": {
+                "text": "Align operators, conditional branches, call arguments and dictionary keys with their structural owner. Keep non-block closing braces beside the final token.\n\nValid example:\nv: \"{{ a\n       | f }}\"\n\nInvalid example:\nv: \"{{ a\n | f }}\""
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#jinja-layout"
+            },
+            {
+              "id": "jinja-redundant-conditional-parentheses",
+              "shortDescription": {
+                "text": "Omit standalone conditional result wrappers"
+              },
+              "fullDescription": {
+                "text": "A standalone Jinja output conditional with if and else does not need an enclosing result pair. Preserve groups used by operators, filters, calls, tuples and nested branches. This does not impose grouping on the condition."
+              },
+              "help": {
+                "text": "A standalone Jinja output conditional with if and else does not need an enclosing result pair. Preserve groups used by operators, filters, calls, tuples and nested branches. This does not impose grouping on the condition.\n\nValid example:\nvalue: \"{{ a if condition else b }}\"\n\n\nInvalid example:\nvalue: \"{{ (a if condition else b) }}\"\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#jinja-redundant-conditional-parentheses"
+            },
+            {
+              "id": "lint-directive",
+              "shortDescription": {
+                "text": "Keep lint allowances exact and local"
+              },
+              "fullDescription": {
+                "text": "Only # saltbox-lint allow cmd-shell is supported, on a Docker healthcheck test key that needs shell execution. Unknown, malformed, misplaced and unnecessary directives fail; quoted and block command contents are not comments."
+              },
+              "help": {
+                "text": "Only # saltbox-lint allow cmd-shell is supported, on a Docker healthcheck test key that needs shell execution. Unknown, malformed, misplaced and unnecessary directives fail; quoted and block command contents are not comments.\n\nValid example:\nexample_role_docker_healthcheck:\n  test: # saltbox-lint allow cmd-shell\n    - CMD-SHELL\n    - curl --fail || exit 1\n\n\nInvalid example:\n# saltbox-lint allow cmd-shell\nexample_role_enabled: true\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#lint-directive"
+            },
+            {
+              "id": "lookup-conditional-argument",
+              "shortDescription": {
+                "text": "Resolve conditionals before lookup calls"
+              },
+              "fullDescription": {
+                "text": "Lookup arguments must not contain unquoted conditional expressions, including forms without else. Choose between lookups outside the calls or pass an already resolved value."
+              },
+              "help": {
+                "text": "Lookup arguments must not contain unquoted conditional expressions, including forms without else. Choose between lookups outside the calls or pass an already resolved value.\n\nValid example:\nv: \"{{ lookup('a') if enabled else lookup('b') }}\"\n\nInvalid example:\nv: \"{{ lookup('a', default=x if enabled else y) }}\""
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#lookup-conditional-argument"
+            },
+            {
+              "id": "network-health-contract",
+              "shortDescription": {
+                "text": "Pass explicit network health inputs"
+              },
+              "fullDescription": {
+                "text": "Network health includes pass source and target in their own vars; the shared resource cannot read caller-local Docker facts."
+              },
+              "help": {
+                "text": "Network health includes pass source and target in their own vars; the shared resource cannot read caller-local Docker facts.\n\nValid example:\n- include_tasks: network_container_health_status.yml\n  vars: {network_container_source: example, network_container_target: gluetun}\n\n\nInvalid example:\n- include_tasks: network_container_health_status.yml\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#network-health-contract"
+            },
+            {
+              "id": "role-directory-name",
+              "shortDescription": {
+                "text": "Use snake_case role directories"
+              },
+              "fullDescription": {
+                "text": "Role directories under roles and resources/roles use lowercase snake_case names; each selected source reports its own invalid owner."
+              },
+              "help": {
+                "text": "Role directories under roles and resources/roles use lowercase snake_case names; each selected source reports its own invalid owner.\n\nValid example:\n# roles/good_role/tasks/main.yml\n[]\n\n\nInvalid example:\n# roles/bad-role/tasks/main.yml\n[]\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-directory-name"
+            },
+            {
+              "id": "role-docker-state",
+              "shortDescription": {
+                "text": "Keep container state in the shared helper"
+              },
+              "fullDescription": {
+                "text": "Role defaults do not declare _role_docker_state because shared Docker lifecycle helpers own container state."
+              },
+              "help": {
+                "text": "Role defaults do not declare _role_docker_state because shared Docker lifecycle helpers own container state.\n\nValid example:\nexample_role_enabled: true\n\n\nInvalid example:\nexample_role_docker_state: started\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-docker-state"
+            },
+            {
+              "id": "role-lookup-target",
+              "shortDescription": {
+                "text": "Target role-aware lookups explicitly"
+              },
+              "fullDescription": {
+                "text": "Every live role_var and role_web lookup in defaults specifies role=, including legitimate cross-role reads."
+              },
+              "help": {
+                "text": "Every live role_var and role_web lookup in defaults specifies role=, including legitimate cross-role reads.\n\nValid example:\nexample_role_value: \"{{ lookup('role_var', '_value', role='other') }}\"\n\n\nInvalid example:\nexample_role_value: \"{{ lookup('role_var', '_value') }}\"\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-lookup-target"
+            },
+            {
+              "id": "role-var-empty-default",
+              "shortDescription": {
+                "text": "Use role_var empty-value defaults"
+              },
+              "fullDescription": {
+                "text": "A repeated role_var conditional fallback uses the lookup's default= argument with default_if_empty=true instead of reading the same value twice."
+              },
+              "help": {
+                "text": "A repeated role_var conditional fallback uses the lookup's default= argument with default_if_empty=true instead of reading the same value twice.\n\nValid example:\nexample_role_value: \"{{ lookup('role_var', '_value', role='example', default=omit, default_if_empty=true) }}\"\n\n\nInvalid example:\nexample_role_value: \"{{ lookup('role_var', '_value', role='example') if (lookup('role_var', '_value', role='example') | length \u003e 0) else omit }}\"\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-var-empty-default"
+            },
+            {
+              "id": "role-variable-prefix",
+              "shortDescription": {
+                "text": "Use the owning role variable prefix"
+              },
+              "fullDescription": {
+                "text": "Top-level role defaults containing _role_ must start with the exact role name derived from their role or resource-role path."
+              },
+              "help": {
+                "text": "Top-level role defaults containing _role_ must start with the exact role name derived from their role or resource-role path.\n\nValid example:\nexample_role_enabled: true\n\n\nInvalid example:\nother_role_enabled: true\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-variable-prefix"
+            },
+            {
+              "id": "role-web-contract",
+              "shortDescription": {
+                "text": "Use canonical role endpoint defaults"
+              },
+              "fullDescription": {
+                "text": "Complete subdomain/domain endpoint families derive host and URL defaults through role_web, with supported schemes and the HTTPS host fallback; direct string composition of matching subdomain and domain lookups uses the same policy."
+              },
+              "help": {
+                "text": "Complete subdomain/domain endpoint families derive host and URL defaults through role_web, with supported schemes and the HTTPS host fallback; direct string composition of matching subdomain and domain lookups uses the same policy.\n\nValid example:\nexample_role_web_subdomain: example\nexample_role_web_domain: example.com\nexample_role_web_url: \"{{ lookup('role_web', role='example', scheme='https') }}\"\n\n\nInvalid example:\nexample_role_web_subdomain: example\nexample_role_web_domain: example.com\nexample_role_web_url: \"https://example.com\"\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-web-contract"
+            },
+            {
+              "id": "section-spacing",
+              "shortDescription": {
+                "text": "Separate section banners from variables"
+              },
+              "fullDescription": {
+                "text": "Named three-line section banners need at least one blank line before their variables. Canonical and custom titles share this spacing policy; empty sections and literal scalar contents are ignored. Fixes preserve existing spacing and variable documentation comments."
+              },
+              "help": {
+                "text": "Named three-line section banners need at least one blank line before their variables. Canonical and custom titles share this spacing policy; empty sections and literal scalar contents are ignored. Fixes preserve existing spacing and variable documentation comments.\n\nValid example:\n################################\n# Settings\n################################\n\nvalue: true\n\n\nInvalid example:\n################################\n# Settings\n################################\nvalue: true\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#section-spacing"
+            },
+            {
+              "id": "svm-github-api-resource",
+              "shortDescription": {
+                "text": "Keep SVM access in the GitHub fallback resource"
+              },
+              "fullDescription": {
+                "text": "Only the exact canonical Saltbox GitHub API resource may read global svm; lexical bindings, attribute names and literal text are not reads."
+              },
+              "help": {
+                "text": "Only the exact canonical Saltbox GitHub API resource may read global svm; lexical bindings, attribute names and literal text are not reads.\n\nValid example:\nvalue: '{{ github_api_result }}'\n\n\nInvalid example:\nvalue: '{{ svm }}'\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#svm-github-api-resource"
+            },
+            {
+              "id": "template-partial-coverage",
+              "shortDescription": {
+                "text": "Explain unsupported static template coverage"
+              },
+              "fullDescription": {
+                "text": "Unsupported configuration, extension statements, expression grammar and scanner bounds receive an explicit partial-coverage warning. Supported checks do not validate runtime values, load imports or render output. Templates never receive fixes."
+              },
+              "help": {
+                "text": "Unsupported configuration, extension statements, expression grammar and scanner bounds receive an explicit partial-coverage warning. Supported checks do not validate runtime values, load imports or render output. Templates never receive fixes.\n\nValid example:\n{{ value }}\n\nInvalid example:\n{% custom_extension value %}"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#template-partial-coverage"
+            },
+            {
+              "id": "template-syntax",
+              "shortDescription": {
+                "text": "Check supported template delimiters and blocks"
+              },
+              "fullDescription": {
+                "text": "Explicit templates receive bounded, read-only delimiter and block checks. Literal text, quoted delimiters, comments and raw content are preserved. Unsupported expression or statement grammar is partial coverage, never a fabricated syntax error. No layout or style policy applies."
+              },
+              "help": {
+                "text": "Explicit templates receive bounded, read-only delimiter and block checks. Literal text, quoted delimiters, comments and raw content are preserved. Unsupported expression or statement grammar is partial coverage, never a fabricated syntax error. No layout or style policy applies.\n\nValid example:\n{% if enabled %}{{ value }}{% endif %}\n\nInvalid example:\n{% if enabled %}{{ value }}"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#template-syntax"
+            },
+            {
+              "id": "traefik-adapter-contract",
+              "shortDescription": {
+                "text": "Forward namespaced Traefik contracts in role includes"
+              },
+              "fullDescription": {
+                "text": "Matching include_role vars forward each namespaced Traefik suffix through an owner-targeted role_var call; the owning defaults declare the same contract. Context and forwarding diagnostics stay on their owning selected source."
+              },
+              "help": {
+                "text": "Matching include_role vars forward each namespaced Traefik suffix through an owner-targeted role_var call; the owning defaults declare the same contract. Context and forwarding diagnostics stay on their owning selected source.\n\nValid example:\n# roles/example/defaults/main.yml\nexample_role_nginx_web_subdomain: \"nginx\"\nexample_role_nginx_traefik_sso_middleware: \"{{ traefik_default_sso_middleware }}\"\nexample_role_nginx_traefik_middleware_default: \"{{ traefik_default_middleware }}\"\nexample_role_nginx_traefik_middleware_custom: \"\"\nexample_role_nginx_traefik_middleware_default_api: \"{{ traefik_default_middleware_api }}\"\nexample_role_nginx_traefik_middleware_custom_api: \"\"\nexample_role_nginx_traefik_certresolver: \"{{ traefik_default_certresolver }}\"\nexample_role_nginx_traefik_enabled: true\nexample_role_nginx_traefik_api_enabled: false\nexample_role_nginx_traefik_api_endpoint: \"\"\n\n---\n# roles/example/tasks/main.yml\n- name: Execute nginx role\n  ansible.builtin.include_role:\n    name: nginx\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n    nginx_role_traefik_sso_middleware: \"{{ lookup('role_var', '_nginx_traefik_sso_middleware', role='example') }}\"\n    nginx_role_traefik_middleware_default: \"{{ lookup('role_var', '_nginx_traefik_middleware_default', role='example') }}\"\n    nginx_role_traefik_middleware_custom: \"{{ lookup('role_var', '_nginx_traefik_middleware_custom', role='example') }}\"\n    nginx_role_traefik_middleware_default_api: \"{{ lookup('role_var', '_nginx_traefik_middleware_default_api', role='example') }}\"\n    nginx_role_traefik_middleware_custom_api: \"{{ lookup('role_var', '_nginx_traefik_middleware_custom_api', role='example') }}\"\n    nginx_role_traefik_certresolver: \"{{ lookup('role_var', '_nginx_traefik_certresolver', role='example') }}\"\n    nginx_role_traefik_enabled: \"{{ lookup('role_var', '_nginx_traefik_enabled', role='example') }}\"\n    nginx_role_traefik_api_enabled: \"{{ lookup('role_var', '_nginx_traefik_api_enabled', role='example') }}\"\n    nginx_role_traefik_api_endpoint: \"{{ lookup('role_var', '_nginx_traefik_api_endpoint', role='example') }}\"\n\n\nInvalid example:\n- include_role: {name: nginx}\n  vars:\n    nginx_role_web_subdomain: \"{{ lookup('role_var', '_nginx_web_subdomain', role='example') }}\"\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#traefik-adapter-contract"
+            },
+            {
+              "id": "traefik-api-contract",
+              "shortDescription": {
+                "text": "Declare the complete Traefik API contract"
+              },
+              "fullDescription": {
+                "text": "Traefik-enabled declarations require the API middleware default/custom pair in order, API enablement and endpoint defaults. Legacy middleware declarations are unsupported even without enablement. Direct and namespaced API endpoint defaults must be empty strings or valid literal Traefik v3 HTTP rules. Runtime templates and unresolved aliases are not evaluated."
+              },
+              "help": {
+                "text": "Traefik-enabled declarations require the API middleware default/custom pair in order, API enablement and endpoint defaults. Legacy middleware declarations are unsupported even without enablement. Direct and namespaced API endpoint defaults must be empty strings or valid literal Traefik v3 HTTP rules. Runtime templates and unresolved aliases are not evaluated.\n\nValid example:\nexample_role_traefik_middleware_default_api: \"{{ traefik_default_middleware_api }}\"\nexample_role_traefik_middleware_custom_api: \"\"\nexample_role_traefik_enabled: false\nexample_role_traefik_api_enabled: false\nexample_role_traefik_api_endpoint: \"PathPrefix(`/api`)\"\n\n\nInvalid example:\nexample_role_traefik_enabled: false\nexample_role_traefik_api_endpoint: \"/api\"\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#traefik-api-contract"
+            },
+            {
+              "id": "traefik-renderer-contract",
+              "shortDescription": {
+                "text": "Consume the API contract in Traefik renderers"
+              },
+              "fullDescription": {
+                "text": "Roles declaring Traefik use the shared Docker renderer or consume API middleware, enablement and endpoint in actual copy content or referenced templates. Actual retirement fail paths are exempt; comments and debug text do not establish rendering."
+              },
+              "help": {
+                "text": "Roles declaring Traefik use the shared Docker renderer or consume API middleware, enablement and endpoint in actual copy content or referenced templates. Actual retirement fail paths are exempt; comments and debug text do not establish rendering.\n\nValid example:\n# roles/example/defaults/main.yml\nexample_role_traefik_middleware_default_api: \"{{ traefik_default_middleware_api }}\"\nexample_role_traefik_middleware_custom_api: \"\"\nexample_role_traefik_enabled: true\nexample_role_traefik_api_enabled: true\nexample_role_traefik_api_endpoint: \"PathPrefix(`/api`)\"\n\n---\n# roles/example/tasks/main.yml\n- name: Render API router\n  ansible.builtin.copy:\n    dest: /traefik/router.yml\n    mode: \"0644\"\n    content: |\n      http:\n        routers:\n      {% if example_role_traefik_api_enabled %}\n          example-api:\n            entrypoints:\n              - \"websecure\"\n            rule: \"{{ example_role_traefik_api_endpoint }}\"\n            middlewares:\n      {% for item in traefik_middleware_api.split(',') %}\n              - {{ item.strip() | string | to_json }}\n      {% endfor %}\n            service: \"example\"\n      {% endif %}\n        services:\n          example:\n            loadBalancer:\n              servers:\n                - url: \"http://127.0.0.1:8080\"\n\n\nInvalid example:\nexample_role_traefik_enabled: false\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#traefik-renderer-contract"
+            },
+            {
+              "id": "yaml-syntax",
+              "shortDescription": {
+                "text": "Valid YAML syntax"
+              },
+              "fullDescription": {
+                "text": "Source must parse as YAML before policy checks can run."
+              },
+              "help": {
+                "text": "Correct the indicated YAML syntax, then run check again."
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/sarif.md"
+            }
+          ]
+        }
+      },
+      "columnKind": "utf16CodeUnits",
+      "originalUriBaseIds": {
+        "%SRCROOT%": {
+          "uri": "file:///work/nested/"
+        }
+      },
+      "invocations": [
+        {
+          "workingDirectory": {
+            "uri": "file:///work/nested/"
+          },
+          "executionSuccessful": true
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "jinja-layout",
+          "ruleIndex": 17,
+          "level": "error",
+          "message": {
+            "text": "bad value\nUse true."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "a.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 7,
+                  "endLine": 1,
+                  "endColumn": 8
+                }
+              }
+            }
+          ],
+          "relatedLocations": [
+            {
+              "id": 1,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "a.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 5
+                }
+              },
+              "message": {
+                "text": "context"
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "saltboxLintContext/v1": "0441b31e63100c78df077a4c520a029bace88783ae4555f63f2c05965c568068"
+          }
+        }
+      ]
+    }
+  ]
+}

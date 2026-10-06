@@ -12,6 +12,7 @@ import (
 // Options selects a renderer. Summary is optional and used only by github.
 type Options struct {
 	Format  string
+	Version string
 	Summary io.Writer
 	GitHub  GitHub
 	Human   HumanOptions
@@ -27,6 +28,8 @@ func Render(w io.Writer, p *lint.Project, ds []lint.Diagnostic, opts Options) er
 		return concise(w, p, records)
 	case "json":
 		return jsonReport(w, records, p.Dependencies)
+	case "sarif":
+		return sarifReport(w, p, records, opts.Version)
 	case "github":
 		return githubReport(w, p, records, opts)
 	default:
