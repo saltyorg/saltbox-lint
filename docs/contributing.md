@@ -40,6 +40,11 @@ Normal builds and runtime checks need no Python or Ansible installation.
 `make catalog` explicitly refreshes the frozen catalog through the managed
 Ansible wrappers; it does not execute consumer modules or roles.
 
+[`scaffold role`](scaffolding.md) previews minimal role sources and validates
+them with the complete registry. Use isolated temporary repositories to verify
+creation and failure handling. Creating a role in a consumer repository requires
+explicit authorization; ordinary corpus checks remain read-only.
+
 ## Preservation fuzzing
 
 `go test ./lint ./format ./yamlindex -run '^Fuzz'` runs committed seeds without

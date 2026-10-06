@@ -31,8 +31,10 @@ Do not edit or execute consumer roles during this validation.
 
 ## Offer fixes conservatively
 
-A preview is not permission to write. Only `check --fix` writes source files;
-the editor endpoints return edits against the exact submitted snapshot.
+A preview is not permission to write. `check --fix` explicitly edits existing
+source files; the editor endpoints return edits against the exact submitted
+snapshot. The separate [role scaffold command](scaffolding.md) requires `--write`
+to create new files after registry validation.
 Register fix availability with the rule. Existing structural fix providers
 share planning and preservation checks; extending one requires preserving its
 contract across CLI checks, formatter responses and editor actions.

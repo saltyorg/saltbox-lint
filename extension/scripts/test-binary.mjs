@@ -1,7 +1,15 @@
 // Native smoke probe intentionally uses only Node builtins; also runs in Alpine.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -254,8 +262,100 @@ export function smokeBinary(executable, version, target) {
       valid,
       "fix must preserve valid bytes",
     );
+    for (const project of ["saltbox", "sandbox"]) {
+      const root = join(directory, `${project} root 🌨`);
+      mkdirSync(join(root, "roles"), { recursive: true });
+      writeFileSync(join(root, `${project}.yml`), "---\n[]\n");
+      const args = [
+        "scaffold",
+        "role",
+        "native_example",
+        "--root",
+        root,
+        "--title",
+        "Native fixture 🌨",
+        "--url",
+        "https://example.com/fixture",
+      ];
+      if (project === "saltbox") args.push("--author", "fixture contributor");
+      const preview = call(args);
+      assert.equal(preview.status, 0, preview.stderr);
+      assert.equal(preview.stderr, "");
+      assert.match(preview.stdout, /Preview only\./);
+      assert.match(preview.stdout, /roles\/native_example\/defaults\/main.yml/);
+      assert.match(preview.stdout, /roles\/native_example\/tasks\/main.yml/);
+      assert.equal(call(args).stdout, preview.stdout);
+      const rolePath = join(root, "roles", "native_example");
+      assert.equal(
+        existsSync(rolePath),
+        false,
+        "preview must not create a role",
+      );
+      const created = call([...args, "--write"]);
+      assert.equal(created.status, 0, created.stderr);
+      assert.equal((created.stderr.match(/Created:/g) ?? []).length, 5);
+      const defaults = readFileSync(join(rolePath, "defaults", "main.yml"));
+      const tasks = readFileSync(join(rolePath, "tasks", "main.yml"));
+      assert.ok(preview.stdout.includes(defaults.toString()));
+      assert.ok(preview.stdout.includes(tasks.toString()));
+      if (project === "sandbox")
+        assert.match(defaults.toString(), /# Author\(s\): salty\n/);
+      const checked = call([
+        "check",
+        "--root",
+        root,
+        "--format",
+        "json",
+        rolePath,
+      ]);
+      assert.equal(checked.status, 0, checked.stderr);
+      assert.deepEqual(JSON.parse(checked.stdout), {
+        schema_version: 2,
+        diagnostics: [],
+        fixes: [],
+      });
+      const refused = call([...args, "--write"]);
+      assert.equal(refused.status, 2);
+      assert.equal(refused.stdout, "");
+      assert.deepEqual(
+        readFileSync(join(rolePath, "defaults", "main.yml")),
+        defaults,
+      );
+      assert.deepEqual(
+        readFileSync(join(rolePath, "tasks", "main.yml")),
+        tasks,
+      );
+      const invalidName = [...args];
+      invalidName[2] = "../escape";
+      assert.equal(call([...invalidName, "--write"]).status, 2);
+      const aliasRoot = join(directory, `${project} directory alias root`);
+      const outside = join(directory, `${project} outside`);
+      mkdirSync(aliasRoot);
+      mkdirSync(outside);
+      writeFileSync(join(aliasRoot, `${project}.yml`), "[]\n");
+      // Junctions need no Windows developer-mode or symlink privilege. They
+      // exercise physical directory ownership on every packaged Windows CLI.
+      symlinkSync(
+        outside,
+        join(aliasRoot, "roles"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const aliasArgs = [...args];
+      aliasArgs[4] = aliasRoot;
+      assert.equal(
+        call(aliasArgs).status,
+        2,
+        "directory aliases cannot own roles",
+      );
+      assert.equal(call([...aliasArgs, "--write"]).status, 2);
+      assert.equal(existsSync(join(outside, "native_example")), false);
+    }
+    const scaffoldHelp = call(["scaffold", "role", "--help"]);
+    assert.equal(scaffoldHelp.status, 0, scaffoldHelp.stderr);
+    assert.match(scaffoldHelp.stdout, /--write/);
+    assert.match(scaffoldHelp.stdout, /never executed/);
     console.log(
-      `PASS native ${target}: version, registry, explanations, SARIF, Unicode path, diagnostics, WASM highlighting, Unicode/CRLF formatting, stdin, errors, diff, fixes and idempotence`,
+      `PASS native ${target}: version, registry, explanations, SARIF, Unicode path, diagnostics, WASM highlighting, Unicode/CRLF formatting, stdin, errors, diff, fixes, idempotence and validated role creation`,
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

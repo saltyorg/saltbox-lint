@@ -405,7 +405,13 @@ for local generation, identity behavior, and the optional upload example.
 `saltbox-lint rules RULE_ID` uses the same destination-aware width and color
 settings as human findings, with readable plain details when redirected.
 
-Only explicit `check --fix` writes source files. Safe whitespace edits preserve
+Explicit `check --fix` edits existing source files. The separate
+[`scaffold role`](https://github.com/saltyorg/saltbox-lint/blob/main/docs/scaffolding.md) command previews a minimal validated
+defaults/tasks role; explicit `--write` creates its new files without overwriting
+existing targets. Supply honest title, author and project URL metadata. Sandbox
+uses `Author(s): salty`. No inventory, project marker or template is generated.
+
+Safe whitespace edits preserve
 YAML structure, comments, scalar styles/tags, exact Jinja string contents and
 non-whitespace tokens. Already-valid formatting stays byte-for-byte unchanged.
 The expression rules also support these verified corrections:
