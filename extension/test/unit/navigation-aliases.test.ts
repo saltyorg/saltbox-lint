@@ -221,6 +221,7 @@ test("saved lexical reference aliases retain their URI and Unicode CRLF spans on
     assert.equal(location?.range.end.line, 2);
     assert.equal(location?.range.end.character, 57);
     assert.equal(await answer.targetsCurrent(), true);
+    assert.equal(answer.targetsCurrentNow(), true);
     f.documents.push({
       uri: uri(join(f.root, alias)),
       isClosed: false,
@@ -232,6 +233,7 @@ test("saved lexical reference aliases retain their URI and Unicode CRLF spans on
       false,
       "late dirty aliases revoke a previously mapped answer",
     );
+    assert.equal(answer.targetsCurrentNow(), false);
     f.documents.length = 0;
     f.documents.push({
       uri: uri(join(f.root, owner)),
@@ -244,6 +246,7 @@ test("saved lexical reference aliases retain their URI and Unicode CRLF spans on
       false,
       "late dirty owners revoke a previously mapped answer",
     );
+    assert.equal(answer.targetsCurrentNow(), false);
     f.documents.length = 0;
     await f.retarget(join(f.root, "other.yml"));
     assert.equal(
@@ -251,6 +254,7 @@ test("saved lexical reference aliases retain their URI and Unicode CRLF spans on
       false,
       "a returned answer cannot retain a retargeted alias",
     );
+    assert.equal(answer.targetsCurrentNow(), false);
   } finally {
     await f.cleanup();
   }

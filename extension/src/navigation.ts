@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { readFile, lstat } from "node:fs/promises";
+import { openSync, readSync, closeSync, fstatSync } from "node:fs";
 import {
   identify,
+  identifyNow,
   resolveSource,
   templatePath,
   unavailableSource,
@@ -13,6 +15,7 @@ import { SnapshotIndex, hash, type Position } from "./protocol.ts";
 import { range } from "./diagnostics.ts";
 import {
   sourceCurrent,
+  sourceCurrentNow,
   fileFingerprint,
   observationFingerprint,
   type ObservedSource,
@@ -28,6 +31,7 @@ export interface NavigationAnswer {
   locations: Map<QueryLocation, vscode.Location>;
   sourceIndex: SnapshotIndex;
   targetsCurrent: () => Promise<boolean>;
+  targetsCurrentNow: () => boolean;
 }
 
 // Source bytes and original coordinates are checked together. Dirty dependency
@@ -111,6 +115,71 @@ export async function validateNavigation(
     // A later read may yield while an earlier mapped target changes. Recheck
     // every retained owner/fingerprint and current buffer after all reads.
     return (await identitiesCurrent()) && (await buffersCurrent());
+  };
+  const targetsCurrentNow = () => {
+    // Each saved owner is read at most its already captured byte length plus
+    // one EOF probe, using a 64 KiB scratch buffer. A growing/replaced source
+    // refuses the answer rather than expanding this synchronous read budget.
+    const scratch = Buffer.alloc(64 * 1024);
+    for (const [target, { observation, digest, overlay }] of usedTargets) {
+      if (!sourceCurrentNow(report.root, target, observation, digest))
+        return false;
+      if (overlay) continue;
+      let descriptor: number | undefined;
+      try {
+        const size = Buffer.byteLength(snapshots.get(target)!.text);
+        descriptor = openSync(observation.filename, "r");
+        const before = fstatSync(descriptor, { bigint: true });
+        if (!before.isFile() || before.size !== BigInt(size)) return false;
+        const capturedHash = createHash("sha256");
+        let remaining = size;
+        while (remaining) {
+          const length = readSync(
+            descriptor,
+            scratch,
+            0,
+            Math.min(remaining, scratch.length),
+            null,
+          );
+          if (!length) return false;
+          capturedHash.update(scratch.subarray(0, length));
+          remaining -= length;
+        }
+        if (
+          readSync(descriptor, scratch, 0, 1, null) ||
+          capturedHash.digest("hex") !== digest ||
+          fileFingerprint(fstatSync(descriptor, { bigint: true })) !==
+            fileFingerprint(before)
+        )
+          return false;
+      } catch (error) {
+        if (unavailableSource(error)) return false;
+        throw error;
+      } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }
+    }
+    // No asynchronous owner or buffer probe may follow this cohort check.
+    for (const [target, { observation, digest }] of usedTargets)
+      if (!sourceCurrentNow(report.root, target, observation, digest))
+        return false;
+    for (const document of vscode.workspace.textDocuments) {
+      if (document.isClosed || document.uri.scheme !== "file") continue;
+      let identity;
+      try {
+        identity = identifyNow(report.root, document.uri.fsPath);
+      } catch {
+        continue;
+      }
+      for (const { observation, digest, overlay } of usedTargets.values())
+        if (
+          identity.filename === observation.filename &&
+          ((!overlay && document.isDirty) ||
+            hash(document.getText()) !== digest)
+        )
+          return false;
+    }
+    return true;
   };
   for (const [target, digest] of Object.entries(report.target_hashes)) {
     if (target !== report.path && overlayPaths.has(target)) {
@@ -262,7 +331,13 @@ export async function validateNavigation(
       throw new Error("Completion span does not preserve literal quoting");
   }
   if (!(await targetsCurrent())) return;
-  return { report, locations, sourceIndex: index, targetsCurrent };
+  return {
+    report,
+    locations,
+    sourceIndex: index,
+    targetsCurrent,
+    targetsCurrentNow,
+  };
 }
 export class Navigation implements vscode.Disposable {
   private readonly scheme = `saltbox-lint-impact-${randomUUID()}`;

@@ -482,6 +482,7 @@ for (const kind of changes) {
       });
       await change(f, kind);
       assert.equal(await answer.targetsCurrent(), accepted(kind));
+      assert.equal(answer.targetsCurrentNow(), accepted(kind));
     } finally {
       await f.cleanup();
     }

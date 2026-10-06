@@ -3,7 +3,9 @@ import { test } from "node:test";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import * as fs from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, lstatSync } from "node:fs";
+import * as syncFs from "node:fs";
+import type { BigIntStats } from "node:fs";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import { build } from "esbuild";
@@ -183,6 +185,8 @@ async function fixture(saved = false, spelling = "plain") {
   let admissionRevision = 0;
   let afterWire: (() => Promise<void>) | undefined;
   let afterRead: ((filename: string) => Promise<void>) | undefined;
+  let afterProbe: ((filename: string) => Promise<void>) | undefined;
+  const frozenEntries = new Map<string, BigIntStats>();
   let formatter: vscode.DocumentFormattingEditProvider | undefined;
   let reference: vscode.ReferenceProvider | undefined;
   let completions = 0;
@@ -369,13 +373,24 @@ async function fixture(saved = false, spelling = "plain") {
       name === "node:fs/promises"
         ? {
             ...fs,
+            realpath: async (filename: string) => {
+              const canonical = await fs.realpath(filename);
+              await afterProbe?.(filename);
+              return canonical;
+            },
             readFile: async (filename: string) => {
               const bytes = await fs.readFile(filename);
               await afterRead?.(filename);
               return bytes;
             },
           }
-        : originalRequire(name),
+        : name === "node:fs"
+          ? {
+              ...syncFs,
+              lstatSync: (filename: string, options: { bigint: true }) =>
+                frozenEntries.get(filename) ?? lstatSync(filename, options),
+            }
+          : originalRequire(name),
     process,
     Buffer,
     AbortController,
@@ -507,6 +522,12 @@ async function fixture(saved = false, spelling = "plain") {
     },
     afterRead(callback: typeof afterRead) {
       afterRead = callback;
+    },
+    afterProbe(callback: typeof afterProbe) {
+      afterProbe = callback;
+    },
+    freezeEntry(filename: string) {
+      frozenEntries.set(filename, lstatSync(filename, { bigint: true }));
     },
     rootValue(value: string | undefined) {
       activeRoot = value;
@@ -841,6 +862,77 @@ for (const mutation of [
         3,
         "observe, map and final target validation must read the later saved declaration",
       );
+      assert.equal(f.requests.length, 1);
+      assert.equal(f.errors.length, 0);
+    } finally {
+      await f.dispose();
+    }
+  });
+}
+
+for (const mutation of [
+  "unchanged",
+  "saved hash",
+  "saved hash with unchanged metadata",
+  "saved owner",
+  "saved buffer",
+  "canceled",
+  "version",
+] as const) {
+  test(`References fences ${mutation} during the post-target logical-source probe`, async () => {
+    const f = await fixture();
+    try {
+      let reads = 0;
+      let finalProbe = false;
+      let finalTargetProbes = 0;
+      f.afterRead(async (filename) => {
+        if (filename === path.join(f.root, declarations[2])) reads++;
+      });
+      f.afterProbe(async (filename) => {
+        // After the fourth saved-target read, sourceCurrent checks the last
+        // saved target twice, before and after its root/fingerprint probes.
+        // The next root probe is the separate final logical-source check.
+        if (reads === 4 && filename === path.join(f.root, declarations[2]))
+          finalTargetProbes++;
+        if (
+          reads !== 4 ||
+          finalTargetProbes !== 2 ||
+          filename !== f.root ||
+          finalProbe
+        )
+          return;
+        finalProbe = true;
+        const target = path.join(f.root, declarations[0]);
+        if (mutation === "canceled") f.cancel();
+        if (mutation === "version") Reflect.set(f.doc, "version", 2);
+        if (mutation === "saved hash with unchanged metadata")
+          f.freezeEntry(target);
+        if (
+          mutation === "saved hash" ||
+          mutation === "saved hash with unchanged metadata"
+        )
+          await fs.writeFile(target, declarationText.replace("42", "43"));
+        if (mutation === "saved owner") {
+          await fs.rename(target, target + ".old");
+          await fs.writeFile(target, declarationText);
+        }
+        if (mutation === "saved buffer")
+          f.documents.push({
+            ...f.doc,
+            uri: uri(target),
+            getText: () => declarationText.replace("42", "43"),
+          } as vscode.TextDocument);
+      });
+      assert.equal(
+        (await f.references())?.length,
+        mutation === "unchanged" ? 4 : 0,
+      );
+      assert.equal(
+        finalProbe,
+        true,
+        "the last logical probe must be reached after target validation",
+      );
+      assert.equal(reads, 4);
       assert.equal(f.requests.length, 1);
       assert.equal(f.errors.length, 0);
     } finally {

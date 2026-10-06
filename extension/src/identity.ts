@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import * as path from "node:path";
 import { sourcePath } from "./protocol.ts";
 export interface Identity {
@@ -36,6 +37,22 @@ export async function identify(
       path.basename(filename),
     );
   }
+  return sourceIdentity(root, canonical);
+}
+export function identifyNow(root: string, filename: string): Identity {
+  let canonical: string;
+  try {
+    canonical = realpathSync(filename);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    canonical = path.join(
+      realpathSync(path.dirname(filename)),
+      path.basename(filename),
+    );
+  }
+  return sourceIdentity(root, canonical);
+}
+function sourceIdentity(root: string, canonical: string): Identity {
   const relative = path.relative(root, canonical).split(path.sep).join("/");
   try {
     sourcePath(relative);

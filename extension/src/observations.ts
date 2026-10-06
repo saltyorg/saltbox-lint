@@ -1,11 +1,12 @@
 import { lstat, readFile, stat, realpath } from "node:fs/promises";
 import {
   identify,
+  identifyNow,
   templatePath,
   unavailableSource,
   type Identity,
 } from "./identity.ts";
-import type { BigIntStats } from "node:fs";
+import { lstatSync, statSync, realpathSync, type BigIntStats } from "node:fs";
 import * as path from "node:path";
 import {
   hash,
@@ -130,46 +131,150 @@ export async function observeLogicalSource(
   }
   return (await logicalSourceCurrent(observation)) ? observation : undefined;
 }
-export async function logicalSourceCurrent(
+// The final query fence must use the same authority policy without yielding.
+// Paired reads keep logical/physical identity rules shared between both modes.
+interface AuthorityRead {
+  asynchronous: () => Promise<unknown>;
+  immediate: () => unknown;
+}
+function* authorityRead<T>(
+  asynchronous: () => Promise<T>,
+  immediate: () => T,
+): Generator<AuthorityRead, T, unknown> {
+  return (yield { asynchronous, immediate }) as T;
+}
+function identityRead(root: string, filename: string) {
+  return authorityRead(
+    () => identify(root, filename),
+    () => identifyNow(root, filename),
+  );
+}
+function canonicalRead(filename: string) {
+  return authorityRead(
+    () => realpath(filename),
+    () => realpathSync(filename),
+  );
+}
+function entryRead(filename: string) {
+  return authorityRead(
+    () => lstat(filename, { bigint: true }),
+    () => lstatSync(filename, { bigint: true }),
+  );
+}
+function targetRead(filename: string) {
+  return authorityRead(
+    () => stat(filename, { bigint: true }),
+    () => statSync(filename, { bigint: true }),
+  );
+}
+function* absenceRead(
+  filename: string,
+): Generator<AuthorityRead, boolean, unknown> {
+  try {
+    yield* entryRead(filename);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+async function authorityCurrent(
+  checks: Generator<AuthorityRead, boolean, unknown>,
+): Promise<boolean> {
+  let step = checks.next();
+  while (!step.done) {
+    let value: unknown;
+    try {
+      value = await step.value.asynchronous();
+    } catch (error) {
+      step = checks.throw(error);
+      continue;
+    }
+    step = checks.next(value);
+  }
+  return step.value;
+}
+function authorityCurrentNow(
+  checks: Generator<AuthorityRead, boolean, unknown>,
+): boolean {
+  let step = checks.next();
+  while (!step.done) {
+    let value: unknown;
+    try {
+      value = step.value.immediate();
+    } catch (error) {
+      step = checks.throw(error);
+      continue;
+    }
+    step = checks.next(value);
+  }
+  return step.value;
+}
+export function logicalSourceCurrent(
   observation: LogicalSource,
 ): Promise<boolean> {
+  return authorityCurrent(logicalSourceChecks(observation));
+}
+export function logicalSourceCurrentNow(observation: LogicalSource): boolean {
+  return authorityCurrentNow(logicalSourceChecks(observation));
+}
+export function sourceCurrent(
+  root: string,
+  relative: string,
+  observation: ObservedSource,
+  digest: string,
+): Promise<boolean> {
+  return authorityCurrent(sourceChecks(root, relative, observation, digest));
+}
+export function sourceCurrentNow(
+  root: string,
+  relative: string,
+  observation: ObservedSource,
+  digest: string,
+): boolean {
+  return authorityCurrentNow(sourceChecks(root, relative, observation, digest));
+}
+function* logicalSourceChecks(
+  observation: LogicalSource,
+): Generator<AuthorityRead, boolean, unknown> {
   try {
-    const identity = await identify(
+    const identity = yield* identityRead(
       observation.root,
       observation.sourceFilename,
     );
     if (
       identity.filename !== observation.filename ||
       identity.path !== observation.path ||
-      (await realpath(observation.root)) !== observation.root ||
-      fileFingerprint(await lstat(observation.root, { bigint: true })) !==
+      (yield* canonicalRead(observation.root)) !== observation.root ||
+      fileFingerprint(yield* entryRead(observation.root)) !==
         observation.rootFingerprint
     )
       return false;
     for (const parent of observation.parents) {
-      if ((await realpath(parent.filename)) !== parent.canonical) return false;
-      const entry = await lstat(parent.filename, { bigint: true });
+      if ((yield* canonicalRead(parent.filename)) !== parent.canonical)
+        return false;
+      const entry = yield* entryRead(parent.filename);
       const target = entry.isSymbolicLink()
-        ? await stat(parent.filename, { bigint: true })
+        ? yield* targetRead(parent.filename)
         : undefined;
       if (observationFingerprint(entry, target) !== parent.fingerprint)
         return false;
     }
     return (
-      (await absent(observation.sourceFilename)) &&
-      (await absent(observation.filename))
+      (yield* absenceRead(observation.sourceFilename)) &&
+      (yield* absenceRead(observation.filename))
     );
   } catch (error) {
     if (unavailableSource(error)) return false;
     throw error;
   }
 }
-export async function sourceCurrent(
+function* sourceChecks(
   root: string,
   relative: string,
   observation: ObservedSource,
   digest: string,
-): Promise<boolean> {
+): Generator<AuthorityRead, boolean, unknown> {
   try {
     sourcePath(relative);
     if (observation.logical)
@@ -179,27 +284,26 @@ export async function sourceCurrent(
         observation.logical.filename === observation.filename &&
         observation.logical.rootFingerprint === observation.rootFingerprint &&
         observation.fingerprint === "missing:" + digest &&
-        (await logicalSourceCurrent(observation.logical))
+        (yield* logicalSourceChecks(observation.logical))
       );
     const filename = path.join(root, ...relative.split("/"));
-    const identity = await identify(root, filename);
+    const identity = yield* identityRead(root, filename);
     if (
       identity.filename !== observation.filename ||
       relative.split("/").includes(".git") ||
       identity.path.split("/").includes(".git") ||
-      (await realpath(root)) !== root ||
-      fileFingerprint(await lstat(root, { bigint: true })) !==
-        observation.rootFingerprint
+      (yield* canonicalRead(root)) !== root ||
+      fileFingerprint(yield* entryRead(root)) !== observation.rootFingerprint
     )
       return false;
-    const entry = await lstat(filename, { bigint: true });
+    const entry = yield* entryRead(filename);
     const target = entry.isSymbolicLink()
-      ? await stat(filename, { bigint: true })
+      ? yield* targetRead(filename)
       : undefined;
     return (
       observationFingerprint(entry, target) + ":" + digest ===
         observation.fingerprint &&
-      (await realpath(filename)) === observation.filename
+      (yield* canonicalRead(filename)) === observation.filename
     );
   } catch (error) {
     if (

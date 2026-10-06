@@ -39,6 +39,7 @@ import {
   observationFingerprint,
   observeLogicalSource,
   logicalSourceCurrent,
+  logicalSourceCurrentNow,
   type LogicalSource,
 } from "./observations.ts";
 
@@ -1465,6 +1466,8 @@ export class EditorIntegration implements vscode.Disposable {
       if (
         !(await answer.targetsCurrent()) ||
         (snapshot.logical && !(await logicalSourceCurrent(snapshot.logical))) ||
+        !answer.targetsCurrentNow() ||
+        (snapshot.logical && !logicalSourceCurrentNow(snapshot.logical)) ||
         !current() ||
         this.dependencies.begin() !== dependencyToken
       )
