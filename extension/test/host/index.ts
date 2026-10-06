@@ -455,4 +455,6 @@ export async function run(): Promise<void> {
   console.log(
     "PASS related locations use saved UTF16 coordinates and omit dirty buffers",
   );
+  const { runLiveChecking } = await import("./live-checking.ts");
+  await runLiveChecking();
 }

@@ -29,6 +29,7 @@ import type {
 import { runProcess } from "./process.ts";
 import { range, renderDiagnostics } from "./diagnostics.ts";
 import { Scheduler } from "./scheduler.ts";
+import { LiveChecks } from "./live-checks.ts";
 import { MarkedRoots } from "./roots.ts";
 import { Results } from "./results.ts";
 import { Dependencies } from "./dependencies.ts";
@@ -95,6 +96,7 @@ interface DocumentResult {
   diagnostics: vscode.Diagnostic[];
 }
 interface PendingCheck {
+  typing?: boolean;
   source?: string;
   dependencyRevision: number;
   work: Promise<void>;
@@ -118,6 +120,7 @@ export class EditorIntegration implements vscode.Disposable {
   private activeFile = vscode.window.activeTextEditor?.document.uri;
   private activeProjectOnly = this.displayActiveProjectOnly();
   private readonly lint = new Scheduler("retain");
+  private liveChecks?: LiveChecks<vscode.TextDocument>;
   private readonly formatting = new Scheduler();
   private readonly queryLanes = new Map<QueryOperation, Scheduler>([
     ["definition", new Scheduler()],
@@ -198,6 +201,10 @@ export class EditorIntegration implements vscode.Disposable {
         this.repaint();
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("saltboxLint.checkOnType"))
+          this.liveChecks?.cancelWhere(
+            (document) => !this.typingEligible(document),
+          );
         if (!event.affectsConfiguration("saltboxLint.activeProjectOnly"))
           return;
         this.activeProjectOnly = this.displayActiveProjectOnly();
@@ -388,6 +395,7 @@ export class EditorIntegration implements vscode.Disposable {
     return this.documentRevisions.get(document)!;
   }
   configureRoots(): void {
+    this.liveChecks?.cancelWhere(() => true);
     this.roots.configure();
     this.repaint();
   }
@@ -441,6 +449,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.publish(canonical);
   }
   private withdrawSource(document: vscode.TextDocument): void {
+    this.liveChecks?.cancel(document);
     const key = document.uri.toString();
     const owner = this.sourceOwners.get(key);
     if (!owner) return;
@@ -796,7 +805,10 @@ export class EditorIntegration implements vscode.Disposable {
     document: vscode.TextDocument,
     manual = false,
     expectedVersion?: number,
+    typing = false,
+    signal?: AbortSignal,
   ): Promise<void> {
+    if (!typing) this.liveChecks?.cancel(document);
     const version = expectedVersion ?? document.version;
     const revision = this.documentRevision(document);
     if (manual) {
@@ -805,6 +817,7 @@ export class EditorIntegration implements vscode.Disposable {
     }
     await this.roots.ready();
     if (
+      signal?.aborted ||
       document.version !== version ||
       this.documentRevision(document) !== revision
     )
@@ -832,20 +845,40 @@ export class EditorIntegration implements vscode.Disposable {
       }
       return;
     }
-    if (!this.eligible(document)) return;
+    if (
+      !this.eligible(document) ||
+      signal?.aborted ||
+      (typing && !this.typingEligible(document))
+    )
+      return;
     const folder = vscode.workspace
       .getWorkspaceFolder(document.uri)!
       .uri.toString();
     const key = this.checkKey(document, folder);
     const identity = this.sourceOwners.get(document.uri.toString());
     const existing = this.pendingCheck(document, folder);
-    if (existing) return existing.work;
-    const work = this.checkSnapshot(document, manual, version).then((retry) => {
+    if (existing) {
+      if (!typing && existing.typing) {
+        await existing.work;
+        if (document.version === version)
+          return this.check(document, manual, version);
+        return;
+      }
+      return existing.work;
+    }
+    const work = this.checkSnapshot(
+      document,
+      manual,
+      version,
+      typing,
+      signal,
+    ).then((retry) => {
       // Release deduplication before a rejected request queues its replacement.
       if (this.checking.get(key) === pending) this.checking.delete(key);
       retry?.();
     });
     const pending: PendingCheck = {
+      typing,
       source: identity?.path,
       dependencyRevision: identity
         ? this.dependencies.revision(folder, identity.path)
@@ -865,6 +898,8 @@ export class EditorIntegration implements vscode.Disposable {
     document: vscode.TextDocument,
     manual: boolean,
     version: number,
+    typing = false,
+    signal?: AbortSignal,
   ): Promise<(() => void) | undefined> {
     const key = document.uri.toString();
     const revision = this.documentRevision(document);
@@ -877,12 +912,18 @@ export class EditorIntegration implements vscode.Disposable {
     // Ownership must exist while the request is queued, before any source copy.
     this.documentFolders.set(key, folder);
     const current = () =>
+      !signal?.aborted &&
+      (!typing || this.typingEligible(document)) &&
       this.eligible(document) &&
       document.version === version &&
       revision === this.documentRevision(document) &&
       rootRevision === this.rootRevision(folder) &&
       admissionRevision === this.dependencies.admissionRevision(folder);
     const retry = () => {
+      if (typing && current())
+        return () => {
+          if (current()) this.scheduleTyping(document);
+        };
       if (current() && !document.isDirty)
         return () => {
           if (current() && !document.isDirty)
@@ -893,7 +934,7 @@ export class EditorIntegration implements vscode.Disposable {
     try {
       const result = await this.lint.submit(
         key,
-        manual ? 2 : 1,
+        typing ? -1 : manual ? 2 : 1,
         async (signal) => {
           if (signal.aborted || !current()) return;
           failureToken = this.statusToken(document);
@@ -953,6 +994,7 @@ export class EditorIntegration implements vscode.Disposable {
             unsupported,
           };
         },
+        signal,
       );
       if (!current()) return;
       if (!result) {
@@ -1766,6 +1808,27 @@ export class EditorIntegration implements vscode.Disposable {
     // snapshots and proposals in other documents remain valid.
     for (const uri of this.results.invalidateRelated())
       this.publish(vscode.Uri.parse(uri));
+    this.scheduleTyping(document);
+  }
+  private typingEligible(document: vscode.TextDocument): boolean {
+    return (
+      this.writable(document) &&
+      vscode.workspace
+        .getConfiguration("saltboxLint", document.uri)
+        .get<boolean>("checkOnType", false)
+    );
+  }
+  private scheduleTyping(document: vscode.TextDocument): void {
+    if (!this.typingEligible(document)) {
+      this.liveChecks?.cancel(document);
+      return;
+    }
+    this.liveChecks ??= new LiveChecks(
+      (document, signal) =>
+        this.check(document, false, document.version, true, signal),
+      (error) => this.error(error, false),
+    );
+    this.liveChecks.schedule(document);
   }
   open(document: vscode.TextDocument): void {
     this.closedTabs.delete(document.uri.toString());
@@ -1781,6 +1844,7 @@ export class EditorIntegration implements vscode.Disposable {
     );
     if (!document.isClosed && stillOwned) return;
     this.closedTabs.add(key);
+    this.liveChecks?.cancel(document);
     this.roots.forgetSource(key);
     this.failures.delete(key);
     this.eligibilityChanged.fire();
@@ -1798,6 +1862,7 @@ export class EditorIntegration implements vscode.Disposable {
     }
   }
   saved(document: vscode.TextDocument): void {
+    this.liveChecks?.cancel(document);
     this.contextEvent(document.uri);
     if (this.eligible(document))
       this.queueFile(document.uri, true, document.version);
@@ -1912,6 +1977,10 @@ export class EditorIntegration implements vscode.Disposable {
           (doc) => doc.uri.toString() === target.toString(),
         );
         if (document?.isDirty) {
+          if (this.typingEligible(document)) {
+            this.scheduleTyping(document);
+            continue;
+          }
           this.output.appendLine(
             `Stale ${source}: analysis context changed; save or check the document to refresh.`,
           );
@@ -2261,6 +2330,13 @@ export class EditorIntegration implements vscode.Disposable {
     this.refreshFolders(affected);
   }
   private refreshFolders(affected: Set<string>): void {
+    this.liveChecks?.cancelWhere((document) =>
+      affected.has(
+        vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString() ??
+          this.documentFolders.get(document.uri.toString()) ??
+          "",
+      ),
+    );
     if (affected.size) this.revokeQueries();
     for (const folder of affected) {
       this.dependencies.remove(folder);
@@ -2311,7 +2387,9 @@ export class EditorIntegration implements vscode.Disposable {
     }, 100);
   }
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
+    this.liveChecks?.dispose();
     this.rootListener.dispose();
     this.fileListener.dispose();
     this.displayListeners.dispose();
@@ -2331,6 +2409,16 @@ export class EditorIntegration implements vscode.Disposable {
     this.help.dispose();
     this.statusBar.dispose();
     this.failures.clear();
+  }
+  async join(): Promise<void> {
+    await Promise.all([
+      this.lint.join(),
+      this.formatting.join(),
+      ...[...this.queryLanes.values()].map((lane) => lane.join()),
+      ...[...this.checking.values()].map((request) => request.work),
+      this.liveChecks?.join(),
+      this.help.join(),
+    ]);
   }
 }
 

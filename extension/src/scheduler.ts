@@ -11,6 +11,7 @@ interface Request {
 export class Scheduler {
   private readonly pending = new Map<string, Request>();
   private active?: Request;
+  private running?: Promise<void>;
   private stopped = false;
   private readonly limit: number;
   constructor(limit: number | "retain" = 32) {
@@ -24,6 +25,10 @@ export class Scheduler {
   ): Promise<T | undefined> {
     this.cancel(key);
     if (this.stopped || signal?.aborted) return Promise.resolve(undefined);
+    // Explicit/save work preempts an active typing check. Its successor still
+    // waits for execute's finally, which joins the cancelled operation.
+    if (priority >= 1 && this.active && this.active.priority < 0)
+      this.active.abort.abort();
     return new Promise<T | undefined>((resolve, reject) => {
       const abort = new AbortController();
       const cancel = () => {
@@ -75,8 +80,7 @@ export class Scheduler {
     this.active = request;
     // execute forwards failures to submit's promise and releases its lane in
     // finally. It owns and joins cancellation before starting the next request.
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    void this.execute(request);
+    this.running = this.execute(request);
   }
   private async execute(request: Request): Promise<void> {
     try {
@@ -98,5 +102,8 @@ export class Scheduler {
   dispose(): void {
     this.stopped = true;
     this.cancelAll();
+  }
+  async join(): Promise<void> {
+    while (this.active) await this.running;
   }
 }

@@ -23,8 +23,16 @@ Open or save a marked workspace `.yml` / `.yaml` document in YAML or Ansible lan
 mode to check it. Editing keeps the last displayed findings visible, while
 outdated fixes and formatting requests are invalidated immediately. Findings
 update when the saved-file check completes, or after an explicit Check Document;
-a failed check reports its error and retains the last findings. Typing does not
-start checks. Commands are available from the Command Palette:
+a failed check reports its error and retains the last findings. Typing checks are off by default. Enable `saltboxLint.checkOnType` for YAML
+checks after a 300 ms pause. This is a scheduling delay, not a promised response
+time. Each check uses the current buffer and saved disk context from other files;
+unsaved changes in other buffers have not been evaluated. Templates are excluded.
+Typing requests share the cancellable CLI lane, below saves, manual commands,
+startup coverage and closed-file dependency checks. At most 32 document requests
+are retained; a new waiting request replaces the oldest waiting timer at capacity.
+Running requests retain their slots until cancellation joins. Typing never
+applies fixes or formatting. Closing a document, disabling the setting, removing
+its root or marker, or unloading the extension cancels its typing work. Commands are available from the Command Palette:
 
 - **Saltbox Lint: Check Document** checks the current buffer, including unsaved edits.
 - **Saltbox Lint: Check Workspace** checks each marked source root on disk.
@@ -48,7 +56,8 @@ require Check
 Workspace. Closed files use bounded
 selected-path batches without opening editor tabs. There is no separate Git-pull
 trigger or Git polling. Dirty dependent buffers retain their displayed findings
-and lose stale actions until saved or explicitly checked. The Output channel
+and lose stale actions until saved, explicitly checked, or refreshed with
+`saltboxLint.checkOnType` enabled. The Output channel
 identifies stale context and reports startup/background failures.
 
 Saved files with invalid UTF-8 retain their raw-byte analysis dependencies and

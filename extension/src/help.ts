@@ -155,4 +155,7 @@ export class RuleHelp implements vscode.Disposable {
     this.documents.clear();
     this.cache.clear();
   }
+  async join(): Promise<void> {
+    await this.processes.join();
+  }
 }

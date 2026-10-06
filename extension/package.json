@@ -57,6 +57,12 @@
     "configuration": {
       "title": "Saltbox Lint",
       "properties": {
+        "saltboxLint.checkOnType": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "Check eligible YAML after a 300 ms typing pause. Uses the current buffer and saved context from other files. Keeps at most 32 typing requests and never applies edits. Templates are excluded."
+        },
         "saltboxLint.activeProjectOnly": {
           "type": "boolean",
           "default": true,

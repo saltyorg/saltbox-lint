@@ -3,6 +3,15 @@ import * as path from "node:path";
 import { EditorIntegration, tabDocumentUris } from "./editor.ts";
 import { rootMarker } from "./roots.ts";
 
+let activeEditor: EditorIntegration | undefined;
+
+export async function deactivate(): Promise<void> {
+  const editor = activeEditor;
+  editor?.dispose();
+  activeEditor = undefined;
+  await editor?.join();
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   if (!vscode.workspace.isTrusted) return;
   const editor = new EditorIntegration(
@@ -13,6 +22,7 @@ export function activate(context: vscode.ExtensionContext): void {
       ),
     ),
   );
+  activeEditor = editor;
   const providers = new Map<
     string,
     { language: string; writable: boolean; disposable: vscode.Disposable }
