@@ -69,6 +69,10 @@ func TestTemplateScanner(t *testing.T) {
 		{"extension", "{% custom thing %}{% endif %}{{ value }}", "", "unsupported template statement"},
 		{"extension literal grammar", "{% custom_raw %}{{ unterminated{% endcustom_raw %}", "", "unsupported template statement"},
 		{"unsupported Unicode identifier", "{{ lookup\u0301('role_var', '_port', role='beta') }}", "", "Unicode source boundaries"},
+		{"output filter postfix", "{{ value | lower()[0] }}", "", "expression grammar"},
+		{"output test postfix", "{{ value is defined().attribute }}", "", "expression grammar"},
+		{"grouped output filter postfix", "{{ (value | lower())[0] }}", "", ""},
+		{"output filter call", "{{ value | lower()() }}", "", ""},
 		{"unsupported expression", "{{ [x for x in values] }}", "", "expression grammar"},
 		{"unknown config", "#jinja2:unknown:True\n{{ value", "", "option: unknown"},
 		{"long delimiter", "#jinja2:variable_start_string:'" + strings.Repeat("a", 33) + "'\n{{ unclosed", "", "size or whitespace"},
@@ -476,7 +480,7 @@ func TestTemplateCommittedFixtures(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
 		diagnostics, partial bool
-	}{{"valid.j2", false, false}, {"invalid.j2", true, false}, {"partial.j2", false, true}, {"custom.j2", false, false}, {"whitespace-valid.j2", false, false}, {"whitespace-invalid.j2", true, false}, {"for-valid.j2", false, false}, {"for-partial.j2", false, true}} {
+	}{{"valid.j2", false, false}, {"invalid.j2", true, false}, {"partial.j2", false, true}, {"custom.j2", false, false}, {"whitespace-valid.j2", false, false}, {"whitespace-invalid.j2", true, false}, {"for-valid.j2", false, false}, {"for-partial.j2", false, true}, {"statement-valid.j2", false, false}, {"statement-partial.j2", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			data, err := os.ReadFile("testdata/templates/" + tc.name)
 			if err != nil {
@@ -615,9 +619,9 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 	}
 }
 
-func TestTemplateForGrammarExplanation(t *testing.T) {
+func TestTemplateGrammarFixtureExplanation(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"for-valid.j2", "for-partial.j2"} {
+	for _, name := range []string{"for-valid.j2", "for-partial.j2", "statement-valid.j2", "statement-partial.j2"} {
 		data, err := os.ReadFile("testdata/templates/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -628,7 +632,7 @@ func TestTemplateForGrammarExplanation(t *testing.T) {
 			t.Fatal(err)
 		}
 		ds := Analyze(p, Rules())
-		if name == "for-partial.j2" {
+		if strings.HasSuffix(name, "-partial.j2") {
 			if len(ds) != 1 || ds[0].RuleID != "template-partial-coverage" || ds[0].Fix != nil {
 				t.Fatalf("partial coverage finding missing: %+v", ds)
 			}
@@ -640,7 +644,7 @@ func TestTemplateForGrammarExplanation(t *testing.T) {
 			t.Fatal(err)
 		}
 		state := "static-template"
-		if name == "for-partial.j2" {
+		if strings.HasSuffix(name, "-partial.j2") {
 			state = "partial-template"
 			if !slices.ContainsFunc(explanation.Source.CoverageReasons, func(reason string) bool { return strings.Contains(reason, "statement argument grammar") }) {
 				t.Fatalf("partial reason missing: %+v", explanation.Source)
@@ -655,5 +659,93 @@ func TestTemplateForGrammarExplanation(t *testing.T) {
 		if err != nil || !bytes.Equal(data, after) {
 			t.Fatal("checking or explanation changed template bytes")
 		}
+	}
+}
+
+func TestTemplateStatementGrammarCoverage(t *testing.T) {
+	for _, tc := range []struct{ name, input, partial string }{
+		{"quoted filter name", "{% filter 'upper' %}text{% endfilter %}", "filter"},
+		{"filter comparison", "{% filter upper == lower %}text{% endfilter %}", "filter"},
+		{"filter postfix call", "{% filter upper()() %}text{% endfilter %}", "filter"},
+		{"filter test", "{% filter upper is defined %}text{% endfilter %}", "filter"},
+		{"filter argument postfix", "{% filter upper(value | lower()[0]) %}text{% endfilter %}", "filter"},
+		{"condition filter postfix", "{% if value | lower()[0] %}text{% endif %}", "if"},
+		{"condition test postfix", "{% if value is defined().attribute %}text{% endif %}", "if"},
+		{"assignment filter postfix", "{% set value = item | lower()[0] %}", "set"},
+		{"autoescape filter postfix", "{% autoescape value | lower()[0] %}text{% endautoescape %}", "autoescape"},
+		{"macro default filter postfix", "{% macro emit(value=item | lower()[0]) %}text{% endmacro %}", "macro"},
+		{"call filter postfix", "{% call emit() | lower()[0]() %}text{% endcall %}", "call"},
+		{"filter missing name", "{% filter upper | %}text{% endfilter %}", "filter"},
+		{"filter incomplete arguments", "{% filter replace('a',) | default(value=) %}text{% endfilter %}", "filter"},
+		{"if conditional", "{% if enabled if ready else backup %}text{% endif %}", "if"},
+		{"elif conditional", "{% if enabled %}text{% elif ready if flag else backup %}text{% endif %}", "elif"},
+		{"constant assignment", "{% set true = value %}", "set"},
+		{"constant capture", "{% set None %}text{% endset %}", "set"},
+		{"quoted capture filter", "{% set value | 'upper' %}text{% endset %}", "set"},
+		{"capture filter comparison", "{% set value | upper == lower %}text{% endset %}", "set"},
+		{"constant macro", "{% macro false(value) %}text{% endmacro %}", "macro"},
+		{"constant parameter", "{% macro emit(true) %}text{% endmacro %}", "macro"},
+		{"trailing signature comma", "{% macro emit(value,) %}text{% endmacro %}", "macro"},
+		{"constant call parameter", "{% call (None) emit(value) %}text{% endcall %}", "call"},
+		{"trailing call signature comma", "{% call (value,) emit(value) %}text{% endcall %}", "call"},
+		{"grouped filter postfix", "{% filter upper((value | lower())[0], (value is defined()).attribute) %}text{% endfilter %}", ""},
+		{"filter argument call after chain", "{% filter upper(value | namespace.lower()()) %}text{% endfilter %}", ""},
+		{"condition call after filter", "{% if value | lower()() %}text{% endif %}", ""},
+		{"macro default call after filter", "{% macro emit(value=item | lower()()) %}text{% endmacro %}", ""},
+		{"call after filter", "{% call emit() | namespace.wrapper()() %}text{% endcall %}", ""},
+		{"plain filter", "{% filter upper %}text{% endfilter %}", ""},
+		{"dotted filter chain", "{% filter namespace.upper | lower %}text{% endfilter %}", ""},
+		{"filter arguments", "{% filter replace('%}', '}}', count=limit if enabled else fallback) | default('none', true,) %}text{% endfilter %}", ""},
+		{"custom trim Unicode filter", "#jinja2:block_start_string:'<%',block_end_string:'%>'\n<%- filter\u00a0namespace.upper('if', value=ready)\u2003| lower +%>text<% endfilter -%>", ""},
+		{"raw filter grammar", "{% raw %}{% filter 'upper' %}{% if a if b %}{% endraw %}", ""},
+		{"quoted filter grammar", "{{ \"{% filter 'upper' %}\" }}", ""},
+		{"grouped condition", "{% if (enabled if ready else backup) %}text{% elif choose('if') %}text{% endif %}", ""},
+		{"assignment conditional", "{% set value = first if ready else second %}", ""},
+		{"autoescape conditional", "{% autoescape first if ready else second %}text{% endautoescape %}", ""},
+		{"macro default conditional", "{% macro emit(value=first if ready else second) %}text{% endmacro %}", ""},
+		{"call default conditional", "{% call (value=first if ready else second) emit(value) %}text{% endcall %}", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			filename := putFile(t, root, "test.j2", tc.input)
+			p, err := Load(t.Context(), Options{Root: root, Paths: []string{filename}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ds := Analyze(p, Rules())
+			state := "static-template"
+			if tc.partial != "" {
+				state = "partial-template"
+				if len(ds) != 1 || ds[0].RuleID != "template-partial-coverage" || ds[0].Severity != "warning" || ds[0].Path != "test.j2" || ds[0].Fix != nil || !strings.Contains(ds[0].Message, "statement argument grammar") || !strings.Contains(ds[0].Expected, "no template is rendered or changed") {
+					t.Errorf("useful read-only coverage warning missing: %+v", ds)
+				}
+				// Renderer contract knowledge must not erase a grammar refusal.
+				source, _ := Parse("test.j2", []byte(tc.input))
+				if len(templateContractReasons(scanTemplate(source))) == 0 {
+					t.Error("renderer contract discarded unsupported statement grammar")
+				}
+			} else if len(ds) != 0 {
+				t.Errorf("supported statement produced findings: %+v", ds)
+			}
+			explanation, err := Explain(t.Context(), Options{Root: root, Paths: []string{filename}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if explanation.Source.ParseState != state {
+				t.Errorf("coverage=%s want=%s", explanation.Source.ParseState, state)
+			}
+			if tc.partial != "" {
+				reason := "statement argument grammar outside the supported static subset: " + tc.partial
+				if !slices.Contains(explanation.Source.CoverageReasons, reason) {
+					t.Errorf("specific partial reason missing: %+v", explanation.Source)
+				}
+			} else if len(explanation.Source.CoverageReasons) != 0 {
+				t.Errorf("supported statement lost coverage: %+v", explanation.Source)
+			}
+			after, err := os.ReadFile(filename)
+			if err != nil || !bytes.Equal([]byte(tc.input), after) {
+				t.Fatal("checking or explanation changed template bytes")
+			}
+		})
 	}
 }

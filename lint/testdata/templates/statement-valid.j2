@@ -1,0 +1,17 @@
+{# Filter names, arguments and chains have their own grammar. #}
+{% filter upper %}text{% endfilter %}
+{% filter namespace.upper | lower %}text{% endfilter %}
+{%- filter replace('%}', '}}', count=limit if enabled else fallback) | default('none', true,) +%}
+  text
+{% endfilter -%}
+{% if (enabled if ready else backup) %}text{% elif choose('if') %}text{% endif %}
+{% set value = first if ready else second %}
+{% autoescape first if ready else second %}text{% endautoescape %}
+{% macro emit(value=first if ready else second) %}text{% endmacro %}
+{% call (value=first if ready else second) emit(value) %}text{% endcall %}
+{% raw %}{% filter 'upper' %}{% if a if b %}{% endraw %}
+{{ "{% filter 'upper' %}" }}
+{% filter upper((value | lower())[0], (value is defined()).attribute) %}text{% endfilter %}
+{% if value | lower()() %}text{% endif %}
+{% macro emit(value=item | lower()()) %}text{% endmacro %}
+{% call emit() | namespace.wrapper()() %}text{% endcall %}

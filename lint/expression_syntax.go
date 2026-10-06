@@ -15,9 +15,10 @@ type parsedExpression struct {
 	kind      string
 }
 type expressionParser struct {
-	tokens  []Token
-	pos     int
-	invalid bool
+	tokens         []Token
+	pos            int
+	invalid        bool
+	templateSyntax bool
 }
 
 func parseFixExpression(tokens []Token) (parsedExpression, bool) {
@@ -104,9 +105,14 @@ func comparisonTree(left parsedExpression, operands []parsedExpression, ops stri
 }
 func (p *expressionParser) value() parsedExpression {
 	result := p.atom()
+	filtered := false
 	for p.pos < len(p.tokens) {
 		switch p.tokens[p.pos].Text {
 		case ".":
+			if p.templateSyntax && filtered {
+				p.invalid = true
+				return result
+			}
 			p.pos++
 			name, ok := p.name()
 			if !ok {
@@ -115,6 +121,10 @@ func (p *expressionParser) value() parsedExpression {
 			}
 			result = expressionTree("attribute:"+name, false, result)
 		case "[":
+			if p.templateSyntax && filtered {
+				p.invalid = true
+				return result
+			}
 			p.pos++
 			key := p.conditional()
 			if !p.take("]") {
@@ -124,6 +134,7 @@ func (p *expressionParser) value() parsedExpression {
 		case "(":
 			result = expressionTree("call", false, append([]parsedExpression{result}, p.arguments()...)...)
 		case "|":
+			filtered = true
 			p.pos++
 			name, ok := p.name()
 			if !ok {
@@ -136,6 +147,7 @@ func (p *expressionParser) value() parsedExpression {
 			}
 			result = expressionTree("filter:"+name, false, append([]parsedExpression{result}, args...)...)
 		case "is":
+			filtered = true
 			p.pos++
 			negated := p.take("not")
 			name, ok := p.name()

@@ -1,0 +1,15 @@
+{# These statement arguments are outside the supported Jinja grammar. #}
+{% filter 'upper' %}text{% endfilter %}
+{% filter upper == lower %}text{% endfilter %}
+{% if enabled if ready else backup %}text{% endif %}
+{% if enabled %}text{% elif ready if flag else backup %}text{% endif %}
+{% set true = value %}
+{% set None %}text{% endset %}
+{% set value | 'upper' %}text{% endset %}
+{% macro false(value) %}text{% endmacro %}
+{% macro emit(true) %}text{% endmacro %}
+{% macro emit(value,) %}text{% endmacro %}
+{% call (None) emit(value) %}text{% endcall %}
+{% filter upper(value | lower()[0]) %}text{% endfilter %}
+{% if value | lower()[0] %}text{% endif %}
+{% macro emit(value=item | lower()[0]) %}text{% endmacro %}

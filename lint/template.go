@@ -162,7 +162,7 @@ func scanProjectTemplate(p *Project, s *Source) templateScan {
 			continue
 		}
 		if kind == 0 {
-			if _, ok := parseFixExpression(tokens); !ok {
+			if _, ok := parseTemplateExpression(tokens); !ok {
 				partial("expression grammar outside the supported static subset")
 			}
 			result.expressions = append(result.expressions, expression)
@@ -234,8 +234,8 @@ func scanProjectTemplate(p *Project, s *Source) templateScan {
 				failure(expression.Span, "elif tag requires a condition")
 			}
 			if name == "elif" {
-				if _, ok := parseFixExpression(tokens[1:]); !ok {
-					partial("expression grammar outside the supported static subset")
+				if !supportedTemplateCondition(tokens[1:]) {
+					partial("statement argument grammar outside the supported static subset: elif")
 				}
 			}
 		case "endif", "endfor", "endmacro", "endcall", "endblock", "endfilter", "endwith", "endautoescape", "endset", "endraw":
@@ -386,27 +386,28 @@ func supportedTemplateStatement(e Expression) bool {
 	t := e.Tokens
 	name := t[0].Text
 	switch name {
-	case "if", "autoescape":
-		_, ok := parseFixExpression(t[1:])
+	case "if":
+		return supportedTemplateCondition(t[1:])
+	case "autoescape":
+		_, ok := parseTemplateExpression(t[1:])
 		return ok
 	case "for":
 		return supportedTemplateFor(t[1:])
 	case "block":
 		return len(t) == 2 && t[1].Kind == "name" || len(t) == 3 && t[1].Kind == "name" && t[2].Text == "scoped"
 	case "set":
-		if len(t) == 2 && t[1].Kind == "name" {
+		if len(t) == 2 && templateAssignableName(t[1]) {
 			return true
 		}
-		if len(t) > 3 && t[1].Kind == "name" && t[2].Text == "=" {
-			_, ok := parseFixExpression(t[3:])
+		if len(t) > 3 && templateAssignableName(t[1]) && t[2].Text == "=" {
+			_, ok := parseTemplateExpression(t[3:])
 			return ok
 		}
 		return false
 	case "filter":
-		_, ok := parseFixExpression(t[1:])
-		return ok
+		return supportedTemplateFilter(t[1:])
 	case "macro":
-		return len(t) > 3 && t[1].Kind == "name" && templateSignature(t[2:])
+		return len(t) > 3 && templateAssignableName(t[1]) && templateSignature(t[2:])
 	case "call":
 		rest := t[1:]
 		if len(rest) > 0 && rest[0].Text == "(" {
@@ -416,12 +417,55 @@ func supportedTemplateStatement(e Expression) bool {
 			}
 			rest = rest[end+1:]
 		}
-		parsed, ok := parseFixExpression(rest)
+		parsed, ok := parseTemplateExpression(rest)
 		return ok && parsed.kind == "call"
 	case "with":
 		return len(t) == 1
 	}
 	return false
+}
+
+// Template admission follows Jinja's expression ordering: postfix attributes
+// and subscripts precede filters/tests. Calls may still follow filters/tests,
+// and grouping starts a new postfix expression. Structural fixes retain their
+// existing expression-signature recognizer.
+func parseTemplateExpression(tokens []Token) (parsedExpression, bool) {
+	p := expressionParser{tokens: tokens, templateSyntax: true}
+	result := p.conditional()
+	return result, !p.invalid && p.pos == len(tokens) && len(tokens) > 0
+}
+
+// If/elif conditions disable top-level conditional expressions. Grouped
+// expressions still use their own expression grammar, as Jinja does.
+func supportedTemplateCondition(tokens []Token) bool {
+	p := expressionParser{tokens: tokens, templateSyntax: true}
+	p.binary(0)
+	return !p.invalid && p.pos == len(tokens) && len(tokens) > 0
+}
+
+// A filter block starts with a dotted filter name, followed by optional call
+// arguments and more pipe-separated filters. General expressions are not
+// filter names. Reuse only the matching bounded name and argument grammars.
+func supportedTemplateFilter(tokens []Token) bool {
+	p := expressionParser{tokens: tokens, templateSyntax: true}
+	for {
+		if _, ok := p.name(); !ok {
+			return false
+		}
+		if p.pos < len(tokens) && tokens[p.pos].Text == "(" {
+			p.arguments()
+		}
+		if p.invalid {
+			return false
+		}
+		if !p.take("|") {
+			return p.pos == len(tokens)
+		}
+	}
+}
+
+func templateAssignableName(token Token) bool {
+	return token.Kind == "name" && token.Text != "true" && token.Text != "True" && token.Text != "false" && token.Text != "False" && token.Text != "none" && token.Text != "None"
 }
 
 func templateConfiguration(text string) (templateDelimiters, int, string) {
@@ -610,7 +654,7 @@ func templateSignature(tokens []Token) bool {
 	names := map[string]bool{}
 	defaults := false
 	for len(tokens) > 0 {
-		if tokens[0].Kind != "name" || names[tokens[0].Text] {
+		if !templateAssignableName(tokens[0]) || names[tokens[0].Text] {
 			return false
 		}
 		names[tokens[0].Text] = true
@@ -633,7 +677,7 @@ func templateSignature(tokens []Token) bool {
 				}
 				end++
 			}
-			if _, ok := parseFixExpression(tokens[:end]); !ok {
+			if _, ok := parseTemplateExpression(tokens[:end]); !ok {
 				return false
 			}
 			tokens = tokens[end:]
@@ -647,6 +691,9 @@ func templateSignature(tokens []Token) bool {
 			return false
 		}
 		tokens = tokens[1:]
+		if len(tokens) == 0 {
+			return false
+		}
 	}
 	return true
 }
@@ -656,13 +703,13 @@ func templateSignature(tokens []Token) bool {
 // make absence of consumption unknown, regardless of selection.
 func templateContractReasons(scan templateScan) []string {
 	return slices.DeleteFunc(slices.Clone(scan.reasons), func(reason string) bool {
-		if reason != "statement argument grammar outside the supported static subset: set" && reason != "statement argument grammar outside the supported static subset: if" && reason != "expression grammar outside the supported static subset" {
+		if reason != "statement argument grammar outside the supported static subset: set" && reason != "statement argument grammar outside the supported static subset: if" && reason != "statement argument grammar outside the supported static subset: elif" && reason != "expression grammar outside the supported static subset" {
 			return false
 		}
 		for _, e := range scan.expressions {
 			tokens := e.Tokens
 			if e.Kind == "output" {
-				if _, ok := parseFixExpression(tokens); !ok {
+				if _, ok := parseTemplateExpression(tokens); !ok {
 					return false
 				}
 				continue
@@ -675,12 +722,12 @@ func templateContractReasons(scan templateScan) []string {
 				if supportedTemplateStatement(e) {
 					continue
 				}
-				if len(tokens) < 4 || tokens[1].Kind != "name" {
+				if len(tokens) < 4 || !templateAssignableName(tokens[1]) {
 					return false
 				}
 				switch tokens[2].Text {
 				case "|":
-					if _, ok := parseFixExpression(tokens[3:]); !ok || templateAssignment(tokens) {
+					if !supportedTemplateFilter(tokens[3:]) || templateAssignment(tokens) {
 						return false
 					}
 				case "=":
@@ -691,7 +738,9 @@ func templateContractReasons(scan templateScan) []string {
 					return false
 				}
 			case "if", "elif":
-				if !traefikContractGuard(tokens[1:]) {
+				condition := tokens[1:]
+				listGuard := len(condition) >= 3 && condition[0].Text == "[" && condition[len(condition)-1].Text == "]" && traefikContractGuard(condition)
+				if !supportedTemplateCondition(condition) && !listGuard {
 					return false
 				}
 			}
@@ -703,7 +752,7 @@ func templateContractReasons(scan templateScan) []string {
 // The legacy contract recognizer reads direct names in list guards, but neither
 // evaluates the guard nor treats an assignment's value as emitted output.
 func traefikContractGuard(tokens []Token) bool {
-	if _, ok := parseFixExpression(tokens); ok {
+	if _, ok := parseTemplateExpression(tokens); ok {
 		return true
 	}
 	if len(tokens) < 3 || tokens[0].Text != "[" || tokens[len(tokens)-1].Text != "]" {
@@ -719,7 +768,7 @@ func traefikContractGuard(tokens []Token) bool {
 			depth--
 		case ",":
 			if depth == 0 {
-				if _, ok := parseFixExpression(tokens[start:i]); !ok {
+				if _, ok := parseTemplateExpression(tokens[start:i]); !ok {
 					return false
 				}
 				start = i + 1
@@ -729,7 +778,7 @@ func traefikContractGuard(tokens []Token) bool {
 	if start == len(tokens) {
 		return true
 	}
-	_, ok := parseFixExpression(tokens[start:])
+	_, ok := parseTemplateExpression(tokens[start:])
 	return ok
 }
 
@@ -740,7 +789,7 @@ func supportedTemplateFor(tokens []Token) bool {
 	if !templateForTarget(tokens, &pos, 0) || pos >= len(tokens) || tokens[pos].Text != "in" {
 		return false
 	}
-	p := expressionParser{tokens: tokens, pos: pos + 1}
+	p := expressionParser{tokens: tokens, pos: pos + 1, templateSyntax: true}
 	for {
 		if p.pos >= len(tokens) || tokens[p.pos].Text == "if" || tokens[p.pos].Text == "recursive" {
 			return false
