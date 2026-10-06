@@ -199,6 +199,7 @@ test("admission cleanup cancels its owner and joins the complete check before re
   });
   let completed = false;
   let removed = false;
+  const removedPaths: string[] = [];
   let disposed = false;
   let observerDisposed = false;
   let aliasRefreshDisposed = false;
@@ -229,9 +230,12 @@ test("admission cleanup cancels its owner and joins the complete check before re
     admissionControl: Promise.allSettled([operation]),
     subscriptions: [],
     process: { env: {} },
+    aliasDirectory: { fsPath: "owned-alias-directory" },
     temporary: "owned-gate-directory",
-    rm: async () => {
+    rm: async (path: string) => {
       assert.equal(completed, true);
+      assert.equal(disposed, true);
+      removedPaths.push(path);
       removed = true;
     },
   }) as Promise<void>;
@@ -255,6 +259,10 @@ test("admission cleanup cancels its owner and joins the complete check before re
   }
   assert.equal(completed, true);
   assert.equal(removed, true);
+  assert.deepEqual(removedPaths, [
+    "owned-alias-directory",
+    "owned-gate-directory",
+  ]);
   assert.equal(observerDisposed, true);
   assert.equal(aliasRefreshDisposed, true);
 });

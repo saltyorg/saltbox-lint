@@ -111,6 +111,17 @@ export async function runDependencies(): Promise<void> {
     roots[0].uri,
     "roles/example/tasks/first-open/ignored.yml",
   );
+  const aliasDirectory = vscode.Uri.joinPath(
+    roots[0].uri,
+    "pending-status-alias",
+  );
+  const pendingAlias = vscode.Uri.joinPath(aliasDirectory, "ignored.yml");
+  // Prepare the closed alias before this editor watches the fixture root.
+  await symlink(
+    dirname(firstOpen.fsPath),
+    aliasDirectory.fsPath,
+    process.platform === "win32" ? "junction" : "dir",
+  );
   // This primary is excluded from full coverage and has no accepted graph yet.
   let editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
   let admissionControl: Promise<PromiseSettledResult<void>[]> | undefined;
@@ -1451,17 +1462,9 @@ export async function runDependencies(): Promise<void> {
     success(
       "first check after prior context events retains pending ownership through canonical admission, manual status and deduplication",
     );
-    await pause(400);
-
-    const aliasDirectory = vscode.Uri.joinPath(
-      roots[0].uri,
-      "pending-status-alias",
-    );
-    const pendingAlias = vscode.Uri.joinPath(aliasDirectory, "ignored.yml");
-    await symlink(
-      dirname(firstOpen.fsPath),
-      aliasDirectory.fsPath,
-      process.platform === "win32" ? "junction" : "dir",
+    await waitFor(
+      savedWorkSettled,
+      "saved check postprocessing joins before opening the independent alias",
     );
     const aliasDocument = await vscode.workspace.openTextDocument(pendingAlias);
     await vscode.window.showTextDocument(aliasDocument, { preview: false });
@@ -1561,7 +1564,6 @@ export async function runDependencies(): Promise<void> {
       await vscode.commands.executeCommand(
         "workbench.action.closeActiveEditor",
       );
-      await rm(aliasDirectory.fsPath, { recursive: true, force: true });
     }
     success(
       "alias admission displays pending status without source reads and supersession, cancellation and disposal release exact child ownership",
@@ -1759,6 +1761,7 @@ export async function runDependencies(): Promise<void> {
     }
     await admissionControl;
     for (const subscription of subscriptions) subscription.dispose();
+    await rm(aliasDirectory.fsPath, { recursive: true, force: true });
     delete process.env.SALTBOX_TEST_PROCESS_LOG;
     delete process.env.SALTBOX_TEST_PROCESS_INSTANCES;
     delete process.env.SALTBOX_TEST_PROCESS_GATE;
