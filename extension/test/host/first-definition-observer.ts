@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { win32 } from "node:path";
+import { observeCLIErrorStage } from "./cli-error-stage.ts";
 
 const captureLimit = 256 * 1024;
 const outputLimit = 16 * 1024;
@@ -73,7 +74,7 @@ export function observeFirstDefinition(inputs: Inputs) {
       : value;
   const cliSpellings = new Set(
     [inputs.cliPath, inputs.cliCanonicalPath, inputs.cliProductPath]
-      .filter((value): value is string => value !== undefined)
+      .filter((value): value is string => path(value) !== undefined)
       .map(executableSpelling),
   );
   const restorations: (() => void)[] = [];
@@ -116,6 +117,7 @@ export function observeFirstDefinition(inputs: Inputs) {
   let retained = 0;
   let installedCommand = false;
   let installedSpawn = false;
+  const errorStage = observeCLIErrorStage();
 
   function documentFacts() {
     return {
@@ -324,6 +326,7 @@ export function observeFirstDefinition(inputs: Inputs) {
               });
             if (process.stderr)
               observeEmitter(process.stderr, ([event, data]) => {
+                if (child && event === "data") errorStage.observe(data);
                 if (child && event === "data" && data instanceof Uint8Array)
                   child.stderrBytes = count(
                     child.stderrBytes + data.byteLength,
@@ -423,7 +426,10 @@ export function observeFirstDefinition(inputs: Inputs) {
       firstDocument,
       settledDocument,
       failureDocument: documentFacts(),
-      child: child && { ...child },
+      child: child && {
+        ...child,
+        errorStage: errorStage.stage(child.closed, child.exitCode),
+      },
       response: responseFacts(),
     };
   }
@@ -435,6 +441,7 @@ export function observeFirstDefinition(inputs: Inputs) {
     restorations.length = 0;
     chunks = [];
     retained = 0;
+    errorStage.dispose();
   }
   return { snapshot, dispose };
 }

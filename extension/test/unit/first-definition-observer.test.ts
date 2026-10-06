@@ -74,6 +74,33 @@ function setup() {
   };
 }
 
+test("native stderr exposes only a fixed source-owned error stage after close", async () => {
+  const fixture = setup();
+  const observer = observeFirstDefinition(fixture.inputs);
+  try {
+    const pending = fixture.command();
+    fixture.native.spawn(fixture.inputs.cliPath, fixture.args);
+    const data = Buffer.from(
+      "saltbox-lint: open source parent secret_path: secret_error\n",
+    );
+    for (const byte of data)
+      fixture.child.stderr.emit("data", Buffer.from([byte]));
+    fixture.child.emit("close", 2, null);
+    fixture.resolve([]);
+    await pending;
+    const facts = observer.snapshot();
+    assert.equal(
+      Reflect.get(facts.child!, "errorStage"),
+      "error_source_parent_open",
+    );
+    assert.doesNotMatch(JSON.stringify(facts), /secret_path|secret_error/);
+  } finally {
+    observer.dispose();
+    fixture.child.stdout.destroy();
+    fixture.child.stderr.destroy();
+  }
+});
+
 test("public request and native wrappers preserve exact receivers, arguments, promise, child and streams", async () => {
   const fixture = setup();
   const commandReceiver = {},
@@ -351,35 +378,40 @@ test("expected path availability is explicit without echoing unknown or rejected
     ['unicode_😀_"_\\_path', true],
   ] as const) {
     for (const field of ["root", "source", "cliPath"] as const) {
-      const fixture = setup();
-      Reflect.set(fixture.inputs, field, value);
-      const observer = observeFirstDefinition(fixture.inputs);
-      const original = new Error("original assertion");
-      const messages: string[] = [];
-      await assert.rejects(
-        withFirstDefinitionObservation(
-          observer,
-          async () => {
-            throw original;
-          },
-          (line) => messages.push(line),
-        ),
-        (error: unknown) => error === original,
-      );
-      assert.equal(messages.length, 1);
-      assert.ok(Buffer.byteLength(messages[0], "utf8") <= 16 * 1024);
-      assert.ok(!messages[0].includes("rejected_path_"));
-      const facts = JSON.parse(
-        messages[0].slice("SALTBOX_FIRST_DEFINITION_FAILURE ".length),
-      );
-      assert.equal(facts.stage, "original_assertion_rejected");
-      assert.equal(
-        facts[field + "Availability"],
-        available ? "path_available" : "path_unavailable",
-      );
-      assert.equal(facts[field], available ? value : undefined);
-      fixture.child.stdout.destroy();
-      fixture.child.stderr.destroy();
+      for (const platform of ["linux", "win32"] as const) {
+        const fixture = setup();
+        Reflect.set(fixture.inputs, field, value);
+        const observer = observeFirstDefinition({
+          ...fixture.inputs,
+          platform,
+        });
+        const original = new Error("original assertion");
+        const messages: string[] = [];
+        await assert.rejects(
+          withFirstDefinitionObservation(
+            observer,
+            async () => {
+              throw original;
+            },
+            (line) => messages.push(line),
+          ),
+          (error: unknown) => error === original,
+        );
+        assert.equal(messages.length, 1);
+        assert.ok(Buffer.byteLength(messages[0], "utf8") <= 16 * 1024);
+        assert.ok(!messages[0].includes("rejected_path_"));
+        const facts = JSON.parse(
+          messages[0].slice("SALTBOX_FIRST_DEFINITION_FAILURE ".length),
+        );
+        assert.equal(facts.stage, "original_assertion_rejected");
+        assert.equal(
+          facts[field + "Availability"],
+          available ? "path_available" : "path_unavailable",
+        );
+        assert.equal(facts[field], available ? value : undefined);
+        fixture.child.stdout.destroy();
+        fixture.child.stderr.destroy();
+      }
     }
   }
 });
