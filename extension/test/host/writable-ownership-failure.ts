@@ -1,10 +1,74 @@
 type Mode = "canonical" | "lint-fixes" | "fixAll";
 
+interface PublicPreconditions {
+  stage: "fixAll:call";
+  documentURIEqual: boolean;
+  bufferUTF8BytesEqual: boolean;
+  documentClosed: boolean;
+  documentDirty: boolean;
+}
+
+// Read only the public document already held at the existing Fix All call.
+// Failed evidence collection must neither block nor change that call.
+export function captureWritableOwnershipPreconditions(
+  document: {
+    readonly uri: { toString(): string };
+    getText(): string;
+    readonly isClosed: boolean;
+    readonly isDirty: boolean;
+  },
+  requestedURI: { toString(): string },
+  intendedBytes: Buffer,
+): PublicPreconditions | undefined {
+  try {
+    const text = document.getText();
+    return {
+      stage: "fixAll:call",
+      documentURIEqual: document.uri.toString() === requestedURI.toString(),
+      bufferUTF8BytesEqual: Buffer.from(text, "utf8").equals(intendedBytes),
+      documentClosed: document.isClosed,
+      documentDirty: document.isDirty,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 interface WritableOwnershipFailure {
   control: `${Mode}:stable` | `${Mode}:retarget`;
   completed: number;
   settled: boolean;
   acceptedReady: boolean;
+  publicPreconditions?: PublicPreconditions;
+}
+
+function preconditionRecord(state: WritableOwnershipFailure) {
+  const unknown = {
+    precondition_stage: "unknown",
+    document_uri_equal: "unknown",
+    buffer_utf8_bytes_equal: "unknown",
+    document_closed: "unknown",
+    document_dirty: "unknown",
+  };
+  try {
+    const captured = state.publicPreconditions;
+    if (
+      !state.control.startsWith("fixAll:") ||
+      captured?.stage !== "fixAll:call"
+    )
+      return unknown;
+    const boolean = (value: boolean) =>
+      typeof value === "boolean" ? value : "unknown";
+    return {
+      precondition_stage: "fixAll:call",
+      document_uri_equal: boolean(captured.documentURIEqual),
+      buffer_utf8_bytes_equal: boolean(captured.bufferUTF8BytesEqual),
+      document_closed: boolean(captured.documentClosed),
+      document_dirty: boolean(captured.documentDirty),
+    };
+  } catch {
+    return unknown;
+  }
 }
 
 // The host promise exposes edits/void, not complete child stdout. Do not infer
@@ -23,6 +87,7 @@ export function reportWritableOwnershipFailure(
           expected_controls: 6,
           pending_settled: state.settled,
           accepted_ready: state.acceptedReady,
+          ...preconditionRecord(state),
           child_completion: "unknown",
           response_contract_valid: "unknown",
           response_schema_equal: "unknown",

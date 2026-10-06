@@ -12,7 +12,10 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EditorIntegration } from "../../src/editor.ts";
-import { reportWritableOwnershipFailure } from "./writable-ownership-failure.ts";
+import {
+  captureWritableOwnershipPreconditions,
+  reportWritableOwnershipFailure,
+} from "./writable-ownership-failure.ts";
 import {
   FixtureJournal,
   FixtureGateCohort,
@@ -118,6 +121,10 @@ export async function checkPendingWritableOwnership(
         await writeFile(gate, "");
         let settled = false;
         let acceptedReady = false;
+        const publicPreconditions =
+          mode === "fixAll"
+            ? captureWritableOwnershipPreconditions(document, uri, bytes)
+            : undefined;
         const pending = (
           mode === "fixAll" ? editor.fixAll(uri) : editor.format(document, mode)
         ).then((result) => {
@@ -200,6 +207,7 @@ export async function checkPendingWritableOwnership(
             completed,
             settled,
             acceptedReady,
+            publicPreconditions,
           });
         } finally {
           await rm(gate, { force: true });
