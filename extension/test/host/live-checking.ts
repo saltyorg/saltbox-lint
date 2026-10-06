@@ -15,6 +15,18 @@ import {
   type LiveFixture,
 } from "./live-check-record.ts";
 
+import {
+  createLiveControlEvidence,
+  noteLiveOperation,
+  noteLiveControlStage,
+  reportLiveControlFailure,
+  type LiveControlEvidence,
+} from "./live-control-evidence.ts";
+import type {
+  LiveOperationName,
+  LiveControlName,
+} from "./live-control-vocabulary.ts";
+
 const deadlineMs = 15000;
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -26,23 +38,35 @@ async function observed(
   while (!predicate() && performance.now() < deadline) await pause(10);
   assert.ok(predicate(), message);
 }
-async function bounded<T>(operation: PromiseLike<T>): Promise<T> {
+async function bounded<T>(
+  operation: PromiseLike<T>,
+  name: LiveOperationName,
+  evidence: LiveControlEvidence | undefined,
+): Promise<T> {
+  noteLiveOperation(evidence, name, "entered");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
+    const result = await Promise.race([
       operation,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Live checking control deadline")),
-          deadlineMs,
-        );
+        timer = setTimeout(() => {
+          noteLiveOperation(evidence, name, "deadline");
+          reject(new Error("Live checking control deadline"));
+        }, deadlineMs);
       }),
     ]);
+    noteLiveOperation(evidence, name, "completed");
+    return result;
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
-async function replace(document: vscode.TextDocument, text: string) {
+async function replace(
+  document: vscode.TextDocument,
+  text: string,
+  name: LiveOperationName,
+  evidence: LiveControlEvidence | undefined,
+) {
   const edit = new vscode.WorkspaceEdit();
   edit.replace(
     document.uri,
@@ -52,7 +76,10 @@ async function replace(document: vscode.TextDocument, text: string) {
     ),
     text,
   );
-  assert.equal(await bounded(vscode.workspace.applyEdit(edit)), true);
+  assert.equal(
+    await bounded(vscode.workspace.applyEdit(edit), name, evidence),
+    true,
+  );
 }
 function expected(document: vscode.TextDocument, line: number): boolean {
   return vscode.languages
@@ -214,6 +241,7 @@ export async function runLiveChecking(): Promise<void> {
     if (event.contentChanges.length && [small, heavy].includes(event.document))
       changed = performance.now();
   });
+  const evidence = createLiveControlEvidence();
   const fixtureRecords: LiveFixture[] = [];
   let bufferUnchanged = true;
   let finalRecord: LiveCheckRecord | undefined;
@@ -226,7 +254,7 @@ export async function runLiveChecking(): Promise<void> {
     // A bounded observation window proves absence while typing is disabled.
     const offBefore = invocations.length;
     for (let index = 2; index <= 6; index++)
-      await replace(small, source(index));
+      await replace(small, source(index), "default-off-edit", evidence);
     await pause(650);
     assert.equal(
       invocations.length - offBefore,
@@ -234,7 +262,10 @@ export async function runLiveChecking(): Promise<void> {
       "default-off typing launches",
     );
     const saveBefore = primaryCalls(small).length;
-    assert.equal(await bounded(small.save()), true);
+    assert.equal(
+      await bounded(small.save(), "default-off-save", evidence),
+      true,
+    );
     await observed(
       () => expected(small, 6),
       "default-off save publishes current findings",
@@ -252,6 +283,8 @@ export async function runLiveChecking(): Promise<void> {
         true,
         vscode.ConfigurationTarget.WorkspaceFolder,
       ),
+      "enable-setting",
+      evidence,
     );
     await observed(
       () =>
@@ -270,7 +303,12 @@ export async function runLiveChecking(): Promise<void> {
         const line = 10 + sample;
         const text = source(line);
         const before = primaryCalls(document).length;
-        await replace(document, text);
+        await replace(
+          document,
+          text,
+          kind === "small" ? "small-sample-edit" : "context-heavy-sample-edit",
+          evidence,
+        );
         const started = changed;
         await observed(
           () => primaryCalls(document).length > before,
@@ -328,7 +366,7 @@ export async function runLiveChecking(): Promise<void> {
     const sustainedBefore = primaryCalls(small).length;
     const sustainedStart = performance.now();
     for (let edit = 0; edit < 20; edit++) {
-      await replace(small, source(40 + edit));
+      await replace(small, source(40 + edit), "sustained-edit", evidence);
       // This cadence is workload input, never a completion assertion.
       await pause(25);
     }
@@ -365,6 +403,7 @@ export async function runLiveChecking(): Promise<void> {
       ).join("") + source(80);
     let controlNumber = 0;
     async function cancelControl(
+      name: LiveControlName,
       action: () => Promise<unknown>,
     ): Promise<number> {
       let resolve!: (milliseconds: number) => void;
@@ -373,7 +412,9 @@ export async function runLiveChecking(): Promise<void> {
         resolve = done;
         reject = fail;
       });
+      noteLiveControlStage(evidence, name, "waiting-for-launch");
       launchControl = (invocation) => {
+        noteLiveControlStage(evidence, name, "action-pending");
         const started = performance.now();
         assert.equal(
           invocation.closed,
@@ -382,6 +423,7 @@ export async function runLiveChecking(): Promise<void> {
         );
         void action()
           .then(async () => {
+            noteLiveControlStage(evidence, name, "waiting-for-close");
             await observed(
               () => invocation.closed !== undefined,
               "cancelled native CLI close join",
@@ -391,29 +433,35 @@ export async function runLiveChecking(): Promise<void> {
               true,
               "control cancels the native CLI before joining it",
             );
+            noteLiveControlStage(evidence, name, "close-completed");
             resolve(invocation.closed! - started);
           })
           .catch(reject);
       };
-      await replace(heavy, slow + `# control ${++controlNumber}\r\n`);
-      return bounded(completed);
+      await replace(
+        heavy,
+        slow + `# control ${++controlNumber}\r\n`,
+        "control-launch-edit",
+        evidence,
+      );
+      return bounded(completed, name, evidence);
     }
-    const supersededCloseMs = await cancelControl(async () => {
-      await replace(heavy, source(90));
+    const supersededCloseMs = await cancelControl("superseded", async () => {
+      await replace(heavy, source(90), "superseded-edit", evidence);
     });
     await observed(
       () => expected(heavy, 90),
       "superseded response cannot replace latest findings",
     );
     await checkpoint("superseded");
-    const manualCloseMs = await cancelControl(async () => {
+    const manualCloseMs = await cancelControl("manual", async () => {
       await vscode.commands.executeCommand("saltboxLint.checkDocument");
     });
     await checkpoint("manual");
     assert.ok(manualCloseMs < deadlineMs);
     // Save the small primary while typing owns the heavy active subprocess.
-    await replace(small, source(91));
-    const saveCloseMs = await cancelControl(async () => {
+    await replace(small, source(91), "save-preparation-edit", evidence);
+    const saveCloseMs = await cancelControl("save", async () => {
       await small.save();
     });
     await observed(
@@ -431,7 +479,7 @@ export async function runLiveChecking(): Promise<void> {
           value,
           "live checks preserve other saved sources",
         );
-    const settingOffCloseMs = await cancelControl(async () => {
+    const settingOffCloseMs = await cancelControl("setting-off", async () => {
       await configuration.update(
         "checkOnType",
         false,
@@ -445,9 +493,12 @@ export async function runLiveChecking(): Promise<void> {
       vscode.ConfigurationTarget.WorkspaceFolder,
     );
     const marker = vscode.Uri.joinPath(root, ".saltbox-lint");
-    const markerRemovalCloseMs = await cancelControl(async () => {
-      await vscode.workspace.fs.delete(marker);
-    });
+    const markerRemovalCloseMs = await cancelControl(
+      "marker-removal",
+      async () => {
+        await vscode.workspace.fs.delete(marker);
+      },
+    );
     await observed(
       () =>
         vscode.languages
@@ -469,7 +520,12 @@ export async function runLiveChecking(): Promise<void> {
     await vscode.commands.executeCommand("saltboxLint.checkDocument");
     await checkpoint("template-baseline");
     const templateBefore = primaryCalls(template).length;
-    await replace(template, template.getText() + " ");
+    await replace(
+      template,
+      template.getText() + " ",
+      "template-edit",
+      evidence,
+    );
     await pause(650);
     assert.equal(
       primaryCalls(template).length,
@@ -478,13 +534,15 @@ export async function runLiveChecking(): Promise<void> {
     );
     await vscode.window.showTextDocument(heavy, { preview: false });
     // Give the last control a new snapshot so a document event is emitted.
-    await replace(heavy, source(95));
+    await replace(heavy, source(95), "restored-edit", evidence);
     await observed(
       () => expected(heavy, 95),
       "restored marker permits latest buffer",
     );
     await checkpoint("before-deactivate");
-    const deactivateCloseMs = await cancelControl(() => runtime.deactivate());
+    const deactivateCloseMs = await cancelControl("deactivate", () =>
+      runtime.deactivate(),
+    );
     await checkpoint("deactivated");
     const diskAfter = await diskSources(root.fsPath);
     assert.deepEqual(
@@ -526,16 +584,25 @@ export async function runLiveChecking(): Promise<void> {
   } catch (error) {
     failed = true;
     primaryFailure = error;
+    reportLiveControlFailure(evidence, {
+      fixtures: fixtureRecords.length,
+      checkpoints: checkpoints.length,
+    });
   } finally {
     launchControl = undefined;
     try {
-      await bounded(runtime.deactivate());
+      await bounded(runtime.deactivate(), "cleanup-deactivate", evidence);
       await observed(
         () => invocations.every((item) => item.closed !== undefined),
         "final installed native CLI join",
       );
     } catch (error) {
       cleanupFailures.push(error);
+      if (!failed)
+        reportLiveControlFailure(evidence, {
+          fixtures: fixtureRecords.length,
+          checkpoints: checkpoints.length,
+        });
     } finally {
       try {
         Object.defineProperty(childProcesses, "spawn", descriptor);
