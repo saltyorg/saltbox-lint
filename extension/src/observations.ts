@@ -220,13 +220,7 @@ export async function observeAnalysis(
         changed.add(relative);
         continue;
       }
-      if (
-        rootFingerprint &&
-        resolved &&
-        resolved !== filename &&
-        bytes &&
-        !overlay
-      ) {
+      if (rootFingerprint && resolved && resolved !== filename && bytes) {
         const canonical = path
           .relative(record.root, resolved)
           .split(path.sep)
@@ -240,7 +234,10 @@ export async function observeAnalysis(
         ) {
           aliases.set(relative, {
             filename: resolved,
-            fingerprint: contentFingerprint(after, bytes, afterTarget),
+            // An overlay owns the captured buffer digest, while its disk
+            // entry and canonical owner retain their observed identities.
+            fingerprint:
+              observationFingerprint(after, afterTarget) + ":" + file.sha256,
             rootFingerprint,
           });
         }

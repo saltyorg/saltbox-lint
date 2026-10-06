@@ -75,7 +75,8 @@ export async function validateNavigation(
         }
         if (
           identity.filename === alias.filename &&
-          (document.isDirty || hash(document.getText()) !== digest)
+          ((!overlayPaths.has(target) && document.isDirty) ||
+            hash(document.getText()) !== digest)
         )
           return false;
       }
@@ -91,9 +92,12 @@ export async function validateNavigation(
     }
     if (overlayPaths.has(target)) {
       // These aliases passed the shared observation's owner/digest checks.
-      // Recheck their identity before mapping snapshot spans to the open URI.
+      // Retain that ownership for both this mapping and final acceptance.
       if (digest !== hash(text)) return;
       try {
+        const alias = aliases.get(target);
+        if (!alias || !(await aliasCurrent(report.root, target, alias, digest)))
+          return;
         if (
           (
             await identify(
@@ -103,6 +107,7 @@ export async function validateNavigation(
           ).path !== report.path
         )
           return;
+        usedAliases.set(target, alias);
       } catch {
         return;
       }
