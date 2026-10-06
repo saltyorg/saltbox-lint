@@ -94,8 +94,10 @@ interface Invocation {
 export async function runLiveChecking(): Promise<void> {
   const product = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
   assert.ok(product.isActive);
+  // Match the controller's context.asAbsolutePath basis. On Windows,
+  // extensionPath can retain a different drive spelling than extensionUri.fsPath.
   const executable = join(
-    product.extensionPath,
+    product.extensionUri.fsPath,
     "bin",
     "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
   );
@@ -157,13 +159,14 @@ export async function runLiveChecking(): Promise<void> {
   let launchControl: ((invocation: Invocation) => void) | undefined;
   const wrapped = (...args: Parameters<typeof spawn>): ChildProcess => {
     const child = Reflect.apply(original, childProcesses, args) as ChildProcess;
+    const started = performance.now();
     if (args[0] === executable) {
       if (invocations.length >= 256) overflow = true;
       else {
         const argv = args[1] ?? [];
         const position = argv.indexOf("--stdin-filename");
         const invocation: Invocation = {
-          started: performance.now(),
+          started,
           primary: position < 0 ? undefined : argv[position + 1],
         };
         invocations.push(invocation);
