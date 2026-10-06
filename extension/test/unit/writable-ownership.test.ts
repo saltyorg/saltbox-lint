@@ -11,6 +11,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { rmSync, symlinkSync } from "node:fs";
+import * as fs from "node:fs/promises";
+import * as syncFs from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { build } from "esbuild";
@@ -56,6 +58,7 @@ test("pending writable requests and final application retain the original source
   const original = join(root, "roles/demo/defaults");
   const template = join(root, "roles/demo/templates");
   const other = join(root, "roles/other/defaults");
+  const administrative = join(root, ".git");
   const alias = join(root, "alias");
   const text = "a:  1\n";
   const uri = (filename: string) => ({
@@ -67,9 +70,16 @@ test("pending writable requests and final application retain the original source
   const folder = { uri: uri(root) };
   let applied = 0;
   let beforeApplyPlan: (() => void) | undefined;
+  let beforeIdentity: (() => void) | undefined;
+  let afterIdentity: (() => void) | undefined;
+  let afterImmediateSource: (() => void) | undefined;
+  let finalStats = 0;
+  let finalIdentities = 0;
+  let handoffs = 0;
   let enter!: () => void;
   let release!: (wire: string) => void;
   const documents: TextDocument[] = [];
+  const mismatches: string[] = [];
   const workspace = {
     isTrusted: true,
     textDocuments: documents,
@@ -103,10 +113,67 @@ test("pending writable requests and final application retain the original source
   const module = {
     exports: {} as { EditorIntegration: typeof EditorIntegration },
   };
+  const originalRequire = createRequire(import.meta.url);
   runInNewContext(bundled.outputFiles[0].text, {
     module,
     exports: module.exports,
-    require: createRequire(import.meta.url),
+    require: (name: string) =>
+      name === "node:fs/promises"
+        ? {
+            ...fs,
+            stat: async (filename: string) => {
+              const entry = await fs.stat(filename);
+              if (beforeIdentity || afterIdentity) finalStats++;
+              return entry;
+            },
+            realpath: async (filename: string) => {
+              if (filename === join(alias, "main.yaml")) {
+                const before = beforeIdentity;
+                beforeIdentity = undefined;
+                if (before) {
+                  finalIdentities++;
+                  assert.equal(
+                    finalStats,
+                    1,
+                    "physical stat precedes identity",
+                  );
+                  before();
+                }
+              }
+              const canonical = await fs.realpath(filename);
+              if (filename === join(alias, "main.yaml")) {
+                const after = afterIdentity;
+                afterIdentity = undefined;
+                if (after) {
+                  finalIdentities++;
+                  assert.equal(
+                    finalStats,
+                    1,
+                    "physical stat precedes identity",
+                  );
+                  after();
+                }
+              }
+              return canonical;
+            },
+          }
+        : name === "node:fs"
+          ? {
+              ...syncFs,
+              statSync: (filename: string) => {
+                const entry = syncFs.statSync(filename);
+                if (filename === join(alias, "main.yaml")) {
+                  const after = afterImmediateSource;
+                  afterImmediateSource = undefined;
+                  if (after) {
+                    handoffs++;
+                    queueMicrotask(after);
+                  }
+                }
+                return entry;
+              },
+            }
+          : originalRequire(name),
     process,
     Buffer,
     AbortController,
@@ -134,7 +201,13 @@ test("pending writable requests and final application retain the original source
     symlinkSync(destination, alias, "junction");
   };
   try {
-    for (const directory of [original, template, other, external]) {
+    for (const directory of [
+      original,
+      template,
+      other,
+      external,
+      administrative,
+    ]) {
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, "main.yaml"), text);
     }
@@ -159,6 +232,14 @@ test("pending writable requests and final application retain the original source
         "dependency",
         "document revision",
         "canceled",
+        "final identity missing",
+        "final identity template",
+        "final identity other YAML",
+        "final identity escape",
+        "final identity administrative",
+        "final identity directory",
+        "promise handoff missing",
+        "promise handoff other YAML",
       ] as const) {
         if (
           (operation === "shared" || operation === "fixAll") &&
@@ -169,6 +250,9 @@ test("pending writable requests and final application retain the original source
         workspace.isTrusted = true;
         documents.length = 0;
         applied = 0;
+        finalStats = 0;
+        finalIdentities = 0;
+        handoffs = 0;
         let entered!: () => void;
         const reached = new Promise<void>((done) => {
           entered = done;
@@ -303,6 +387,30 @@ test("pending writable requests and final application retain the original source
         if (change === "dependency") dependency++;
         if (change === "document revision") revisions.set(document, 999);
         if (change === "canceled") cancellation.abort();
+        if (change === "final identity missing")
+          beforeIdentity = () => rmSync(join(original, "main.yaml"));
+        if (change === "final identity template")
+          afterIdentity = () => retarget(template);
+        if (change === "final identity other YAML")
+          afterIdentity = () => retarget(other);
+        if (change === "final identity escape")
+          afterIdentity = () => retarget(external);
+        if (change === "final identity administrative")
+          afterIdentity = () => retarget(administrative);
+        if (change === "final identity directory")
+          afterIdentity = () => {
+            rmSync(join(original, "main.yaml"));
+            // The source retains its spelling but ceases to be a file.
+            syncFs.mkdirSync(join(original, "main.yaml"));
+          };
+        if (change === "promise handoff missing")
+          afterIdentity = () => {
+            afterImmediateSource = () => rmSync(join(original, "main.yaml"));
+          };
+        if (change === "promise handoff other YAML")
+          afterIdentity = () => {
+            afterImmediateSource = () => retarget(other);
+          };
         if (operation === "shared")
           pending = editor.applyShared(
             document.uri,
@@ -312,27 +420,46 @@ test("pending writable requests and final application retain the original source
           );
         else release(wire);
         const result = await pending;
-        if (operation === "canonical" || operation === "lint-fixes")
+        const count =
+          operation === "canonical" || operation === "lint-fixes"
+            ? (result as unknown[]).length
+            : applied;
+        if (count !== (change === "stable" ? 1 : 0))
+          mismatches.push(`${operation}: ${change}, received ${count}`);
+        if (
+          change.startsWith("final identity") ||
+          change.startsWith("promise handoff")
+        )
           assert.equal(
-            (result as unknown[]).length,
-            change === "stable" ? 1 : 0,
-            `${operation}: ${change}`,
+            finalIdentities,
+            1,
+            `${operation}: reached final identity`,
           );
-        else
-          assert.equal(
-            applied,
-            change === "stable" ? 1 : 0,
-            `${operation}: ${change}`,
-          );
+        if (change.startsWith("promise handoff"))
+          assert.equal(handoffs, 1, `${operation}: reached Promise handoff`);
         formatting.dispose();
+        if (change === "final identity directory")
+          rmSync(join(original, "main.yaml"), { recursive: true, force: true });
         await writeFile(join(original, "main.yaml"), text);
       }
     }
     // A command can also lose ownership after its formatting result was accepted.
-    for (const operation of ["fixAll", "shared"] as const) {
+    const finalChanges = [
+      "template",
+      "final identity missing",
+      "final identity other YAML",
+      "promise handoff missing",
+      "promise handoff other YAML",
+    ] as const;
+    for (const { operation, change } of (["fixAll", "shared"] as const).flatMap(
+      (operation) => finalChanges.map((change) => ({ operation, change })),
+    )) {
       retarget(original);
       workspace.isTrusted = true;
       applied = 0;
+      finalStats = 0;
+      finalIdentities = 0;
+      handoffs = 0;
       const document = {
         uri: uri(join(alias, "main.yaml")),
         languageId: "yaml",
@@ -379,7 +506,10 @@ test("pending writable requests and final application retain the original source
       );
       const edits = [
         {
-          range: { start: { line: 1, column: 4 }, end: { line: 1, column: 5 } },
+          range: {
+            start: { line: 1, column: 4 },
+            end: { line: 1, column: 5 },
+          },
           span: { start: 3, end: 4 },
           text: "",
         },
@@ -396,14 +526,32 @@ test("pending writable requests and final application retain the original source
                 fixes: new Map([
                   [
                     "fix",
-                    { id: "fix", path: "roles/demo/defaults/main.yaml", edits },
+                    {
+                      id: "fix",
+                      path: "roles/demo/defaults/main.yaml",
+                      edits,
+                    },
                   ],
                 ]),
               },
             }),
           },
         });
-        beforeApplyPlan = () => retarget(template);
+        beforeApplyPlan = () => {
+          if (change === "template") retarget(template);
+          if (change === "final identity missing")
+            beforeIdentity = () => rmSync(join(original, "main.yaml"));
+          if (change === "final identity other YAML")
+            afterIdentity = () => retarget(other);
+          if (change === "promise handoff missing")
+            afterIdentity = () => {
+              afterImmediateSource = () => rmSync(join(original, "main.yaml"));
+            };
+          if (change === "promise handoff other YAML")
+            afterIdentity = () => {
+              afterImmediateSource = () => retarget(other);
+            };
+        };
         pending = editor.applyShared(document.uri, hash(text), "fix", "report");
       } else {
         let entered!: () => void;
@@ -413,7 +561,21 @@ test("pending writable requests and final application retain the original source
         enter = entered;
         pending = editor.fixAll(document.uri);
         await reached;
-        beforeApplyPlan = () => retarget(template);
+        beforeApplyPlan = () => {
+          if (change === "template") retarget(template);
+          if (change === "final identity missing")
+            beforeIdentity = () => rmSync(join(original, "main.yaml"));
+          if (change === "final identity other YAML")
+            afterIdentity = () => retarget(other);
+          if (change === "promise handoff missing")
+            afterIdentity = () => {
+              afterImmediateSource = () => rmSync(join(original, "main.yaml"));
+            };
+          if (change === "promise handoff other YAML")
+            afterIdentity = () => {
+              afterImmediateSource = () => retarget(other);
+            };
+        };
         release(
           JSON.stringify({
             schema_version: 1,
@@ -426,13 +588,31 @@ test("pending writable requests and final application retain the original source
       }
       try {
         await pending;
-        assert.equal(applied, 0, `${operation}: final application boundary`);
+        if (applied !== 0)
+          mismatches.push(
+            `${operation}: ${change} at final application, received ${applied}`,
+          );
+        if (
+          change.startsWith("final identity") ||
+          change.startsWith("promise handoff")
+        )
+          assert.equal(
+            finalIdentities,
+            1,
+            `${operation}: final application identity`,
+          );
+        if (change.startsWith("promise handoff"))
+          assert.equal(handoffs, 1, `${operation}: final application handoff`);
       } finally {
         beforeApplyPlan = undefined;
         formatting.dispose();
+        await writeFile(join(original, "main.yaml"), text);
       }
     }
+    assert.deepEqual(mismatches, [], "every changed source must refuse edits");
   } finally {
+    beforeIdentity = afterIdentity = undefined;
+    afterImmediateSource = undefined;
     await rm(root, { recursive: true, force: true });
     await rm(external, { recursive: true, force: true });
   }

@@ -690,10 +690,30 @@ export class EditorIntegration implements vscode.Disposable {
         identity.path === snapshot.path &&
         !templatePath(identity.filename) &&
         !templatePath(identity.path) &&
-        this.writable(document)
+        this.writableSnapshotNow(document, snapshot)
       );
     } catch {
       // A missing, escaping or inaccessible source cannot authorize an edit.
+      return false;
+    }
+  }
+  private writableSnapshotNow(
+    document: vscode.TextDocument,
+    snapshot: Snapshot,
+  ): boolean {
+    try {
+      // Awaited observations do not grant writes. Check the original URI and
+      // physical presence again at the return or application boundary.
+      return (
+        this.current(document, snapshot) &&
+        this.writable(document) &&
+        !templatePath(snapshot.filename) &&
+        !templatePath(snapshot.path) &&
+        sourceOriginCurrentNow(snapshot) &&
+        realpathSync.native(snapshot.root) === snapshot.root &&
+        (!!snapshot.logical || statSync(snapshot.sourceFilename).isFile())
+      );
+    } catch {
       return false;
     }
   }
@@ -1330,7 +1350,11 @@ export class EditorIntegration implements vscode.Disposable {
     if (!fix || fix.path !== result.snapshot.path) return;
     const edit = new vscode.WorkspaceEdit();
     edit.set(uri, textEdits(result.snapshot.index.edits(fix.edits)));
-    if (!(await this.writableSnapshot(document, result.snapshot))) return;
+    if (
+      !(await this.writableSnapshot(document, result.snapshot)) ||
+      !this.writableSnapshotNow(document, result.snapshot)
+    )
+      return;
     await vscode.workspace.applyEdit(edit);
   }
   private async query(
@@ -1522,10 +1546,17 @@ export class EditorIntegration implements vscode.Disposable {
     mode: "canonical" | "lint-fixes",
     token?: vscode.CancellationToken,
   ): Promise<vscode.TextEdit[]> {
-    return (
-      (await this.formattingResult(document, mode, document.version, token))
-        ?.edits ?? []
+    const result = await this.formattingResult(
+      document,
+      mode,
+      document.version,
+      token,
     );
+    return result &&
+      !token?.isCancellationRequested &&
+      this.writableSnapshotNow(document, result.snapshot)
+      ? result.edits
+      : [];
   }
   private async formattingResult(
     document: vscode.TextDocument,
@@ -1617,7 +1648,11 @@ export class EditorIntegration implements vscode.Disposable {
       return;
     const edit = new vscode.WorkspaceEdit();
     edit.set(document.uri, result.edits);
-    if (!(await this.writableSnapshot(document, result.snapshot))) return;
+    if (
+      !(await this.writableSnapshot(document, result.snapshot)) ||
+      !this.writableSnapshotNow(document, result.snapshot)
+    )
+      return;
     await vscode.workspace.applyEdit(edit);
   }
   change(document: vscode.TextDocument): void {

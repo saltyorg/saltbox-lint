@@ -186,6 +186,8 @@ async function fixture(saved = false, spelling = "plain") {
   let afterWire: (() => Promise<void>) | undefined;
   let afterRead: ((filename: string) => Promise<void>) | undefined;
   let afterProbe: ((filename: string) => Promise<void>) | undefined;
+  let afterAbsence: ((filename: string) => Promise<void>) | undefined;
+  let beforeApply: (() => void) | undefined;
   const frozenEntries = new Map<string, BigIntStats>();
   let formatter: vscode.DocumentFormattingEditProvider | undefined;
   let reference: vscode.ReferenceProvider | undefined;
@@ -276,7 +278,12 @@ async function fixture(saved = false, spelling = "plain") {
     Disposable,
     Range,
     Location,
-    WorkspaceEdit,
+    WorkspaceEdit: class extends WorkspaceEdit {
+      override set(uri: vscode.Uri, edits: vscode.TextEdit[]) {
+        super.set(uri, edits);
+        beforeApply?.();
+      }
+    },
     RelativePattern: class {
       readonly baseUri: vscode.Uri;
       readonly pattern: string;
@@ -373,6 +380,15 @@ async function fixture(saved = false, spelling = "plain") {
       name === "node:fs/promises"
         ? {
             ...fs,
+            lstat: async (...args: Parameters<typeof fs.lstat>) => {
+              try {
+                return await fs.lstat(...args);
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === "ENOENT")
+                  await afterAbsence?.(String(args[0]));
+                throw error;
+              }
+            },
             realpath: async (filename: string) => {
               const canonical = await fs.realpath(filename);
               await afterProbe?.(filename);
@@ -403,7 +419,12 @@ async function fixture(saved = false, spelling = "plain") {
   const editor = Object.assign(
     Object.create(module.exports.EditorIntegration.prototype) as Pick<
       EditorIntegration,
-      "fixAll" | "format" | "providerDocuments" | "writable" | "navigation"
+      | "fixAll"
+      | "format"
+      | "applyShared"
+      | "providerDocuments"
+      | "writable"
+      | "navigation"
     > & {
       admit(document: vscode.TextDocument): Promise<boolean>;
     },
@@ -526,6 +547,12 @@ async function fixture(saved = false, spelling = "plain") {
     afterProbe(callback: typeof afterProbe) {
       afterProbe = callback;
     },
+    afterAbsence(callback: typeof afterAbsence) {
+      afterAbsence = callback;
+    },
+    beforeApply(callback: typeof beforeApply) {
+      beforeApply = callback;
+    },
     freezeEntry(filename: string) {
       frozenEntries.set(filename, lstatSync(filename, { bigint: true }));
     },
@@ -553,6 +580,116 @@ async function fixture(saved = false, spelling = "plain") {
       await fs.rm(root, { recursive: true, force: true });
     },
   };
+}
+
+for (const endpoint of [
+  "canonical",
+  "lint-fixes",
+  "fix all",
+  "shared",
+] as const) {
+  for (const mutation of [
+    "unchanged",
+    "physical leaf",
+    "parent owner",
+    "template parent",
+    "dependency",
+    "buffer",
+    "closed",
+  ] as const) {
+    test(`never-saved YAML ${endpoint} rechecks authority after its final awaited absence read: ${mutation}`, async () => {
+      const f = await fixture(false, "parent alias");
+      let observed = 0;
+      let armed = false;
+      const replacements = path.join(f.root, "roles/replacement/defaults");
+      const templates = path.join(f.root, "roles/replacement/templates");
+      try {
+        await fs.mkdir(replacements, { recursive: true });
+        await fs.mkdir(templates, { recursive: true });
+        // Capture the logical history after all fixture setup is complete.
+        assert.equal(await f.editor.admit(f.doc), true);
+        const snapshot = await Reflect.apply(
+          Reflect.get(f.editor, "snapshot"),
+          f.editor,
+          [f.doc],
+        );
+        assert.ok(snapshot);
+        const edits = [
+          {
+            range: {
+              start: { line: 1, column: primary.indexOf("\n") + 1 },
+              end: { line: 2, column: 1 },
+            },
+            span: {
+              start: primary.indexOf("\n"),
+              end: primary.indexOf("\n") + 1,
+            },
+            text: "",
+          },
+        ];
+        if (endpoint === "shared")
+          Reflect.set(f.editor, "results", {
+            document: () => ({
+              id: "report",
+              snapshot,
+              report: {
+                fixes: new Map([
+                  ["fix", { id: "fix", path: "source/new.yml", edits }],
+                ]),
+              },
+            }),
+          });
+        f.afterAbsence(async (filename) => {
+          if (!armed || filename !== f.filename || observed) return;
+          observed++;
+          armed = false;
+          if (mutation === "physical leaf")
+            await fs.writeFile(f.filename, primary);
+          if (mutation === "parent owner" || mutation === "template parent") {
+            await fs.rm(f.alias);
+            await fs.symlink(
+              mutation === "parent owner" ? replacements : templates,
+              f.alias,
+              "junction",
+            );
+          }
+          if (mutation === "dependency") f.reviseDependency();
+          if (mutation === "buffer")
+            Reflect.set(f.doc, "getText", () => primary + "\n");
+          if (mutation === "closed") Reflect.set(f.doc, "isClosed", true);
+        });
+        // Fix All has already accepted its formatting result at this boundary.
+        if (endpoint === "fix all" || endpoint === "shared")
+          f.beforeApply(() => {
+            armed = true;
+          });
+        else
+          f.afterWire(async () => {
+            armed = true;
+          });
+        if (endpoint === "shared")
+          await f.editor.applyShared(f.doc.uri, hash(primary), "fix", "report");
+        else if (endpoint === "fix all") await f.editor.fixAll(f.doc.uri);
+        else
+          assert.equal(
+            (await f.editor.format(f.doc, endpoint)).length,
+            mutation === "unchanged" ? 1 : 0,
+          );
+        if (endpoint === "fix all" || endpoint === "shared")
+          assert.equal(f.applied.length, mutation === "unchanged" ? 1 : 0);
+        assert.equal(
+          observed,
+          1,
+          "the last logical absence read must be reached",
+        );
+        assert.equal(f.errors.length, 0);
+        if (mutation === "unchanged")
+          await assert.rejects(fs.lstat(f.filename), { code: "ENOENT" });
+      } finally {
+        await f.dispose();
+      }
+    });
+  }
 }
 
 for (const kind of [
