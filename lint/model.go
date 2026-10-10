@@ -56,15 +56,16 @@ const (
 )
 
 type Source struct {
-	Path             string
-	Data             []byte
-	Kind             Kind
-	Role, RolePath   string
-	Documents        []*Node
-	parseDiagnostics []Diagnostic
-	lineStarts       []int
-	yamlComments     []Span
-	sourceIndex      *yamlindex.Index
+	Path                   string
+	Data                   []byte
+	Kind                   Kind
+	Role, RolePath         string
+	Documents              []*Node
+	parseDiagnostics       []Diagnostic
+	lineStarts             []int
+	yamlComments           []Span
+	yamlDocumentBoundaries []Span
+	sourceIndex            *yamlindex.Index
 	// Disk write authority comes only from the file opened by the loader.
 	// Parsed values and editor overlays have no physical write authority.
 	diskIdentity *sourceDiskIdentity

@@ -10,6 +10,7 @@ import (
 var defaultsRuleIDs = []string{
 	"role-variable-prefix",
 	"defaults-sections",
+	"paths-role-var",
 	"computed-default-documentation",
 	"role-docker-state",
 	"docker-image-contract",

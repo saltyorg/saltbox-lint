@@ -70,6 +70,9 @@ func parseSource(filename string, data []byte, retainIndex bool) (*Source, []Dia
 			if sourceToken.Type == token.CommentType {
 				s.yamlComments = append(s.yamlComments, a.tokenSpan(sourceToken))
 			}
+			if sourceToken.Type == token.DocumentHeaderType || sourceToken.Type == token.DocumentEndType {
+				s.yamlDocumentBoundaries = append(s.yamlDocumentBoundaries, a.tokenSpan(sourceToken))
+			}
 		}
 	}
 	var file *ast.File

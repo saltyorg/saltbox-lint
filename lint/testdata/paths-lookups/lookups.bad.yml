@@ -1,0 +1,21 @@
+---
+example_name: example
+
+################################
+# Paths
+################################
+
+example_role_paths_location: "{{ lookup('role_var', '_paths_folder', role='example') }}"
+example_role_paths_folders_list:
+  - "{{ query('role_var', '_paths_location', role='example') }}"
+example_role_paths_options:
+  location: "{{ q('role_var', '_paths_location', role='example') }}"
+example_role_paths_import: >-
+  {{ lookup(
+       'role_var', '_paths_location', role='other') }}
+
+################################
+# Application settings
+################################
+
+example_role_option: "{{ lookup('role_var', '_option', role='example') }}"

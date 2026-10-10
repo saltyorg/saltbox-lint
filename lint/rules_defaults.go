@@ -234,6 +234,43 @@ func checkDefaultsSections(_ *Project, source *Source) []Diagnostic {
 	return diagnostics
 }
 
+func checkPathsRoleVar(_ *Project, source *Source) []Diagnostic {
+	lines := sourceLines(source.Data)
+	banners := sectionBanners(source, lines)
+	if !slices.ContainsFunc(banners, func(banner sectionBanner) bool { return banner.Name == "Paths" }) {
+		return nil
+	}
+	reads := sourceRoleReferences(source)
+	var diagnostics []Diagnostic
+	for index, banner := range banners {
+		if banner.Name != "Paths" {
+			continue
+		}
+		start, end := lines[banner.EndLine].Span.End, len(source.Data)
+		if index+1 < len(banners) {
+			end = banners[index+1].Title.Span.Start
+		}
+		for _, boundary := range source.yamlDocumentBoundaries {
+			if boundary.Start > start && boundary.Start < end {
+				end = boundary.Start
+			}
+		}
+		for _, read := range reads {
+			span := Span(read.Location.Span)
+			if span.Start < start || span.Start >= end || (read.LookupKind != "role_var" && !strings.HasSuffix(read.LookupKind, ".role_var")) || slices.Contains(read.Reasons, "local-callee-binding") {
+				continue
+			}
+			diagnostics = append(diagnostics, Diagnostic{
+				Path: source.Path, RuleID: "paths-role-var", Severity: "error", Span: span,
+				Message:  "role_var lookup appears in the defaults Paths section",
+				Expected: "Use direct role-default references in Paths so the path set derives from the instance name. Resolve role_var at consumers outside this section; no automatic rewrite is safe.",
+				Related:  []RelatedLocation{{Path: source.Path, Span: banner.Title.Span, Message: "Paths section starts here"}},
+			})
+		}
+	}
+	return diagnostics
+}
+
 func precedingPhysicalLine(source *Source, offset int) string {
 	if source == nil || offset <= 0 {
 		return ""

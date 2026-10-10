@@ -1,0 +1,22 @@
+---
+example_name: example
+
+################################
+# Paths
+################################
+
+example_role_paths_folder: "{{ example_name }}"
+example_role_paths_location: "{{ server_appdata_path }}/{{ example_role_paths_folder }}"
+example_role_paths_config_location: "{{ example_role_paths_location }}/config.xml"
+example_role_paths_folders_list:
+  - "{{ example_role_paths_location }}"
+example_role_paths_notes:
+  lookup_example: "lookup('role_var', '_paths_location', role='example')"
+  literal_expression: '{{ "lookup(role_var)" }}'
+  inventory_value: "{{ lookup('vars', 'server_appdata_path') }}"
+
+################################
+# Application settings
+################################
+
+example_role_option: "{{ lookup('role_var', '_option', role='example') }}"

@@ -26,6 +26,7 @@ This reference describes source-built, unreleased functionality. The published v
 - [lint-directive](#lint-directive)
 - [lookup-conditional-argument](#lookup-conditional-argument)
 - [network-health-contract](#network-health-contract)
+- [paths-role-var](#paths-role-var)
 - [role-directory-name](#role-directory-name)
 - [role-docker-state](#role-docker-state)
 - [role-lookup-target](#role-lookup-target)
@@ -534,6 +535,35 @@ Violation example:
 
 ```yaml
 - include_tasks: network_container_health_status.yml
+```
+
+## paths-role-var
+
+Keep Paths defaults as direct references
+
+The canonical Paths section of role defaults uses direct references rather than literal role_var or qualified .role_var lookups through lookup, query or q. Nested values are included; scope ends at the next real section banner or YAML document boundary. Calls elsewhere, unsafe/literal content and locally bound callees are outside this policy. Physical calls are checked without resolving aliases or variable values. Path sets derive from the instance name; semantic rewrites have no automatic fix.
+
+Source kinds: defaults. Scope: canonical Paths section. Automatic fix: false.
+
+Expected example:
+
+```yaml
+################################
+# Paths
+################################
+
+example_role_paths_folder: "{{ example_name }}"
+example_role_paths_location: "{{ server_appdata_path }}/{{ example_role_paths_folder }}"
+```
+
+Violation example:
+
+```yaml
+################################
+# Paths
+################################
+
+example_role_paths_location: "{{ lookup('role_var', '_paths_folder', role='example') }}"
 ```
 
 ## role-directory-name

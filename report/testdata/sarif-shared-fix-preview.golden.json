@@ -296,6 +296,19 @@
               "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#network-health-contract"
             },
             {
+              "id": "paths-role-var",
+              "shortDescription": {
+                "text": "Keep Paths defaults as direct references"
+              },
+              "fullDescription": {
+                "text": "The canonical Paths section of role defaults uses direct references rather than literal role_var or qualified .role_var lookups through lookup, query or q. Nested values are included; scope ends at the next real section banner or YAML document boundary. Calls elsewhere, unsafe/literal content and locally bound callees are outside this policy. Physical calls are checked without resolving aliases or variable values. Path sets derive from the instance name; semantic rewrites have no automatic fix."
+              },
+              "help": {
+                "text": "The canonical Paths section of role defaults uses direct references rather than literal role_var or qualified .role_var lookups through lookup, query or q. Nested values are included; scope ends at the next real section banner or YAML document boundary. Calls elsewhere, unsafe/literal content and locally bound callees are outside this policy. Physical calls are checked without resolving aliases or variable values. Path sets derive from the instance name; semantic rewrites have no automatic fix.\n\nValid example:\n################################\n# Paths\n################################\n\nexample_role_paths_folder: \"{{ example_name }}\"\nexample_role_paths_location: \"{{ server_appdata_path }}/{{ example_role_paths_folder }}\"\n\n\nInvalid example:\n################################\n# Paths\n################################\n\nexample_role_paths_location: \"{{ lookup('role_var', '_paths_folder', role='example') }}\"\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#paths-role-var"
+            },
+            {
               "id": "role-directory-name",
               "shortDescription": {
                 "text": "Use snake_case role directories"
