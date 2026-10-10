@@ -21,6 +21,7 @@ const (
 	OwningRole      ContextRequirement = "owning-role"
 	SharedDocker    ContextRequirement = "shared-docker"
 	ProjectIdentity ContextRequirement = "project-identity"
+	RoleNamespaces  ContextRequirement = "role-namespaces"
 )
 
 // AnalysisRecord is an optional, data-only check projection. Generation hashes
@@ -98,6 +99,10 @@ func contextDirectories(s *Source, rules []Rule) []string {
 		case SharedDocker:
 			if strings.HasPrefix(s.Path, "resources/tasks/docker/") {
 				dirs["resources/tasks/docker"] = true
+			}
+		case RoleNamespaces:
+			for _, dir := range roleNamespaceDirectories(s) {
+				dirs[dir] = true
 			}
 		}
 	}

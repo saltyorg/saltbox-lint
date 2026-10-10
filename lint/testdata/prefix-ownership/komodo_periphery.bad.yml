@@ -1,0 +1,2 @@
+komodo_periphery_name: "{{ lookup('role_var', '_periphery_name', role='komodo') }}"
+komodo_periphery_role_docker_container: "{{ komodo_periphery_name }}"

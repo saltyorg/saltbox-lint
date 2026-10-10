@@ -122,24 +122,39 @@ func declarationNodes(value *Node) map[*Node]bool {
 	return nodes
 }
 
-func checkRoleVariablePrefix(_ *Project, source *Source) []Diagnostic {
+func checkRoleVariablePrefix(project *Project, source *Source) []Diagnostic {
 	var diagnostics []Diagnostic
+	owners := roleNamespaceOwners(project)
 	for _, declaration := range topLevelDeclarations(source) {
-		if !strings.Contains(declaration.Name, "_role_") || !defaultVariableName.MatchString(declaration.Name) {
+		if !defaultVariableName.MatchString(declaration.Name) {
 			continue
+		}
+		var related []RelatedLocation
+		var foreign []string
+		for _, prefix := range declarationRolePrefixes(declaration.Name) {
+			if prefix == source.Role || len(owners[prefix]) == 0 {
+				continue
+			}
+			foreign = append(foreign, prefix+"_")
+			related = append(related, owners[prefix]...)
 		}
 		expectedPrefix := source.Role + "_"
-		if strings.HasPrefix(declaration.Name, expectedPrefix) {
+		if len(foreign) == 0 && (!strings.Contains(declaration.Name, "_role_") || strings.HasPrefix(declaration.Name, expectedPrefix)) {
 			continue
 		}
-		expectedName := expectedPrefix + declaration.Name
+		expected := fmt.Sprintf("Use an owning-role name such as %q, beginning with %q.", expectedPrefix+declaration.Name, expectedPrefix)
+		if len(foreign) > 0 {
+			expected = fmt.Sprintf("Declare defaults under %q without occupying the foreign namespaces %s. Move shared declarations to their owning role and read them with an explicitly targeted role_var lookup; rename overlapping companion roles to use a disjoint prefix.", expectedPrefix, strings.Join(foreign, ", "))
+			related = append(related, relatedNamespaceReads(project, source, declaration.Name, foreign)...)
+		}
 		diagnostics = append(diagnostics, Diagnostic{
 			Path:     source.Path,
 			RuleID:   "role-variable-prefix",
 			Severity: "error",
 			Span:     declaration.Key.Span,
 			Message:  fmt.Sprintf("role default %q uses a prefix owned by another role", declaration.Name),
-			Expected: fmt.Sprintf("Use an owning-role name such as %q, beginning with %q.", expectedName, expectedPrefix),
+			Expected: expected,
+			Related:  related,
 		})
 	}
 	return diagnostics

@@ -1,0 +1,2 @@
+komodo_name: komodo
+komodo_role_periphery_name: "{{ komodo_name }}-periphery"

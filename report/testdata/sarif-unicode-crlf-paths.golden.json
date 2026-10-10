@@ -353,10 +353,10 @@
                 "text": "Use the owning role variable prefix"
               },
               "fullDescription": {
-                "text": "Top-level role defaults containing _role_ must start with the exact role name derived from their role or resource-role path."
+                "text": "Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces, including _name declarations and overlapping companion prefixes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change."
               },
               "help": {
-                "text": "Top-level role defaults containing _role_ must start with the exact role name derived from their role or resource-role path.\n\nValid example:\nexample_role_enabled: true\n\n\nInvalid example:\nother_role_enabled: true\n"
+                "text": "Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces, including _name declarations and overlapping companion prefixes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.\n\nValid example:\nexample_name: example\nexample_role_enabled: true\n\n\nInvalid example:\nother_role_enabled: true\n"
               },
               "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-variable-prefix"
             },

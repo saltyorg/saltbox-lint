@@ -622,13 +622,14 @@ example_role_value: "{{ lookup('role_var', '_value', role='example') if (lookup(
 
 Use the owning role variable prefix
 
-Top-level role defaults containing _role_ must start with the exact role name derived from their role or resource-role path.
+Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces, including _name declarations and overlapping companion prefixes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.
 
-Source kinds: defaults. Scope: file. Automatic fix: false.
+Source kinds: defaults. Scope: role defaults and local namespace owners. Automatic fix: false.
 
 Expected example:
 
 ```yaml
+example_name: example
 example_role_enabled: true
 ```
 
