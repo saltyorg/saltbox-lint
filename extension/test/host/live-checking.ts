@@ -115,6 +115,7 @@ interface Invocation {
   started: number;
   closed?: number;
   cancelled?: boolean;
+  exitCode?: number | null;
 }
 
 // Runs last in normal mode. Only the installed extension receives edit/config
@@ -215,10 +216,11 @@ export async function runLiveChecking(): Promise<void> {
           primary: position < 0 ? undefined : argv[position + 1],
         };
         invocations.push(invocation);
-        child.once("close", (_code, signal) => {
+        child.once("close", (code, signal) => {
           invocation.cancelled =
             child.killed || signal === "SIGKILL" || signal === "SIGTERM";
           invocation.closed = performance.now();
+          invocation.exitCode = code;
         });
         const control = launchControl;
         if (control && invocation.primary === primaryFilenames.get(heavy)) {
@@ -478,9 +480,33 @@ export async function runLiveChecking(): Promise<void> {
       "superseded response cannot replace latest findings",
     );
     await checkpoint("superseded");
+    // Check the small primary while heavy typing owns the lane. Confirm that
+    // the manual command cancels it before editing the heavy buffer.
+    await vscode.window.showTextDocument(small, { preview: false });
+    assert.equal(vscode.window.activeTextEditor?.document, small);
+    const manualRequestsBefore = primaryCalls(small).length;
     const manualCloseMs = await cancelControl("manual", async () => {
+      const activeTyping = controlledInvocations.get("manual");
+      assert.ok(activeTyping);
+      assert.equal(activeTyping.closed, undefined);
       await vscode.commands.executeCommand("saltboxLint.checkDocument");
     });
+    const manualTyping = controlledInvocations.get("manual");
+    assert.ok(manualTyping);
+    assert.equal(manualTyping.cancelled, true);
+    assert.notEqual(manualTyping.closed, undefined);
+    const manualRequests = primaryCalls(small).slice(manualRequestsBefore);
+    assert.equal(manualRequests.length, 1);
+    assert.notEqual(manualRequests[0].closed, undefined);
+    assert.equal(manualRequests[0].cancelled, false);
+    assert.equal(manualRequests[0].exitCode, 1);
+    assert.ok(expected(small, 59));
+    await replace(heavy, source(92), "manual-restored-edit", evidence);
+    await observed(
+      () => expected(heavy, 92),
+      "manual priority restores the latest compact typing snapshot",
+    );
+    await vscode.window.showTextDocument(heavy, { preview: false });
     await checkpoint("manual");
     assert.ok(manualCloseMs < deadlineMs);
     // Save the small primary while typing owns the heavy active subprocess.
@@ -491,6 +517,15 @@ export async function runLiveChecking(): Promise<void> {
     await observed(
       () => expected(small, 91),
       "save has priority over active typing",
+    );
+    const saveTyping = controlledInvocations.get("save");
+    assert.ok(saveTyping);
+    assert.equal(saveTyping.cancelled, true);
+    assert.notEqual(saveTyping.closed, undefined);
+    await replace(heavy, source(93), "save-restored-edit", evidence);
+    await observed(
+      () => expected(heavy, 93),
+      "save priority restores the latest compact typing snapshot",
     );
     await checkpoint("save");
     assert.ok(saveCloseMs < deadlineMs);
