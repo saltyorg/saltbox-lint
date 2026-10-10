@@ -46,6 +46,9 @@ test("fixture failures identify their stage without disclosing process inputs", 
           ([name]) => !name.startsWith("SALTBOX_TEST_"),
         ),
       ),
+      // An explicit executable suffix reaches CreateProcess rather than
+      // Windows extension discovery, so the missing file yields an OS errno.
+      ...(process.platform === "win32" ? { PATHEXT: ".EXE" } : {}),
       SALTBOX_TEST_REAL_CLI: process.execPath,
       SALTBOX_TEST_PROCESS_GATE_NONCE: privateMarker,
     };
@@ -95,7 +98,10 @@ test("fixture failures identify their stage without disclosing process inputs", 
         stage: "child-start",
         errorClass: "errno",
         env: {
-          SALTBOX_TEST_REAL_CLI: join(privateDirectory, "missing-executable"),
+          SALTBOX_TEST_REAL_CLI: join(
+            privateDirectory,
+            "missing-executable.exe",
+          ),
         },
       },
     ];
@@ -122,7 +128,7 @@ test("fixture failures identify their stage without disclosing process inputs", 
       );
       const record = JSON.parse(persisted);
       assert.equal(record.stage, scenario.stage);
-      assert.equal(record.error_class, scenario.errorClass);
+      assert.equal(record.error_class, scenario.errorClass, scenario.stage);
       assert.deepEqual(
         Object.keys(record).sort(),
         scenario.errorClass === "errno"
@@ -143,7 +149,7 @@ test("fixture failures identify their stage without disclosing process inputs", 
     const failedLogging = spawnSync(binary, ["--version"], {
       env: {
         ...baseEnv,
-        SALTBOX_TEST_REAL_CLI: join(privateDirectory, "missing-executable"),
+        SALTBOX_TEST_REAL_CLI: join(privateDirectory, "missing-executable.exe"),
         SALTBOX_TEST_PROCESS_FAILURE_LOG: privateDirectory,
       },
       input: privateMarker,
@@ -156,7 +162,11 @@ test("fixture failures identify their stage without disclosing process inputs", 
       failedLogging.stderr.replace(/^SALTBOX_TEST_FIXTURE_FAILURE /, ""),
     );
     assert.equal(failedLoggingRecord.stage, "child-start");
-    assert.equal(failedLoggingRecord.error_class, "errno");
+    assert.equal(
+      failedLoggingRecord.error_class,
+      "errno",
+      "child-start with diagnostic logging failure",
+    );
     assert.equal(Number.isSafeInteger(failedLoggingRecord.errno), true);
     assert.equal(failedLogging.stderr.includes(privateMarker), false);
 
@@ -193,6 +203,152 @@ test("fixture failures identify their stage without disclosing process inputs", 
     assert.equal(successful.stderr, "");
     assert.equal(successful.stdout.trim(), process.version);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("fresh control gates preserve occupied readiness from a completed control", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-control-gates-"));
+  const binary = join(
+    directory,
+    "process-fixture" + (process.platform === "win32" ? ".exe" : ""),
+  );
+  const instances = join(directory, "instances.jsonl");
+  const failureLog = join(directory, "failures.jsonl");
+  const children = [];
+  try {
+    const build = spawnSync("go", ["build", "-o", binary, source], {
+      env: { ...process.env, CGO_ENABLED: "0" },
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    assert.equal(build.status, 0, build.stderr);
+    const baseEnv = {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([name]) => !name.startsWith("SALTBOX_TEST_"),
+        ),
+      ),
+      SALTBOX_TEST_REAL_CLI: process.execPath,
+      SALTBOX_TEST_PROCESS_INSTANCES: instances,
+      SALTBOX_TEST_PROCESS_FAILURE_LOG: failureLog,
+    };
+    const launch = (gate, nonce) => {
+      const child = spawn(binary, ["--version"], {
+        env: {
+          ...baseEnv,
+          SALTBOX_TEST_PROCESS_GATE: gate,
+          SALTBOX_TEST_PROCESS_GATE_NONCE: nonce,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10000,
+        killSignal: "SIGKILL",
+      });
+      const control = {
+        child,
+        closed: once(child, "close"),
+        stdout: "",
+        stderr: "",
+      };
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (data) => {
+        control.stdout += data;
+      });
+      child.stderr.on("data", (data) => {
+        control.stderr += data;
+      });
+      children.push(control);
+      return control;
+    };
+    const published = async (gate, control) => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        assert.equal(control.child.exitCode, null, control.stderr);
+        try {
+          return JSON.parse(await readFile(gate + ".ready", "utf8"));
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        await delay(10);
+      }
+      assert.fail("control gate publication exceeded 5000ms");
+    };
+    const firstNonce = randomBytes(32).toString("hex");
+    const firstGate = join(directory, `response-${firstNonce}`);
+    await writeFile(firstGate, "held");
+    const first = launch(firstGate, firstNonce);
+    const firstReady = await published(firstGate, first);
+    assert.equal(firstReady.pid, first.child.pid);
+    assert.equal(firstReady.nonce, firstNonce);
+    const firstInstance = fixtureGateInstance(firstReady, instances);
+    assert.equal(await fixtureRunning(firstInstance), true);
+    assert.equal(first.stdout, "");
+    await rm(firstGate);
+    assert.deepEqual(await first.closed, [0, null]);
+    assert.equal(first.stdout.trim(), process.version);
+    assert.equal(first.stderr, "");
+    assert.equal(await fixtureAbsent(firstInstance), true);
+
+    // An occupied readiness destination makes replacing it fail on every
+    // platform without relying on Windows file-sharing timing.
+    const retainedBytes = await readFile(firstGate + ".ready");
+    await rm(firstGate + ".ready");
+    await mkdir(firstGate + ".ready");
+    const retained = join(firstGate + ".ready", "retained.json");
+    await writeFile(retained, retainedBytes);
+    await writeFile(firstGate, "held");
+    const freshNonce = randomBytes(32).toString("hex");
+    const reused = spawnSync(binary, ["--version"], {
+      env: {
+        ...baseEnv,
+        SALTBOX_TEST_PROCESS_GATE: firstGate,
+        SALTBOX_TEST_PROCESS_GATE_NONCE: freshNonce,
+      },
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(reused.error, undefined);
+    assert.equal(reused.status, 2);
+    assert.equal(reused.stdout, "");
+    const failureBytes = await readFile(failureLog, "utf8");
+    assert.equal(reused.stderr, "SALTBOX_TEST_FIXTURE_FAILURE " + failureBytes);
+    const failedReuse = JSON.parse(failureBytes);
+    assert.equal(failedReuse.stage, "readiness-rename");
+    assert.equal(failedReuse.error_class, "errno");
+    assert.equal(failedReuse.pid, reused.pid);
+    assert.equal(Number.isSafeInteger(failedReuse.errno), true);
+    assert.ok(failedReuse.errno > 0);
+    assert.deepEqual(await readFile(retained), retainedBytes);
+
+    const freshGate = join(directory, `response-${freshNonce}`);
+    assert.notEqual(freshGate, firstGate);
+    await writeFile(freshGate, "held");
+    const fresh = launch(freshGate, freshNonce);
+    const freshReady = await published(freshGate, fresh);
+    assert.equal(freshReady.pid, fresh.child.pid);
+    assert.equal(freshReady.nonce, freshNonce);
+    assert.notEqual(freshReady.nonce, firstReady.nonce);
+    const freshInstance = fixtureGateInstance(freshReady, instances);
+    assert.equal(freshInstance.pid, fresh.child.pid);
+    assert.notEqual(freshInstance.token, firstInstance.token);
+    assert.equal(await fixtureRunning(freshInstance), true);
+    assert.equal(fresh.stdout, "");
+    assert.deepEqual(await readFile(retained), retainedBytes);
+    assert.equal(await readFile(firstGate, "utf8"), "held");
+    await rm(freshGate);
+    assert.deepEqual(await fresh.closed, [0, null]);
+    assert.equal(fresh.stdout.trim(), process.version);
+    assert.equal(fresh.stderr, "");
+    assert.equal(await fixtureAbsent(freshInstance), true);
+    assert.deepEqual(await readFile(retained), retainedBytes);
+    assert.equal(await readFile(failureLog, "utf8"), failureBytes);
+  } finally {
+    for (const { child, closed } of children) {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+      await closed;
+    }
     await rm(directory, { recursive: true, force: true });
   }
 });

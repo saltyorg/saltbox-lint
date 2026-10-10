@@ -36,7 +36,6 @@ export async function checkPendingWritableOwnership(
   const template = vscode.Uri.joinPath(fixture, "roles/owner/templates");
   const alias = vscode.Uri.joinPath(fixture, "alias");
   const bytes = Buffer.from('---\nowner_value: "{{ value\n }}"\n');
-  const gate = join(temporary, "response");
   const instances = join(temporary, "instances.jsonl");
   const journal = new FixtureJournal(instances);
   const modes = ["canonical", "lint-fixes", "fixAll"] as const;
@@ -120,6 +119,9 @@ export async function checkPendingWritableOwnership(
           process.env.SALTBOX_TEST_FIXTURE_PATH!,
         );
         const nonce = randomUUID();
+        // Windows may deny replacement of a prior readiness file. Each
+        // credentialed control publishes into its own fresh gate instead.
+        const gate = join(temporary, `response-${nonce}`);
         const failures = join(temporary, `failures-${nonce}.jsonl`);
         process.env.SALTBOX_TEST_PROCESS_FAILURE_LOG = failures;
         process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = nonce;
