@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -19,6 +19,183 @@ import {
 const source = fileURLToPath(
   new URL("testdata/process_fixture.go", import.meta.url),
 );
+
+test("fixture failures identify their stage without disclosing process inputs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-fixture-failure-"));
+  const binary = join(
+    directory,
+    "process-fixture" + (process.platform === "win32" ? ".exe" : ""),
+  );
+  const privateMarker =
+    "private-fixture-input-" + randomBytes(16).toString("hex");
+  const privateDirectory = join(directory, privateMarker);
+  const renameGate = join(privateDirectory, "rename-gate");
+  try {
+    await mkdir(privateDirectory);
+    await mkdir(renameGate + ".ready");
+    await writeFile(join(renameGate + ".ready", privateMarker), privateMarker);
+    const build = spawnSync("go", ["build", "-o", binary, source], {
+      env: { ...process.env, CGO_ENABLED: "0" },
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    assert.equal(build.status, 0, build.stderr);
+    const baseEnv = {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([name]) => !name.startsWith("SALTBOX_TEST_"),
+        ),
+      ),
+      SALTBOX_TEST_REAL_CLI: process.execPath,
+      SALTBOX_TEST_PROCESS_GATE_NONCE: privateMarker,
+    };
+    const cases = [
+      {
+        stage: "instance-open",
+        errorClass: "errno",
+        args: ["format", privateMarker],
+        env: { SALTBOX_TEST_PROCESS_INSTANCES: privateDirectory },
+      },
+      {
+        stage: "process-log-open",
+        errorClass: "errno",
+        args: ["check", privateMarker],
+        env: { SALTBOX_TEST_PROCESS_LOG: privateDirectory },
+      },
+      {
+        stage: "gate-selection-decode",
+        errorClass: "json",
+        env: { SALTBOX_TEST_PROCESS_GATE_PATHS: privateMarker },
+      },
+      {
+        stage: "gate-selection-decode",
+        errorClass: "json",
+        env: {
+          SALTBOX_TEST_PROCESS_GATE_PATHS: JSON.stringify({ privateMarker }),
+        },
+      },
+      {
+        stage: "gate-selection-empty",
+        errorClass: "invalid-input",
+        env: { SALTBOX_TEST_PROCESS_GATE_PATHS: "[]" },
+      },
+      {
+        stage: "readiness-write",
+        errorClass: "errno",
+        env: {
+          SALTBOX_TEST_PROCESS_GATE: join(privateDirectory, "missing", "gate"),
+        },
+      },
+      {
+        stage: "readiness-rename",
+        errorClass: "errno",
+        env: { SALTBOX_TEST_PROCESS_GATE: renameGate },
+      },
+      {
+        stage: "child-start",
+        errorClass: "errno",
+        env: {
+          SALTBOX_TEST_REAL_CLI: join(privateDirectory, "missing-executable"),
+        },
+      },
+    ];
+    for (const [index, scenario] of cases.entries()) {
+      const failureLog = join(directory, `failure-${index}.jsonl`);
+      const result = spawnSync(binary, scenario.args ?? ["--version"], {
+        env: {
+          ...baseEnv,
+          ...scenario.env,
+          SALTBOX_TEST_PROCESS_FAILURE_LOG: failureLog,
+        },
+        input: privateMarker,
+        encoding: "utf8",
+        timeout: 10000,
+      });
+      assert.equal(result.error, undefined, scenario.stage);
+      assert.equal(result.signal, null, scenario.stage);
+      assert.equal(result.status, 2, scenario.stage);
+      const persisted = await readFile(failureLog, "utf8");
+      assert.equal(
+        result.stderr,
+        "SALTBOX_TEST_FIXTURE_FAILURE " + persisted,
+        scenario.stage,
+      );
+      const record = JSON.parse(persisted);
+      assert.equal(record.stage, scenario.stage);
+      assert.equal(record.error_class, scenario.errorClass);
+      assert.deepEqual(
+        Object.keys(record).sort(),
+        scenario.errorClass === "errno"
+          ? ["errno", "error_class", "operation", "pid", "stage"]
+          : ["error_class", "operation", "pid", "stage"],
+      );
+      assert.equal(Number.isSafeInteger(record.pid), true);
+      assert.ok(record.pid > 0);
+      assert.equal(record.operation, scenario.args?.[0] ?? "other");
+      if (scenario.errorClass === "errno") {
+        assert.equal(Number.isSafeInteger(record.errno), true);
+        assert.ok(record.errno > 0);
+      }
+      assert.equal(result.stderr.includes(privateMarker), false);
+      assert.equal(result.stderr.includes(directory), false);
+      assert.equal(result.stderr.includes(process.execPath), false);
+    }
+    const failedLogging = spawnSync(binary, ["--version"], {
+      env: {
+        ...baseEnv,
+        SALTBOX_TEST_REAL_CLI: join(privateDirectory, "missing-executable"),
+        SALTBOX_TEST_PROCESS_FAILURE_LOG: privateDirectory,
+      },
+      input: privateMarker,
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(failedLogging.error, undefined);
+    assert.equal(failedLogging.status, 2);
+    const failedLoggingRecord = JSON.parse(
+      failedLogging.stderr.replace(/^SALTBOX_TEST_FIXTURE_FAILURE /, ""),
+    );
+    assert.equal(failedLoggingRecord.stage, "child-start");
+    assert.equal(failedLoggingRecord.error_class, "errno");
+    assert.equal(Number.isSafeInteger(failedLoggingRecord.errno), true);
+    assert.equal(failedLogging.stderr.includes(privateMarker), false);
+
+    for (const status of [1, 7]) {
+      const failureLog = join(directory, `child-exit-${status}.jsonl`);
+      const output = "public child output";
+      const childExit = spawnSync(
+        binary,
+        [
+          "--eval",
+          `process.stdout.write(${JSON.stringify(output)}); process.exit(${status})`,
+        ],
+        {
+          env: { ...baseEnv, SALTBOX_TEST_PROCESS_FAILURE_LOG: failureLog },
+          input: privateMarker,
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+      assert.equal(childExit.error, undefined);
+      assert.equal(childExit.status, status);
+      assert.equal(childExit.stderr, "");
+      assert.equal(childExit.stdout, output);
+      await assert.rejects(readFile(failureLog), { code: "ENOENT" });
+    }
+    const successful = spawnSync(binary, ["--version"], {
+      env: baseEnv,
+      input: privateMarker,
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(successful.error, undefined);
+    assert.equal(successful.status, 0);
+    assert.equal(successful.stderr, "");
+    assert.equal(successful.stdout.trim(), process.version);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("only the exact selected chunk can publish or replace gate readiness", async () => {
   const directory = await mkdtemp(join(tmpdir(), "saltbox-selected-gate-"));

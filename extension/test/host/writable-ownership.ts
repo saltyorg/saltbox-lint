@@ -24,6 +24,7 @@ import {
   fixtureAbsent,
   fixtureRunning,
 } from "./fixture-processes.ts";
+import { reportFixtureFailures } from "./fixture-failure-log.ts";
 
 export async function checkPendingWritableOwnership(
   executable: string,
@@ -50,6 +51,7 @@ export async function checkPendingWritableOwnership(
     "SALTBOX_TEST_PROCESS_GATE",
     "SALTBOX_TEST_PROCESS_GATE_NONCE",
     "SALTBOX_TEST_PROCESS_INSTANCES",
+    "SALTBOX_TEST_PROCESS_FAILURE_LOG",
     "SALTBOX_TEST_PROCESS_GATE_PREFIX",
     "SALTBOX_TEST_PROCESS_GATE_PATHS",
   ];
@@ -118,6 +120,8 @@ export async function checkPendingWritableOwnership(
           process.env.SALTBOX_TEST_FIXTURE_PATH!,
         );
         const nonce = randomUUID();
+        const failures = join(temporary, `failures-${nonce}.jsonl`);
+        process.env.SALTBOX_TEST_PROCESS_FAILURE_LOG = failures;
         process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = nonce;
         process.env.SALTBOX_TEST_PROCESS_GATE = gate;
         await writeFile(gate, "");
@@ -214,6 +218,7 @@ export async function checkPendingWritableOwnership(
           );
           completed++;
         } catch (error) {
+          reportFixtureFailures(failures, undefined, "format");
           reportWritableOwnershipFailure(error, {
             control: `${mode}:${retarget ? "retarget" : "stable"}`,
             completed,

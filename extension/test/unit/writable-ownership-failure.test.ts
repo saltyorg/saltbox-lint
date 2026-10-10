@@ -385,7 +385,8 @@ test("host wiring retains the original readiness deadline, six controls and chil
     host,
     /const publicPreconditions =\s+mode === "fixAll"\s+\? captureWritableOwnershipPreconditions\(document, uri, bytes\)\s+: undefined;\s+const pending = \(\s+mode === "fixAll"\s+\? editor\.fixAll\(uri, stages\.collect, processFailure\.collect\)\s+: editor\.format\(\s*document,\s*mode,\s*undefined,\s*stages\.collect,\s*processFailure\.collect,?\s*\)/,
   );
-  // Evidence collection adds no filesystem operation, API request or wait.
+  // Successful controls retain every original operation. The fixture failure
+  // log is read only by its bounded helper in the existing failure catch.
   const existingOperations = {
     mkdtemp: 1,
     readFile: 2,
@@ -431,7 +432,7 @@ test("host wiring retains the original readiness deadline, six controls and chil
   );
   assert.match(
     host,
-    /catch \(error\) \{\s+reportWritableOwnershipFailure\(error,/,
+    /catch \(error\) \{\s+reportFixtureFailures\(failures, undefined, "format"\);\s+reportWritableOwnershipFailure\(error,/,
   );
   const fixture = readFileSync(
     new URL("../testdata/process_fixture.go", import.meta.url),
