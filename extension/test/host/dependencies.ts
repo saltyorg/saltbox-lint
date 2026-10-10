@@ -536,6 +536,10 @@ export async function runDependencies(): Promise<void> {
     success(
       "late context events retain every rejected selected source after full coverage",
     );
+    const admissionGood = unrelatedGood.replace(
+      "unrelated_value:",
+      "admission_value:",
+    );
     const admissionDirectory = vscode.Uri.joinPath(
       roots[0].uri,
       "roles/admission/defaults",
@@ -553,7 +557,7 @@ export async function runDependencies(): Promise<void> {
       admissionFiles.map((uri) =>
         writeFile(
           uri.fsPath,
-          unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+          admissionGood.replace("{{ other\n }}", "{{ other }}"),
         ),
       ),
     );
@@ -564,7 +568,7 @@ export async function runDependencies(): Promise<void> {
     );
     await editor.checkWorkspace();
     const admissionSourceHash = hash(
-      unrelatedGood.replace("{{ other\n }}", "{{ other }}"),
+      admissionGood.replace("{{ other\n }}", "{{ other }}"),
     );
     await waitFor(() => {
       const folder = roots[0].uri.toString();
@@ -618,7 +622,7 @@ export async function runDependencies(): Promise<void> {
       "unrelated document request must start under the admission gate",
     );
     await Promise.all(
-      admissionFiles.map((uri) => writeFile(uri.fsPath, unrelatedGood)),
+      admissionFiles.map((uri) => writeFile(uri.fsPath, admissionGood)),
     );
     for (const uri of admissionFiles) editor.removeFile(uri);
     await waitFor(
