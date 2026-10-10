@@ -126,7 +126,7 @@ jobs:
         shell: bash
         run: |
           node tools/go-check.mjs go vet
-          node tools/go-check.mjs go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run
+          node tools/go-check.mjs go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run
       - name: Install native extension dependencies
         timeout-minutes: 5
         shell: bash

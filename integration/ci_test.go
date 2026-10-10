@@ -188,7 +188,7 @@ func TestNativeGoChecksShareLocalSourceScope(t *testing.T) {
 	want := map[string]string{
 		"Native Go tests": "node tools/go-check.mjs go test",
 		"Native Go race tests on supported targets":           "node tools/go-check.mjs go test -race",
-		"Native vet and lint":                                 "node tools/go-check.mjs go vet\nnode tools/go-check.mjs go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run",
+		"Native vet and lint":                                 "node tools/go-check.mjs go vet\nnode tools/go-check.mjs go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run",
 		"Native patched Nuri tests":                           "go -C third_party/nuri test . ./internal/grammar ./internal/tokenizer",
 		"Native patched Nuri race tests on supported targets": "go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer",
 	}

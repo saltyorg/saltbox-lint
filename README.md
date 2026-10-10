@@ -30,7 +30,7 @@ Create an empty regular `.saltbox-lint` file at each selected extension source
 root to enable it. The standalone CLI and process tasks do not require this
 extension opt-in marker.
 
-With Go 1.27.1 or newer, installation from a complete local checkout is also
+With Go 1.27.2 or newer, installation from a complete local checkout is also
 supported. The checkout must include the repository's `third_party/nuri`
 replacement, and the command must run from the module root:
 

@@ -1,6 +1,6 @@
 module github.com/saltyorg/saltbox-lint
 
-go 1.27.1
+go 1.27.2
 
 require (
 	charm.land/glamour/v2 v2.0.1

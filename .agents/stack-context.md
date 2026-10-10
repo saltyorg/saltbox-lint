@@ -1,10 +1,10 @@
 # Stack Context
 
 Generated: 2026-09-12
-Updated: 2026-10-06 for the maintained go-yaml parser correction
+Updated: 2026-10-10 for the Go 1.27.2 security patch
 
 ## Stack
-- Go 1.27.1; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
+- Go 1.27.2; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
 - Cobra v1.10.2; command factories own explicit I/O and exit-code boundaries.
 - colorprofile v0.4.3, x/term v0.2.2 and uniseg v0.4.7 provide destination-aware terminal presentation and grapheme wrapping.
 - Locally patched goccy/go-yaml v1.19.2 validates lint sources with iterative same-column mapping accumulation and preserved comment unwind; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
@@ -36,7 +36,7 @@ Updated: 2026-10-06 for the maintained go-yaml parser correction
 - Local and native root Go vet/lint/test/race checks share tools/go-check.mjs and tools/go-source.mjs with current tracked plus nonignored untracked package directories. Go retains target/build constraints and ordinary ignored-directory/nested-module boundaries. Module tidiness uses an ephemeral snapshot of those current source inputs, including embeds/local replacements, so installed developer dependencies cannot change discovery. Published source can use its SOURCE-PROVENANCE.json input inventory without Git. Nuri remains its own explicit three-package test suite. The scoped go-yaml replacement retains all nine production/public API roots; current retained package discovery joins root test/vet/lint/tidy commands, including otherwise-unimported packages.
 - make build runs that gate before the CGO-free binary; make snapshot runs it before six native CLI archives, eight VSIXs, checksums and hash-linked corresponding source with vendored modules, Nuri WASM build inputs and Oniguruma source.
 - Packaging uses exact npm 11.19.0, vsce 3.9.2 and yauzl 3.4.0 pins; build tools are development-only. Source/archive/ZIP verification remains separate from editor runtime.
-- Makefile pins golangci-lint v2.13.2, actionlint v1.7.12, GoReleaser v2.18.1 and govulncheck v1.8.0; workflow actions are commit-pinned. Tools live under ignored bin/tools.
+- Makefile pins golangci-lint v2.14.0, actionlint v1.7.12, GoReleaser v2.18.1 and govulncheck v1.8.0; workflow actions are commit-pinned. Tools live under ignored bin/tools.
 - Required vulnerability-check runs source/symbol scans including tests for root packages, five maintained/shipped Nuri roots and all nine go-yaml roots. It shares one retrieved official database, records response and source identities, fails reachable findings and operational/inconclusive errors, and retains all module/package discoveries. go-yaml adds a third explicit scanner scope and exact local-module advisory lookup, with source/license provenance exported into source archives and VSIX inventories. Unversioned main/replaced module advisories fail pending local-source evidence. Canonical Linux CI uploads vulnerability-evidence once; six native suites remain unchanged. Runtime CLI lint stays offline. Goldmark v1.7.17 and x/text v0.39.0 carry the initial reachable advisory fixes.
 - make catalog is the explicit managed-wrapper refresh. Normal gates use embedded data and require no Saltbox Ansible venv.
 - See docs/terminal-rendering-results.md for measured adoption/defer decisions and delivery evidence status.
