@@ -4,12 +4,17 @@ import assert from "node:assert/strict";
 import { mkdir, symlink, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { EditorIntegration } from "../../src/editor.ts";
+import { EditorIntegration, type EditorAdapters } from "../../src/editor.ts";
+import { runProcess } from "../../src/process.ts";
 import {
   withTestResources,
   type TestResources,
 } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
+import {
+  holdProcessAdmission,
+  observeDocumentChange,
+} from "../support/process-admission.ts";
 const jinja = '---\nvalue: "{{ value\n }}"\n';
 async function waitFor(test: () => boolean, message: string) {
   const deadline = Date.now() + 10000;
@@ -109,7 +114,10 @@ async function regressions(resources: TestResources): Promise<void> {
   await extension.activate();
   const roots = vscode.workspace.workspaceFolders!;
   const failures: string[] = [];
-  const component = (owner: TestResources) =>
+  const component = (
+    owner: TestResources,
+    adapters: Partial<EditorAdapters> = {},
+  ) =>
     ownJoinedResource(
       owner,
       "regression component",
@@ -119,6 +127,7 @@ async function regressions(resources: TestResources): Promise<void> {
           "bin",
           "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
         ),
+        adapters,
       ),
     );
   const run = async (
@@ -173,19 +182,42 @@ async function regressions(resources: TestResources): Promise<void> {
         (await actions(document)).length > 0,
         "another root's YAML save invalidated cached actions",
       );
-      const editor = component(owner);
+      const formatGate = ownJoinedResource(
+        owner,
+        "unrelated edit format admission",
+        holdProcessAdmission(runProcess, "format"),
+      );
+      const editor = component(owner, { runProcess: formatGate.runProcess });
       const changes = vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.contentChanges.length) editor.change(e.document);
       });
       try {
         await replace(document, 'value: ["😀",1]\n');
-        const pending = editor.format(document, "canonical");
+        const pending = owner.operation("format during unrelated edit", () =>
+          editor.format(document, "canonical"),
+        );
+        const admitted = await owner.operation(
+          "unrelated edit format snapshot",
+          () => formatGate.admission(),
+        );
+        assert.equal(admitted.input, document.getText());
+        const changed = ownJoinedResource(
+          owner,
+          "unrelated Markdown edit receipt",
+          observeDocumentChange(
+            markdown,
+            vscode.workspace.onDidChangeTextDocument,
+          ),
+        );
         await replace(markdown, "three\n");
+        await changed.changed();
+        formatGate.release();
         assert.ok(
           (await pending).length > 0,
           "unrelated edit discarded pending format",
         );
       } finally {
+        formatGate.release();
         changes.dispose();
         editor.dispose();
       }
@@ -201,19 +233,43 @@ async function regressions(resources: TestResources): Promise<void> {
       const markdownUri = vscode.Uri.joinPath(roots[1].uri, "pending.md");
       await vscode.workspace.fs.writeFile(markdownUri, Buffer.from("one"));
       const markdown = await vscode.workspace.openTextDocument(markdownUri);
-      const editor = component(owner);
+      const formatGate = ownJoinedResource(
+        owner,
+        "pending actual format admission",
+        holdProcessAdmission(runProcess, "format"),
+      );
+      const editor = component(owner, { runProcess: formatGate.runProcess });
       const changes = vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.contentChanges.length) editor.change(event.document);
       });
       try {
         await replace(document, "value: [1,2]\n");
-        const pending = editor.format(document, "canonical");
+        const pending = owner.operation(
+          "actual format during Markdown edit",
+          () => editor.format(document, "canonical"),
+        );
+        const admitted = await owner.operation(
+          "pending actual format snapshot",
+          () => formatGate.admission(),
+        );
+        assert.equal(admitted.input, document.getText());
+        const changed = ownJoinedResource(
+          owner,
+          "pending Markdown edit receipt",
+          observeDocumentChange(
+            markdown,
+            vscode.workspace.onDidChangeTextDocument,
+          ),
+        );
         await replace(markdown, "changed");
+        await changed.changed();
+        formatGate.release();
         assert.ok(
           (await pending).length > 0,
           "unrelated edit discarded pending format",
         );
       } finally {
+        formatGate.release();
         changes.dispose();
         editor.dispose();
       }

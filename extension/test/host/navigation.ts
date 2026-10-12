@@ -18,6 +18,11 @@ import {
 } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { referencePathFromRoot } from "../support/navigation-reference.ts";
+import {
+  holdProcessAdmission,
+  observeDocumentChange,
+} from "../support/process-admission.ts";
+import { runProcess } from "../../src/process.ts";
 export function assertReferenceCanonicalOwner(
   referenceFilename: string,
   ownerFilename: string,
@@ -524,10 +529,17 @@ async function navigation(resources: TestResources): Promise<void> {
     "undo restores fresh second-root navigation acceptance",
   );
   await vscode.window.showTextDocument(document);
+  const queryGate = ownJoinedResource(
+    resources,
+    "pending navigation query admission",
+    holdProcessAdmission(runProcess, "query"),
+  );
   const adapter = ownJoinedResource(
     resources,
     "navigation control adapter",
-    new EditorIntegration(process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!),
+    new EditorIntegration(process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!, {
+      runProcess: queryGate.runProcess,
+    }),
   );
   try {
     const cancellation = new vscode.CancellationTokenSource();
@@ -542,16 +554,34 @@ async function navigation(resources: TestResources): Promise<void> {
     );
     cancellation.dispose();
     const staleToken = new vscode.CancellationTokenSource();
-    const stale = adapter.navigation.definition(
-      document,
-      position,
-      staleToken.token,
+    resources.defer("stale navigation cancellation token", () =>
+      staleToken.dispose(),
+    );
+    const stale = resources.operation(
+      "pending stale-source navigation query",
+      () => adapter.navigation.definition(document, position, staleToken.token),
+    );
+    const admitted = await resources.operation(
+      "stale query admitted snapshot",
+      () => queryGate.admission(),
+    );
+    assert.equal(admitted.input, original);
+    const documentChanged = ownJoinedResource(
+      resources,
+      "stale query document change receipt",
+      observeDocumentChange(document, vscode.workspace.onDidChangeTextDocument),
     );
     await replace(document, original + "# changed during request\r\n");
+    await documentChanged.changed();
     adapter.change(document);
+    queryGate.release();
     assert.deepEqual(await stale, []);
     staleToken.dispose();
+    console.log(
+      "PASS component stale-source query uses captured runner admission and observed document mutation; installed providers execute unchanged",
+    );
   } finally {
+    queryGate.release();
     adapter.dispose();
     await adapter.join();
   }
@@ -601,10 +631,24 @@ async function navigation(resources: TestResources): Promise<void> {
     async () => (await definitions(nestedDocument)).length === 1,
     "nested root owns target",
   );
+  const nestedLocations = await definitions(nestedDocument);
   assert.ok(
-    (await definitions(nestedDocument)).every((location) =>
-      target(location).fsPath.startsWith(nested),
-    ),
+    nestedLocations.every((location) => {
+      const uri = target(location);
+      return (
+        uri.scheme === "file" &&
+        referencePathFromRoot(uri, nested) !== undefined
+      );
+    }),
+    "actual definitions belong to the configured nested source root: " +
+      JSON.stringify({
+        root: nested,
+        canonicalRoot: realpathSync.native(nested),
+        actualCount: nestedLocations.length,
+        actual: nestedLocations
+          .slice(0, 16)
+          .map((location) => target(location).toString().slice(0, 2048)),
+      }),
   );
   assert.deepEqual(await definitions(document), []);
   await vscode.workspace

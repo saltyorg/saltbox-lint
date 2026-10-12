@@ -104,3 +104,26 @@ test("non-file reference URIs cannot acquire alias or root membership from an ot
     }
   }
 });
+
+test("a configured nested source root accepts both verified spellings and rejects parent or sibling targets", async (t) => {
+  const f = await fixture(t);
+  const nested = join(f.root, "navigation-nested");
+  const publicNested = join(f.rootAlias, "navigation-nested");
+  await mkdir(dirname(join(nested, owner)), { recursive: true });
+  await writeFile(join(nested, owner), "nested_role_value: 99\n");
+  assert.equal(await realpath(publicNested), nested);
+  for (const filename of [join(nested, owner), join(publicNested, owner)])
+    assert.equal(fileReferencePath(filename, publicNested), owner);
+  assert.equal(fileReferencePath(join(nested, owner), nested), owner);
+  assert.equal(fileReferencePath(join(publicNested, owner), nested), undefined);
+  const sibling = join(f.root, "navigation-nested-sibling");
+  await mkdir(dirname(join(sibling, owner)), { recursive: true });
+  await writeFile(join(sibling, owner), "sibling_role_value: 42\n");
+  for (const filename of [
+    join(f.root, owner),
+    join(f.rootAlias, owner),
+    join(sibling, owner),
+    join(f.rootAlias, "navigation-nested-sibling", owner),
+  ])
+    assert.equal(fileReferencePath(filename, publicNested), undefined);
+});

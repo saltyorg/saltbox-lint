@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getHostProfile, hostProfileNames } from "../host/host-profile.ts";
@@ -136,4 +143,69 @@ test("loaded package preflight detects wrong path, version, backend, and incompl
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("active-project installation identity accepts a verified directory alias or drive spelling and rejects another package", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "saltbox-active-package-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const extensions = join(root, "extensions");
+  const installation = join(extensions, "installed");
+  const other = join(extensions, "other");
+  const aliasedExtensions = join(root, "extensions-alias");
+  const bytes = "independently tested package backend";
+  const manifest = JSON.stringify({
+    publisher: "saltyorg",
+    name: "saltbox-lint",
+    version: "1.2.3",
+  });
+  for (const folder of [installation, other]) {
+    await mkdir(join(folder, "bin"), { recursive: true });
+    await writeFile(join(folder, "bin", "saltbox-lint"), bytes);
+    await writeFile(join(folder, "package.json"), manifest);
+  }
+  await symlink(extensions, aliasedExtensions, "junction");
+  const canonical = await realpath(installation);
+  const publicPath =
+    process.platform === "win32"
+      ? canonical[0].toLowerCase() + canonical.slice(1)
+      : canonical;
+  const environment = {
+    SALTBOX_TEST_VSIX: "tested.vsix",
+    SALTBOX_TEST_EXTENSIONS_DIR: aliasedExtensions,
+    SALTBOX_TEST_EXPECTED_PRODUCT_PATH: join(aliasedExtensions, "installed"),
+    SALTBOX_TEST_EXPECTED_PRODUCT_VERSION: "1.2.3",
+    SALTBOX_TEST_INSTALLED_CLI_PATH: join(
+      aliasedExtensions,
+      "installed",
+      "bin",
+      "saltbox-lint",
+    ),
+    SALTBOX_TEST_EXPECTED_CLI_SHA256: createHash("sha256")
+      .update(bytes)
+      .digest("hex"),
+  };
+  const product = {
+    id: "saltyorg.saltbox-lint",
+    extensionPath: publicPath,
+    version: "1.2.3",
+  };
+  assert.equal(product.extensionPath.startsWith(aliasedExtensions), false);
+  assert.equal(verifyInstalledProduct(environment, product, "linux"), "loaded");
+  assert.throws(
+    () =>
+      verifyInstalledProduct(
+        environment,
+        { ...product, extensionPath: other },
+        "linux",
+      ),
+    /exact installed package/,
+  );
+  await writeFile(
+    join(installation, "bin", "saltbox-lint"),
+    "same-version wrong backend",
+  );
+  assert.throws(
+    () => verifyInstalledProduct(environment, product, "linux"),
+    /backend bytes/,
+  );
 });
