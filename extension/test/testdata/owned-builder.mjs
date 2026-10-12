@@ -1,4 +1,6 @@
+// @ts-check
 import { spawn } from "node:child_process";
+import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -6,8 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const [mode, record] = process.argv.slice(2);
 const token = randomBytes(32).toString("hex");
-for (const name of ["stdout", "stderr"])
-  process[name].on("error", () => process.exit(7));
+for (const stream of [process.stdout, process.stderr])
+  stream.on("error", () => process.exit(7));
 const server = createServer((socket) => {
   if (mode === "output-tree" || mode === "output-exit") {
     socket.once("data", (data) => {
@@ -32,6 +34,7 @@ const server = createServer((socket) => {
           if (code !== 0) process.exit(7);
         });
       } else {
+        /** @param {boolean} pending */
         const status = (pending) => {
           writeFileSync(
             record + ".pending.tmp",
@@ -39,6 +42,7 @@ const server = createServer((socket) => {
           );
           renameSync(record + ".pending.tmp", record + ".pending");
         };
+        assert.ok(output === "stdout" || output === "stderr");
         process[output].write(Buffer.alloc(16 * 1024 * 1024, "x"), () =>
           status(false),
         );
@@ -52,9 +56,11 @@ const server = createServer((socket) => {
   socket.end(token + "\n");
 });
 server.listen(0, "127.0.0.1", () => {
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
   writeFileSync(
     record + ".tmp",
-    JSON.stringify({ pid: process.pid, port: server.address().port, token }),
+    JSON.stringify({ pid: process.pid, port: address.port, token }),
   );
   renameSync(record + ".tmp", record);
   if (

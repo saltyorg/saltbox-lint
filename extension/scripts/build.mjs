@@ -1,3 +1,4 @@
+// @ts-check
 import { build } from "esbuild";
 await build({
   entryPoints: ["src/extension.ts"],
@@ -16,6 +17,6 @@ await build({
   platform: "node",
   target: "node20",
   format: "cjs",
-  external: ["vscode"],
+  external: ["vscode", "mocha"],
   sourcemap: true,
 });

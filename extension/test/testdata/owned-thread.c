@@ -1,8 +1,11 @@
 // POSIX test fixture: its main thread exits while a worker retains a socket.
 #include <arpa/inet.h>
+#include <errno.h>
 #include <limits.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +19,29 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t exited = PTHREAD_COND_INITIALIZER;
 static int exit_main;
 static pthread_t leader;
+
+// The owner keeps stdin open. Its death closes the pipe even after main exits.
+static void *owner_lifetime(void *unused) {
+  (void)unused;
+  char input[128];
+  for (;;) {
+    struct pollfd owner = {.fd = STDIN_FILENO, .events = POLLIN};
+    int ready = poll(&owner, 1, -1);
+    if (ready < 0 && errno == EINTR) continue;
+    if (ready < 0) {
+      (void)kill(0, SIGKILL);
+      _exit(2);
+    }
+    ssize_t received = read(STDIN_FILENO, input, sizeof(input));
+    if (received > 0 ||
+        (received < 0 && (errno == EINTR || errno == EAGAIN ||
+                         errno == EWOULDBLOCK)))
+      continue;
+    // The fixture is the live leader of this group. Never signal recorded IDs.
+    (void)kill(0, SIGKILL);
+    _exit(2);
+  }
+}
 
 static void *serve(void *unused) {
   (void)unused;
@@ -49,9 +75,11 @@ static void *serve(void *unused) {
 }
 
 int main(int argc, char **argv) {
-  if (argc != 3) return 2;
+  if (argc != 3 || getpgrp() != getpid()) return 2;
   token = argv[2];
   leader = pthread_self();
+  pthread_t lifetime;
+  if (pthread_create(&lifetime, NULL, owner_lifetime, NULL)) return 2;
   endpoint = socket(AF_INET, SOCK_STREAM, 0);
   if (endpoint < 0) return 2;
   struct sockaddr_in address = {

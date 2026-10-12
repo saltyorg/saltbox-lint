@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { open } from "yauzl";
 import { manifest, targets, sha256 } from "./release-inputs.mjs";
 
+/**
+ * @param {string} path
+ * @returns {Promise<Map<string, {bytes: Buffer, mode: number}>>}
+ */
 export function readVSIX(path) {
   return new Promise((resolve, reject) => {
     open(path, { lazyEntries: true }, (error, zip) => {

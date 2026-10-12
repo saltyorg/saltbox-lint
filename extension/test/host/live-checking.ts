@@ -1,7 +1,26 @@
+import { EditorIntegration } from "../../src/editor.ts";
+import { runProcess } from "../../src/process.ts";
+import {
+  createLiveProcessTracker,
+  type LiveNativeInvocation,
+} from "../support/live-processes.ts";
+import {
+  withTestResources,
+  type TestResources,
+} from "../support/test-resources.ts";
+import { replaceLiveBuffer } from "./live-editor.ts";
+import {
+  createLiveBounded,
+  cancelLiveControl,
+  runManualLiveControl,
+  runSaveLiveControl,
+  cleanupLiveControls,
+  captureLiveFailure,
+  finishLiveFailure,
+  type LiveCancelContext,
+} from "../support/live-controls.ts";
 import assert from "node:assert/strict";
 import * as vscode from "vscode";
-import { createRequire } from "node:module";
-import type { ChildProcess, spawn } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -40,49 +59,6 @@ async function observed(
   while (!predicate() && performance.now() < deadline) await pause(10);
   assert.ok(predicate(), message);
 }
-async function bounded<T>(
-  operation: PromiseLike<T>,
-  name: LiveOperationName,
-  evidence: LiveControlEvidence | undefined,
-): Promise<T> {
-  noteLiveOperation(evidence, name, "entered");
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const result = await Promise.race([
-      operation,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          noteLiveOperation(evidence, name, "deadline");
-          reject(new Error("Live checking control deadline"));
-        }, deadlineMs);
-      }),
-    ]);
-    noteLiveOperation(evidence, name, "completed");
-    return result;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-async function replace(
-  document: vscode.TextDocument,
-  text: string,
-  name: LiveOperationName,
-  evidence: LiveControlEvidence | undefined,
-) {
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(
-    document.uri,
-    new vscode.Range(
-      document.positionAt(0),
-      document.positionAt(document.getText().length),
-    ),
-    text,
-  );
-  assert.equal(
-    await bounded(vscode.workspace.applyEdit(edit), name, evidence),
-    true,
-  );
-}
 function expected(document: vscode.TextDocument, line: number): boolean {
   return vscode.languages
     .getDiagnostics(document.uri)
@@ -110,53 +86,63 @@ async function diskSources(root: string): Promise<Map<string, string>> {
   await visit(root);
   return sources;
 }
-interface Invocation {
-  primary?: string;
-  started: number;
-  closed?: number;
-  cancelled?: boolean;
-  exitCode?: number | null;
+type Invocation = LiveNativeInvocation;
+
+// The performance profile owns one native component and its real editor events.
+// Installed-package functional behavior runs separately without interception.
+export async function runLivePerformance(
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  await withTestResources(
+    { cleanupTimeoutMs: 15000, operationSignal: parentSignal },
+    (resources) => livePerformance(resources),
+  );
 }
 
-// Runs last in normal mode. Only the installed extension receives edit/config
-// events. The host wraps the shared Node spawn function without changing any
-// arguments, environment, pipes, return value or signal behavior.
-export async function runLiveChecking(): Promise<void> {
-  const product = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
-  assert.ok(product.isActive);
-  // Match the controller's context.asAbsolutePath basis. On Windows,
-  // extensionPath can retain a different drive spelling than extensionUri.fsPath.
-  const executable = join(
-    product.extensionUri.fsPath,
-    "bin",
-    "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+async function livePerformance(resources: TestResources): Promise<void> {
+  const bounded = createLiveBounded({ cancel: () => resources.cancel() });
+  const replace = (
+    document: vscode.TextDocument,
+    text: string,
+    name: LiveOperationName,
+    evidence: LiveControlEvidence | undefined,
+  ) => replaceLiveBuffer(document, text, name, evidence, bounded);
+  const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
+  assert.equal(
+    product?.isActive ?? false,
+    false,
+    "performance profile owns a component adapter beside an inactive installed package",
   );
+  const executable = process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!;
+  const installed = process.env.SALTBOX_TEST_EXPECTED_PRODUCT_PATH;
+  assert.ok(installed, "performance requires the verified installed backend");
   assert.equal(
     realpathSync.native(executable),
-    realpathSync.native(process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!),
-  );
-  const runtimeRequire = createRequire(__filename);
-  const runtimeModule =
-    runtimeRequire.cache[
-      runtimeRequire.resolve(
-        join(product.extensionUri.fsPath, "dist", "extension.js"),
-      )
-    ];
-  assert.ok(runtimeModule, "installed extension runtime is already cached");
-  assert.equal(
-    runtimeModule.loaded,
-    true,
-    "installed extension runtime is loaded",
-  );
-  const runtime = runtimeModule.exports as { deactivate(): Promise<void> };
-  assert.equal(
-    typeof runtime.deactivate,
-    "function",
-    "installed extension runtime exposes deactivation",
+    realpathSync.native(
+      join(
+        installed,
+        "bin",
+        "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+      ),
+    ),
   );
   const root = vscode.workspace.workspaceFolders![0].uri;
   const configuration = vscode.workspace.getConfiguration("saltboxLint", root);
   assert.equal(configuration.get("checkOnType", false), false);
+  const previous =
+    configuration.inspect<boolean>("checkOnType")?.workspaceFolderValue;
+  resources.defer("live performance setting", () =>
+    configuration.update(
+      "checkOnType",
+      previous,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    ),
+  );
+  const markerURI = vscode.Uri.joinPath(root, ".saltbox-lint");
+  const markerBytes = await vscode.workspace.fs.readFile(markerURI);
+  resources.defer("live performance marker", () =>
+    vscode.workspace.fs.writeFile(markerURI, markerBytes),
+  );
   const smallURI = vscode.Uri.joinPath(root, "live-small.yml");
   const heavyURI = vscode.Uri.joinPath(
     root,
@@ -179,6 +165,19 @@ export async function runLiveChecking(): Promise<void> {
   await vscode.workspace.fs.writeFile(contextURI, Buffer.from(context));
   for (const uri of [smallURI, heavyURI])
     await vscode.workspace.fs.writeFile(uri, Buffer.from(source(1)));
+  const templateURI = vscode.Uri.joinPath(
+    root,
+    "roles/readonly/templates/config.yaml",
+  );
+  await vscode.workspace.fs.createDirectory(
+    vscode.Uri.joinPath(root, "roles/readonly/templates"),
+  );
+  await vscode.workspace.fs.writeFile(
+    templateURI,
+    Buffer.from(
+      " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  ",
+    ),
+  );
   const small = await vscode.workspace.openTextDocument(smallURI);
   const heavy = await vscode.workspace.openTextDocument(heavyURI);
   const primaryFilenames = new Map([
@@ -186,73 +185,103 @@ export async function runLiveChecking(): Promise<void> {
     [heavy, realpathSync.native(heavy.uri.fsPath)],
   ]);
   await vscode.window.showTextDocument(heavy, { preview: false });
-  await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
+  let controlContext: LiveCancelContext<vscode.TextDocument> | undefined;
+  const processTracker = createLiveProcessTracker(runProcess, {
+    onSpawn(invocation) {
+      const control = controlContext?.launchControl;
+      if (control && invocation.primary === primaryFilenames.get(heavy)) {
+        controlContext!.launchControl = undefined;
+        control(invocation);
+      }
+    },
+  });
+  const invocations = processTracker.invocations;
+  const adapter = new EditorIntegration(executable, {
+    runProcess: processTracker.runner,
+  });
+  const cancel = () => adapter.dispose();
+  resources.signal.addEventListener("abort", cancel, { once: true });
+  resources.defer("live performance adapter", async () => {
+    resources.signal.removeEventListener("abort", cancel);
+    adapter.dispose();
+    await adapter.join();
+  });
+  const events = vscode.Disposable.from(
+    vscode.workspace.onDidOpenTextDocument((document) =>
+      adapter.open(document),
+    ),
+    vscode.workspace.onDidSaveTextDocument((document) =>
+      adapter.saved(document),
+    ),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length) adapter.change(event.document);
+    }),
+    vscode.workspace.onDidCloseTextDocument((document) =>
+      adapter.close(document),
+    ),
+  );
+  resources.defer("live performance events", () => events.dispose());
+  const runtime = {
+    deactivate: async () => {
+      adapter.dispose();
+      await adapter.join();
+    },
+  };
+  const commands = {
+    executeCommand: async (command: string) => {
+      if (command === "saltboxLint.checkWorkspace")
+        return adapter.checkWorkspace();
+      assert.equal(command, "saltboxLint.checkDocument");
+      const document = vscode.window.activeTextEditor?.document;
+      return document && adapter.check(document, true);
+    },
+  };
+  await adapter.ready();
+  await commands.executeCommand("saltboxLint.checkWorkspace");
   for (const document of [small, heavy]) {
     await vscode.window.showTextDocument(document, { preview: false });
-    await vscode.commands.executeCommand("saltboxLint.checkDocument");
+    await commands.executeCommand("saltboxLint.checkDocument");
     await observed(
       () => expected(document, 1),
       "baseline expected diagnostics",
     );
   }
-  const childProcesses = createRequire(__filename)("node:child_process") as {
-    spawn: typeof spawn;
-  };
-  const descriptor = Object.getOwnPropertyDescriptor(childProcesses, "spawn")!;
-  const original = childProcesses.spawn;
-  const invocations: Invocation[] = [];
-  let overflow = false;
-  let launchControl: ((invocation: Invocation) => void) | undefined;
-  const wrapped = (...args: Parameters<typeof spawn>): ChildProcess => {
-    const child = Reflect.apply(original, childProcesses, args) as ChildProcess;
-    const started = performance.now();
-    if (args[0] === executable) {
-      if (invocations.length >= 256) overflow = true;
-      else {
-        const argv = args[1] ?? [];
-        const position = argv.indexOf("--stdin-filename");
-        const invocation: Invocation = {
-          started,
-          primary: position < 0 ? undefined : argv[position + 1],
-        };
-        invocations.push(invocation);
-        child.once("close", (code, signal) => {
-          invocation.cancelled =
-            child.killed || signal === "SIGKILL" || signal === "SIGTERM";
-          invocation.closed = performance.now();
-          invocation.exitCode = code;
-        });
-        const control = launchControl;
-        if (control && invocation.primary === primaryFilenames.get(heavy)) {
-          launchControl = undefined;
-          child.once("spawn", () => control(invocation));
-        }
-      }
-    }
-    return child;
-  };
-  Object.defineProperty(childProcesses, "spawn", {
-    ...descriptor,
-    value: wrapped,
-  });
   const checkpoints: {
     name: string;
     launches: number;
     closes: number;
     active: number;
+    requests: {
+      admitted: number;
+      settled: number;
+      cancelledBeforeSpawn: number;
+    };
   }[] = [];
   const checkpoint = async (name: string) => {
+    await observed(
+      () =>
+        processTracker.requests.every(
+          (request) => request.settled !== undefined,
+        ),
+      `${name} admitted runner operation join`,
+    );
     await observed(
       () => invocations.every((item) => item.closed !== undefined),
       `${name} native CLI close join`,
     );
+    processTracker.assertJoined();
     checkpoints.push({
       name,
       launches: invocations.length,
       closes: invocations.filter((item) => item.closed !== undefined).length,
       active: invocations.filter((item) => item.closed === undefined).length,
+      requests: processTracker.accounting(),
     });
-    assert.equal(overflow, false, "live invocation evidence bound");
+    assert.equal(
+      processTracker.overflow,
+      false,
+      "live invocation evidence bound",
+    );
   };
   const primaryCalls = (document: vscode.TextDocument) =>
     primaryRequests(invocations, primaryFilenames.get(document)!);
@@ -261,13 +290,15 @@ export async function runLiveChecking(): Promise<void> {
     if (event.contentChanges.length && [small, heavy].includes(event.document))
       changed = performance.now();
   });
+  resources.defer("live performance change listener", () =>
+    changeListener.dispose(),
+  );
   const evidence = createLiveControlEvidence();
   const controlledInvocations = new Map<LiveControlName, Invocation>();
   const fixtureRecords: LiveFixture[] = [];
   let bufferUnchanged = true;
   let finalRecord: LiveCheckRecord | undefined;
-  let failed = false;
-  let primaryFailure: unknown;
+  const failureState = { failed: false, primaryFailure: undefined as unknown };
   const cleanupFailures: unknown[] = [];
   try {
     await pause(650);
@@ -422,56 +453,37 @@ export async function runLiveChecking(): Promise<void> {
         { length: 40000 },
         (_, index) => `entry_${index}: [1, 2, 3, 4, 5]\n`,
       ).join("") + source(80);
-    let controlNumber = 0;
-    async function cancelControl(
+    controlContext = {
+      evidence,
+      performance,
+      controlledInvocations,
+      launchControl: undefined,
+      signal: resources.signal,
+      controlNumber: 0,
+      heavy,
+      slow,
+      replace,
+      observed,
+      bounded,
+    };
+    const cancelControl = (
       name: LiveControlName,
       action: () => Promise<unknown>,
-    ): Promise<number> {
-      let resolve!: (milliseconds: number) => void;
-      let reject!: (error: unknown) => void;
-      const completed = new Promise<number>((done, fail) => {
-        resolve = done;
-        reject = fail;
-      });
-      noteLiveControlStage(evidence, name, "waiting-for-launch");
-      launchControl = (invocation) => {
-        try {
-          controlledInvocations.set(name, invocation);
-        } catch {
-          // Evidence bookkeeping cannot change the original control.
-        }
-        noteLiveControlStage(evidence, name, "action-pending");
-        const started = performance.now();
-        assert.equal(
-          invocation.closed,
-          undefined,
-          "control observes a live native CLI",
-        );
-        void action()
-          .then(async () => {
-            noteLiveControlStage(evidence, name, "waiting-for-close");
-            await observed(
-              () => invocation.closed !== undefined,
-              "cancelled native CLI close join",
-            );
-            assert.equal(
-              invocation.cancelled,
-              true,
-              "control cancels the native CLI before joining it",
-            );
-            noteLiveControlStage(evidence, name, "close-completed");
-            resolve(invocation.closed! - started);
-          })
-          .catch(reject);
-      };
-      await replace(
-        heavy,
-        slow + `# control ${++controlNumber}\r\n`,
-        "control-launch-edit",
-        evidence,
-      );
-      return bounded(completed, name, evidence);
-    }
+    ) => cancelLiveControl(name, action, controlContext!);
+    const sequence = {
+      small,
+      heavy,
+      evidence,
+      controlledInvocations,
+      primaryCalls,
+      cancelControl,
+      expected,
+      replace,
+      observed,
+      checkpoint,
+      source,
+      vscode: { window: vscode.window, commands },
+    };
     const supersededCloseMs = await cancelControl("superseded", async () => {
       await replace(heavy, source(90), "superseded-edit", evidence);
     });
@@ -482,52 +494,11 @@ export async function runLiveChecking(): Promise<void> {
     await checkpoint("superseded");
     // Check the small primary while heavy typing owns the lane. Confirm that
     // the manual command cancels it before editing the heavy buffer.
-    await vscode.window.showTextDocument(small, { preview: false });
-    assert.equal(vscode.window.activeTextEditor?.document, small);
-    const manualRequestsBefore = primaryCalls(small).length;
-    const manualCloseMs = await cancelControl("manual", async () => {
-      const activeTyping = controlledInvocations.get("manual");
-      assert.ok(activeTyping);
-      assert.equal(activeTyping.closed, undefined);
-      await vscode.commands.executeCommand("saltboxLint.checkDocument");
-    });
-    const manualTyping = controlledInvocations.get("manual");
-    assert.ok(manualTyping);
-    assert.equal(manualTyping.cancelled, true);
-    assert.notEqual(manualTyping.closed, undefined);
-    const manualRequests = primaryCalls(small).slice(manualRequestsBefore);
-    assert.equal(manualRequests.length, 1);
-    assert.notEqual(manualRequests[0].closed, undefined);
-    assert.equal(manualRequests[0].cancelled, false);
-    assert.equal(manualRequests[0].exitCode, 1);
-    assert.ok(expected(small, 59));
-    await replace(heavy, source(92), "manual-restored-edit", evidence);
-    await observed(
-      () => expected(heavy, 92),
-      "manual priority restores the latest compact typing snapshot",
-    );
-    await vscode.window.showTextDocument(heavy, { preview: false });
-    await checkpoint("manual");
+    const manualCloseMs = await runManualLiveControl(sequence);
     assert.ok(manualCloseMs < deadlineMs);
     // Save the small primary while typing owns the heavy active subprocess.
     await replace(small, source(91), "save-preparation-edit", evidence);
-    const saveCloseMs = await cancelControl("save", async () => {
-      await small.save();
-    });
-    await observed(
-      () => expected(small, 91),
-      "save has priority over active typing",
-    );
-    const saveTyping = controlledInvocations.get("save");
-    assert.ok(saveTyping);
-    assert.equal(saveTyping.cancelled, true);
-    assert.notEqual(saveTyping.closed, undefined);
-    await replace(heavy, source(93), "save-restored-edit", evidence);
-    await observed(
-      () => expected(heavy, 93),
-      "save priority restores the latest compact typing snapshot",
-    );
-    await checkpoint("save");
+    const saveCloseMs = await runSaveLiveControl(sequence);
     assert.ok(saveCloseMs < deadlineMs);
     // Reset disk baseline after the explicitly requested save control.
     const diskAfterSave = await diskSources(root.fsPath);
@@ -568,15 +539,15 @@ export async function runLiveChecking(): Promise<void> {
     await checkpoint("marker-removed");
     await vscode.workspace.fs.writeFile(marker, Buffer.alloc(0));
     await vscode.window.showTextDocument(heavy, { preview: false });
-    await vscode.commands.executeCommand("saltboxLint.checkDocument");
-    await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
+    await commands.executeCommand("saltboxLint.checkDocument");
+    await commands.executeCommand("saltboxLint.checkWorkspace");
     await checkpoint("marker-restored");
     const template = await vscode.workspace.openTextDocument(
       vscode.Uri.joinPath(root, "roles/readonly/templates/config.yaml"),
     );
     primaryFilenames.set(template, realpathSync.native(template.uri.fsPath));
     await vscode.window.showTextDocument(template, { preview: false });
-    await vscode.commands.executeCommand("saltboxLint.checkDocument");
+    await commands.executeCommand("saltboxLint.checkDocument");
     await checkpoint("template-baseline");
     const templateBefore = primaryCalls(template).length;
     await replace(
@@ -614,8 +585,8 @@ export async function runLiveChecking(): Promise<void> {
       target: `${process.platform}-${process.arch}`,
       expectedVersion: process.env.SALTBOX_TEST_EXPECTED_VSCODE_VERSION!,
       actualVersion: vscode.version,
-      mode: "normal",
-      boundary: "installed-cli-spawn-and-close",
+      mode: "live-performance",
+      boundary: "component-cli-runner-spawn-and-close",
       bounds: { debounceMs: 300, maxDocuments: 32 },
       fixtures: fixtureRecords,
       sustained,
@@ -631,7 +602,7 @@ export async function runLiveChecking(): Promise<void> {
       checkpoints,
       preservation: { diskSourcesUnchanged: true, bufferUnchanged },
       assertions: {
-        actualInstalled: true,
+        actualInstalledBackend: true,
         latestUnicodeCRLF: true,
         burstCoalesced: true,
         manualPriority: true,
@@ -641,66 +612,160 @@ export async function runLiveChecking(): Promise<void> {
     };
     finalRecord = record;
   } catch (error) {
-    failed = true;
-    primaryFailure = error;
-    reportLiveControlFailure(
-      evidence,
-      { fixtures: fixtureRecords.length, checkpoints: checkpoints.length },
-      undefined,
-      captureLiveInvocationFailure(
+    captureLiveFailure(
+      error,
+      Object.assign(failureState, {
+        evidence,
         invocations,
         controlledInvocations,
-        overflow,
-      ),
-      captureLivePendingInvocations(
-        invocations,
-        controlledInvocations,
-        overflow,
-        { evidence, primaryFilenames, small, heavy },
-      ),
+        overflow: processTracker.overflow,
+        primaryFilenames,
+        small,
+        heavy,
+        fixtureRecords,
+        checkpoints,
+      }),
     );
   } finally {
-    launchControl = undefined;
-    try {
-      await bounded(runtime.deactivate(), "cleanup-deactivate", evidence);
-      await observed(
-        () => invocations.every((item) => item.closed !== undefined),
-        "final installed native CLI join",
-      );
-    } catch (error) {
-      cleanupFailures.push(error);
-      if (!failed)
-        reportLiveControlFailure(evidence, {
-          fixtures: fixtureRecords.length,
-          checkpoints: checkpoints.length,
-        });
-    } finally {
-      try {
-        Object.defineProperty(childProcesses, "spawn", descriptor);
-      } catch (error) {
-        cleanupFailures.push(error);
-      } finally {
-        try {
-          changeListener.dispose();
-        } catch (error) {
-          cleanupFailures.push(error);
-        }
-      }
-    }
-  }
-  if (failed) {
-    if (cleanupFailures.length)
-      console.error("SALTBOX_LIVE_CHECK_CLEANUP_FAILURE", {
-        failures: cleanupFailures.length,
+    cleanupFailures.push(
+      ...(await cleanupLiveControls({
+        stopLaunch: () => {
+          if (controlContext) controlContext.launchControl = undefined;
+        },
+        deactivate: () =>
+          bounded(runtime.deactivate(), "cleanup-deactivate", evidence),
+        join: async () => {
+          await observed(
+            () =>
+              processTracker.requests.every(
+                (request) => request.settled !== undefined,
+              ),
+            "final admitted runner operation join",
+          );
+          await observed(
+            () => invocations.every((item) => item.closed !== undefined),
+            "final installed native CLI join",
+          );
+          processTracker.assertJoined();
+        },
+        restore: () => events.dispose(),
+        unsubscribe: () => changeListener.dispose(),
+      })),
+    );
+    if (!failureState.failed && cleanupFailures.length)
+      reportLiveControlFailure(evidence, {
+        fixtures: fixtureRecords.length,
+        checkpoints: checkpoints.length,
       });
-    throw primaryFailure;
   }
-  if (cleanupFailures.length)
-    throw new AggregateError(cleanupFailures, "Live checking cleanup failed");
+  console.log(
+    "SALTBOX_LIVE_PROCESS_REQUESTS " +
+      JSON.stringify({
+        boundary: "actual-native-spawn-and-close-with-runner-settlement",
+        requests: processTracker.accounting(),
+        nativeLaunches: invocations.length,
+        nativeCloses: invocations.filter(
+          (invocation) => invocation.closed !== undefined,
+        ).length,
+        pendingRequests: processTracker.requests.flatMap((request, index) =>
+          request.settled === undefined
+            ? [{ ordinal: index + 1, operation: request.operation }]
+            : [],
+        ),
+      }),
+  );
+  finishLiveFailure(failureState, cleanupFailures);
   assert.ok(finalRecord, "complete live checking record");
   validateLiveCheckRecord(finalRecord);
   console.log("SALTBOX_LIVE_CHECK_ACCEPTANCE " + JSON.stringify(finalRecord));
   console.log(
-    "PASS installed live checking: default-off save parity, current Unicode/CRLF buffers, bounded typing, cancellation joins and source preservation",
+    "PASS native component live performance: default-off save parity, current Unicode/CRLF buffers, bounded typing, cancellation joins and source preservation",
+  );
+}
+
+export async function runLiveChecking(
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  await withTestResources(
+    { cleanupTimeoutMs: 15000, operationSignal: parentSignal },
+    async (resources) => {
+      const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
+      assert.ok(
+        product?.isActive,
+        "functional profile exercises the installed extension",
+      );
+      const root = vscode.workspace.workspaceFolders![0].uri;
+      const configuration = vscode.workspace.getConfiguration(
+        "saltboxLint",
+        root,
+      );
+      const previous =
+        configuration.inspect<boolean>("checkOnType")?.workspaceFolderValue;
+      resources.defer("functional live setting", () =>
+        configuration.update(
+          "checkOnType",
+          previous,
+          vscode.ConfigurationTarget.WorkspaceFolder,
+        ),
+      );
+      assert.equal(configuration.get("checkOnType", false), false);
+      const uri = vscode.Uri.joinPath(root, "live-functional.yml");
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(source(1)));
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document, { preview: false });
+      resources.defer("functional live document", async () => {
+        await vscode.window.showTextDocument(document, { preview: false });
+        await vscode.commands.executeCommand(
+          "workbench.action.revertAndCloseActiveEditor",
+        );
+      });
+      await vscode.commands.executeCommand("saltboxLint.checkDocument");
+      assert.ok(expected(document, 1));
+      const originalDisk = hash(await vscode.workspace.fs.readFile(uri));
+      await resources.operation("default-off functional edit", () =>
+        replaceLiveBuffer(document, source(6), "default-off-edit", undefined),
+      );
+      assert.equal(configuration.get("checkOnType", false), false);
+      assert.equal(hash(await vscode.workspace.fs.readFile(uri)), originalDisk);
+      assert.equal(document.getText(), source(6));
+      assert.equal(await document.save(), true);
+      await observed(
+        () => expected(document, 6),
+        "the installed default-off save publishes the saved generation",
+      );
+      await configuration.update(
+        "checkOnType",
+        true,
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      const afterSave = hash(await vscode.workspace.fs.readFile(uri));
+      await resources.operation("installed Unicode CRLF typing", () =>
+        replaceLiveBuffer(document, source(12), "small-sample-edit", undefined),
+      );
+      await observed(
+        () => expected(document, 12),
+        "the installed typing path publishes the current Unicode CRLF generation",
+      );
+      assert.equal(document.getText(), source(12));
+      assert.equal(hash(await vscode.workspace.fs.readFile(uri)), afterSave);
+      await resources.operation("installed latest typing generation", () =>
+        replaceLiveBuffer(document, source(30), "sustained-edit", undefined),
+      );
+      await observed(
+        () => expected(document, 30),
+        "a later installed typing generation replaces the previous one",
+      );
+      await vscode.commands.executeCommand("saltboxLint.checkDocument");
+      assert.ok(expected(document, 30));
+      await configuration.update(
+        "checkOnType",
+        false,
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      assert.equal(configuration.get("checkOnType", true), false);
+      console.log(
+        "PASS installed functional live checking preserves current Unicode/CRLF buffers, save behavior, configuration and saved bytes",
+      );
+    },
   );
 }

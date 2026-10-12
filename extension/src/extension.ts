@@ -1,18 +1,53 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { EditorIntegration, tabDocumentUris } from "./editor.ts";
+import {
+  EditorIntegration,
+  tabDocumentUris,
+  type EditorAdapters,
+} from "./editor.ts";
 import { rootMarker } from "./roots.ts";
+import { updateProviders, type ProviderRegistration } from "./providers.ts";
 
 let activeEditor: EditorIntegration | undefined;
+let deactivation: Promise<void> | undefined;
 
-export async function deactivate(): Promise<void> {
+export function deactivate(): Promise<void> {
   const editor = activeEditor;
-  editor?.dispose();
+  if (!editor) return deactivation ?? Promise.resolve();
   activeEditor = undefined;
-  await editor?.join();
+  // Publish the admitted owner before a disposal callback can reenter.
+  const cleanup = Promise.resolve().then(async () => {
+    let disposalFailed = false;
+    let disposalFailure: unknown;
+    try {
+      editor.dispose();
+    } catch (error) {
+      disposalFailed = true;
+      disposalFailure = error;
+    }
+    try {
+      await editor.join();
+    } catch (error) {
+      if (disposalFailed)
+        throw new AggregateError(
+          [disposalFailure, error],
+          "Extension disposal and joining failed",
+          { cause: disposalFailure },
+        );
+      throw error;
+    } finally {
+      if (deactivation === cleanup) deactivation = undefined;
+    }
+    if (disposalFailed) throw disposalFailure;
+  });
+  deactivation = cleanup;
+  return cleanup;
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+export function activate(
+  context: vscode.ExtensionContext,
+  adapters: Partial<EditorAdapters> = {},
+): void {
   if (!vscode.workspace.isTrusted) return;
   const editor = new EditorIntegration(
     context.asAbsolutePath(
@@ -21,97 +56,14 @@ export function activate(context: vscode.ExtensionContext): void {
         "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
       ),
     ),
+    adapters,
   );
   activeEditor = editor;
-  const providers = new Map<
-    string,
-    { language: string; writable: boolean; disposable: vscode.Disposable }
-  >();
-  const updateProviders = () => {
-    const documents = new Map(
-      editor
-        .providerDocuments()
-        .map((document) => [document.uri.toString(), document]),
-    );
-    for (const [key, registration] of providers) {
-      const document = documents.get(key);
-      if (
-        document?.languageId === registration.language &&
-        editor.writable(document) === registration.writable
-      )
-        continue;
-      registration.disposable.dispose();
-      providers.delete(key);
-    }
-    for (const [key, document] of documents) {
-      if (providers.has(key)) continue;
-      const selector: vscode.DocumentSelector = [
-        {
-          scheme: "file",
-          language: document.languageId,
-          pattern: new vscode.RelativePattern(
-            vscode.Uri.file(path.dirname(document.uri.fsPath)),
-            path.basename(document.uri.fsPath).replace(/[?*{}[\]]/g, "[$&]"),
-          ),
-        },
-      ];
-      providers.set(key, {
-        language: document.languageId,
-        writable: editor.writable(document),
-        disposable: vscode.Disposable.from(
-          vscode.languages.registerCodeActionsProvider(
-            selector,
-            {
-              provideCodeActions: (document, range) =>
-                editor.actions(document, range),
-            },
-            {
-              providedCodeActionKinds: [
-                vscode.CodeActionKind.QuickFix,
-                ...(editor.writable(document)
-                  ? [vscode.CodeActionKind.SourceFixAll.append("saltboxLint")]
-                  : []),
-              ],
-            },
-          ),
-          vscode.languages.registerDefinitionProvider(selector, {
-            provideDefinition: (document, position, token) =>
-              editor.navigation.definition(document, position, token),
-          }),
-
-          vscode.languages.registerHoverProvider(selector, {
-            provideHover: (document, position, token) =>
-              editor.navigation.hover(document, position, token),
-          }),
-          vscode.languages.registerReferenceProvider(selector, {
-            provideReferences: (document, position, context, token) =>
-              editor.navigation.references(document, position, context, token),
-          }),
-          ...(editor.writable(document)
-            ? [
-                vscode.languages.registerCompletionItemProvider(selector, {
-                  provideCompletionItems: (document, position, token) =>
-                    editor.navigation.completion(document, position, token),
-                }),
-                vscode.languages.registerDocumentFormattingEditProvider(
-                  selector,
-                  {
-                    provideDocumentFormattingEdits: (
-                      document,
-                      _options,
-                      token,
-                    ) => editor.format(document, "canonical", token),
-                  },
-                ),
-              ]
-            : []),
-        ),
-      });
-    }
-  };
+  const providers = new Map<string, ProviderRegistration>();
+  const refreshProviders = () => updateProviders(editor, providers);
   context.subscriptions.push(
     editor,
-    editor.onDidChangeEligibility(updateProviders),
+    editor.onDidChangeEligibility(refreshProviders),
     new vscode.Disposable(() => {
       for (const registration of providers.values())
         registration.disposable.dispose();

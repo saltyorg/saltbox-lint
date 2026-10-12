@@ -6,13 +6,17 @@ import {
   readFileSync,
   readSync,
 } from "node:fs";
-import { createConnection } from "node:net";
+import { createConnection, type Socket } from "node:net";
 
 export interface FixtureProcess {
   pid: number;
   port: number;
   token: string;
   args?: string[];
+}
+
+export interface FixtureProbeAdapters {
+  connect?: (port: number) => Socket;
 }
 
 // Readiness carries the publisher's credential. Historical records may reuse
@@ -312,17 +316,21 @@ export function fixtureInvocations(filename: string): string[] {
 
 // Never probe or signal an old numeric PID. The fixture owns this endpoint
 // until OS process exit, including while its real CLI or test gate is blocked.
-export function fixtureRunning(instance: FixtureProcess): Promise<boolean> {
+export function fixtureRunning(
+  instance: FixtureProcess,
+  adapters: FixtureProbeAdapters = {},
+): Promise<boolean> {
   return new Promise((resolve, reject) => {
-    const socket = createConnection({ host: "127.0.0.1", port: instance.port });
+    const socket =
+      adapters.connect?.(instance.port) ??
+      createConnection({ host: "127.0.0.1", port: instance.port });
     let response = "";
-    let settled = false;
+    let outcome: { error: Error } | { running: boolean } | undefined;
     const finish = (error?: Error, running = false) => {
-      if (settled) return;
-      settled = true;
+      if (outcome) return;
+      outcome = error ? { error } : { running };
+      socket.setTimeout(0);
       socket.destroy();
-      if (error) reject(error);
-      else resolve(running);
     };
     socket.setTimeout(1000, () =>
       finish(new Error(`Fixture ${instance.pid} lifetime probe timed out`)),
@@ -342,12 +350,13 @@ export function fixtureRunning(instance: FixtureProcess): Promise<boolean> {
       else finish(undefined, response === instance.token + "\n");
     });
     socket.once("close", () => {
-      if (!settled)
-        finish(
-          new Error(
-            `Fixture ${instance.pid} lifetime probe closed unexpectedly`,
-          ),
-        );
+      outcome ??= {
+        error: new Error(
+          `Fixture ${instance.pid} lifetime probe closed unexpectedly`,
+        ),
+      };
+      if ("error" in outcome) reject(outcome.error);
+      else resolve(outcome.running);
     });
     socket.once("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "ECONNREFUSED") finish();
@@ -387,24 +396,22 @@ export interface FixtureProbe {
 }
 
 // Observation only. A mismatch or failed probe cannot establish absence.
-export function fixtureProbe(instance: FixtureProcess): Promise<FixtureProbe> {
+export function fixtureProbe(
+  instance: FixtureProcess,
+  adapters: FixtureProbeAdapters = {},
+): Promise<FixtureProbe> {
   const capturedAt = new Date().toISOString();
   return new Promise((resolve) => {
-    const socket = createConnection({ host: "127.0.0.1", port: instance.port });
+    const socket =
+      adapters.connect?.(instance.port) ??
+      createConnection({ host: "127.0.0.1", port: instance.port });
     let response = "";
-    let settled = false;
+    let outcome: { state: FixtureProbe["state"]; error?: string } | undefined;
     const finish = (state: FixtureProbe["state"], error?: string) => {
-      if (settled) return;
-      settled = true;
+      if (outcome) return;
+      outcome = { state, ...(error ? { error } : {}) };
       clearTimeout(timer);
       socket.destroy();
-      resolve({
-        instance,
-        capturedAt,
-        completedAt: new Date().toISOString(),
-        state,
-        ...(error ? { error } : {}),
-      });
     };
     const timer = setTimeout(
       () => finish("unavailable", "lifetime probe timed out"),
@@ -420,9 +427,19 @@ export function fixtureProbe(instance: FixtureProcess): Promise<FixtureProbe> {
         finish("unavailable", "lifetime response is invalid");
       else finish(response === instance.token + "\n" ? "alive" : "mismatch");
     });
-    socket.once("close", () =>
-      finish("unavailable", "lifetime probe closed unexpectedly"),
-    );
+    socket.once("close", () => {
+      outcome ??= {
+        state: "unavailable",
+        error: "lifetime probe closed unexpectedly",
+      };
+      clearTimeout(timer);
+      resolve({
+        instance,
+        capturedAt,
+        completedAt: new Date().toISOString(),
+        ...outcome,
+      });
+    });
     socket.once("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "ECONNREFUSED") finish("endpoint-absent");
       else finish("unavailable", error.code ?? error.name);

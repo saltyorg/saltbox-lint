@@ -33,6 +33,9 @@ export interface NavigationAnswer {
   targetsCurrent: () => Promise<boolean>;
   targetsCurrentNow: () => boolean;
 }
+export interface NavigationAdapters {
+  readFile: typeof readFile;
+}
 
 // Source bytes and original coordinates are checked together. Dirty dependency
 // buffers cannot supply a saved declaration location; the primary overlay can.
@@ -65,7 +68,9 @@ export async function validateNavigation(
   overlayPaths: ReadonlySet<string> = new Set(),
   aliases: ReadonlyMap<string, ObservedSource> = new Map(),
   observations: ReadonlyMap<string, ObservedSource> = new Map(),
+  adapters: Partial<NavigationAdapters> = {},
 ): Promise<NavigationAnswer | undefined> {
+  const readSource = adapters.readFile ?? readFile;
   const snapshots = new Map<
     string,
     { text: string; index: SnapshotIndex; uri: vscode.Uri }
@@ -105,7 +110,7 @@ export async function validateNavigation(
     for (const { observation, digest, overlay } of usedTargets.values()) {
       if (overlay) continue;
       try {
-        const bytes = await readFile(observation.filename);
+        const bytes = await readSource(observation.filename);
         if (!isUtf8(bytes) || hash(bytes) !== digest) return false;
       } catch (error) {
         if (unavailableSource(error)) return false;
@@ -264,7 +269,7 @@ export async function validateNavigation(
     );
     let bytes: Buffer;
     try {
-      bytes = await readFile(filename);
+      bytes = await readSource(filename);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") return;

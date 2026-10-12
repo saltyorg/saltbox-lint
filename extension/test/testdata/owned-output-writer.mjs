@@ -1,7 +1,16 @@
+// @ts-check
 import { renameSync, writeFileSync, writeSync } from "node:fs";
+import assert from "node:assert/strict";
 import { workerData } from "node:worker_threads";
 
-const { record, token, fd } = workerData;
+/** @type {unknown} */
+const input = workerData;
+assert.ok(input && typeof input === "object");
+assert.ok("record" in input && typeof input.record === "string");
+assert.ok("token" in input && typeof input.token === "string");
+assert.ok("fd" in input && typeof input.fd === "number");
+const { record, token, fd } = input;
+/** @param {boolean} pending */
 const status = (pending) => {
   writeFileSync(record + ".pending.tmp", JSON.stringify({ token, pending }));
   renameSync(record + ".pending.tmp", record + ".pending");

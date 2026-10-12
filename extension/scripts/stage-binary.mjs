@@ -1,3 +1,4 @@
+// @ts-check
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,8 +11,12 @@ const target = fileURLToPath(
   ),
 );
 const { version } = JSON.parse(
-  readFileSync(new URL("../package.json", import.meta.url)),
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 );
+/**
+ * @param {{command?: string, prefix?: string[], output?: string, timeoutMs?: number}} [options]
+ * @returns {Promise<void>}
+ */
 export async function stageBinary({
   command = "go",
   prefix = [],

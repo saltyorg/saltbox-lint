@@ -3,13 +3,12 @@ import { test } from "node:test";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import * as fs from "node:fs/promises";
-import { readFileSync, lstatSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import * as syncFs from "node:fs";
 import type { BigIntStats } from "node:fs";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import { build } from "esbuild";
-import ts from "typescript";
 import type * as vscode from "vscode";
 import type { EditorIntegration } from "../../src/editor.ts";
 import type { Navigation } from "../../src/navigation.ts";
@@ -29,32 +28,10 @@ const declarations = [
   "roles/demo/vars/main.yml",
 ];
 const declarationText = "# 😀é\r\ndemo_role_port: 42\r\n";
-const activation = ts.createSourceFile(
-  "extension.ts",
-  readFileSync("src/extension.ts", "utf8"),
-  ts.ScriptTarget.Latest,
-  true,
-);
-const activate = activation.statements.find(
-  (item): item is ts.FunctionDeclaration =>
-    ts.isFunctionDeclaration(item) && item.name?.text === "activate",
-);
-const update = activate?.body?.statements.find(
-  (item) =>
-    ts.isVariableStatement(item) &&
-    item.declarationList.declarations.some(
-      (entry) => entry.name.getText(activation) === "updateProviders",
-    ),
-);
-assert.ok(update);
-const registrationCode = ts.transpileModule(
-  update.getText(activation) + "; globalThis.refresh = updateProviders;",
-  { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-).outputText;
 const bundled = await build({
   stdin: {
     contents:
-      'export { EditorIntegration } from "./src/editor.ts"; export { Navigation } from "./src/navigation.ts";',
+      'export { EditorIntegration } from "./src/editor.ts"; export { updateProviders } from "./src/providers.ts"; export { Navigation } from "./src/navigation.ts";',
     resolveDir: process.cwd(),
     loader: "ts",
   },
@@ -66,17 +43,14 @@ const bundled = await build({
     {
       name: "logical-yaml-endpoints",
       setup(builder) {
-        builder.onResolve(
-          { filter: /^vscode$|^\.\/process\.ts$/ },
-          ({ path }) => ({ path, namespace: "logical-api" }),
-        );
+        builder.onResolve({ filter: /^vscode$/ }, ({ path }) => ({
+          path,
+          namespace: "logical-api",
+        }));
         builder.onLoad(
           { filter: /.*/, namespace: "logical-api" },
           ({ path }) => ({
-            contents:
-              path === "vscode"
-                ? "module.exports = globalThis.api"
-                : "exports.runProcess = globalThis.api.runProcess",
+            contents: "module.exports = globalThis.api",
             loader: "js",
           }),
         );
@@ -337,7 +311,11 @@ async function fixture(saved = false, spelling = "plain") {
         });
       },
     },
-    runProcess: async (request: { args: string[]; input: string }) => {
+    runProcess: async (
+      request: import("../../src/process.ts").ProcessRequest,
+    ) => {
+      if (typeof request.input !== "string")
+        throw new Error("A source snapshot is required by this fixture");
       requests.push(request.args);
       assert.equal(request.input, primary);
       const wire =
@@ -370,6 +348,7 @@ async function fixture(saved = false, spelling = "plain") {
   const module = {
     exports: {} as {
       EditorIntegration: typeof EditorIntegration;
+      updateProviders: typeof import("../../src/providers.ts").updateProviders;
       Navigation: typeof Navigation;
     },
   };
@@ -425,10 +404,12 @@ async function fixture(saved = false, spelling = "plain") {
       | "providerDocuments"
       | "writable"
       | "navigation"
+      | "actions"
     > & {
       admit(document: vscode.TextDocument): Promise<boolean>;
     },
     {
+      adapters: { runProcess: api.runProcess },
       disposed: false,
       executable: "controlled-cli",
       closedTabs: new Set(),
@@ -480,7 +461,10 @@ async function fixture(saved = false, spelling = "plain") {
       Reflect.apply(Reflect.get(editor, "query"), editor, args),
     ),
   );
-  const providers = new Map<string, { disposable: Disposable }>();
+  const providers = new Map<
+    string,
+    import("../../src/providers.ts").ProviderRegistration
+  >();
   const context = {
     vscode: api,
     path,
@@ -488,8 +472,7 @@ async function fixture(saved = false, spelling = "plain") {
     providers,
     refresh: undefined as (() => void) | undefined,
   };
-  runInNewContext(registrationCode, context);
-  const refresh = context.refresh!;
+  const refresh = () => module.exports.updateProviders(editor, providers);
   Reflect.set(editor, "eligibilityChanged", { fire: refresh });
   assert.equal(await editor.admit(doc), true);
   const cancellation = new AbortController();

@@ -37,8 +37,9 @@ export interface LiveCheckRecord {
   target: string;
   expectedVersion: string;
   actualVersion: string;
-  mode: "normal";
-  boundary: "installed-cli-spawn-and-close";
+  mode: "normal" | "live-checking" | "live-performance";
+  boundary:
+    "installed-cli-spawn-and-close" | "component-cli-runner-spawn-and-close";
   bounds: { debounceMs: 300; maxDocuments: 32 };
   fixtures: LiveFixture[];
   sustained: {
@@ -61,10 +62,16 @@ export interface LiveCheckRecord {
     launches: number;
     closes: number;
     active: number;
+    requests?: {
+      admitted: number;
+      settled: number;
+      cancelledBeforeSpawn: number;
+    };
   }[];
   preservation: { diskSourcesUnchanged: true; bufferUnchanged: boolean };
   assertions: {
-    actualInstalled: true;
+    actualInstalled?: true;
+    actualInstalledBackend?: true;
     latestUnicodeCRLF: true;
     burstCoalesced: true;
     manualPriority: true;
@@ -82,8 +89,16 @@ export function validateLiveCheckRecord(record: LiveCheckRecord): void {
   assert.match(record.target, /^(linux|darwin|win32)-(x64|arm64)$/);
   assert.ok(["1.100.0", "1.137.0"].includes(record.expectedVersion));
   assert.equal(record.actualVersion, record.expectedVersion);
-  assert.equal(record.mode, "normal");
-  assert.equal(record.boundary, "installed-cli-spawn-and-close");
+  assert.ok(
+    ["normal", "live-checking", "live-performance"].includes(record.mode),
+  );
+  const component = record.mode === "live-performance";
+  assert.equal(
+    record.boundary,
+    component
+      ? "component-cli-runner-spawn-and-close"
+      : "installed-cli-spawn-and-close",
+  );
   assert.deepEqual(record.bounds, { debounceMs: 300, maxDocuments: 32 });
   assert.deepEqual(
     record.fixtures.map((fixture) => fixture.kind),
@@ -142,13 +157,56 @@ export function validateLiveCheckRecord(record: LiveCheckRecord): void {
     [...liveCheckpointNames],
   );
   let previous = 0;
+  let previousAdmitted = 0;
+  let previousCancelled = 0;
   for (const checkpoint of record.checkpoints) {
+    assert.deepEqual(
+      Object.keys(checkpoint).sort(),
+      component
+        ? ["active", "closes", "launches", "name", "requests"]
+        : ["active", "closes", "launches", "name"],
+    );
     assert.ok(
       Number.isSafeInteger(checkpoint.launches) &&
         checkpoint.launches >= previous,
     );
     assert.equal(checkpoint.closes, checkpoint.launches);
     assert.equal(checkpoint.active, 0);
+    if (component)
+      assert.ok(
+        checkpoint.requests &&
+          typeof checkpoint.requests === "object" &&
+          !Array.isArray(checkpoint.requests),
+        "component checkpoint requires request ownership accounting",
+      );
+    if (checkpoint.requests) {
+      assert.deepEqual(Object.keys(checkpoint.requests).sort(), [
+        "admitted",
+        "cancelledBeforeSpawn",
+        "settled",
+      ]);
+      const { admitted, settled, cancelledBeforeSpawn } = checkpoint.requests;
+      for (const count of [admitted, settled, cancelledBeforeSpawn])
+        assert.ok(Number.isSafeInteger(count) && count >= 0);
+      assert.equal(
+        admitted,
+        settled,
+        "every admitted runner operation has settled at a checkpoint",
+      );
+      assert.equal(
+        admitted,
+        checkpoint.launches + cancelledBeforeSpawn,
+        "requests are accounted for by actual spawns or explicit no-child cancellation",
+      );
+      assert.ok(
+        admitted >= previousAdmitted &&
+          cancelledBeforeSpawn >= previousCancelled,
+        "cumulative request ownership cannot regress between checkpoints",
+      );
+      assert.ok(admitted <= 256, "admitted request evidence bound");
+      previousAdmitted = admitted;
+      previousCancelled = cancelledBeforeSpawn;
+    }
     previous = checkpoint.launches;
   }
   assert.ok(previous > 40 && previous <= 256);
@@ -157,7 +215,7 @@ export function validateLiveCheckRecord(record: LiveCheckRecord): void {
     bufferUnchanged: true,
   });
   assert.deepEqual(record.assertions, {
-    actualInstalled: true,
+    [component ? "actualInstalledBackend" : "actualInstalled"]: true,
     latestUnicodeCRLF: true,
     burstCoalesced: true,
     manualPriority: true,

@@ -19,18 +19,40 @@ import (
 func main() {
 	filename := os.Args[2]
 	if os.Args[1] == "parent" {
-		command := exec.Command(os.Args[0], "child", filename)
-		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := command.Start(); err != nil {
+		parentRead, parentWrite, err := os.Pipe()
+		if err != nil {
 			os.Exit(2)
 		}
+		command := exec.Command(os.Args[0], "child", filename)
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		// Only the child inherits the read end. This parent alone holds the
+		// writer, so parent death or its owner's EOF stops the actual child.
+		command.ExtraFiles = []*os.File{parentRead}
+		if err := command.Start(); err != nil {
+			_ = parentRead.Close()
+			_ = parentWrite.Close()
+			os.Exit(2)
+		}
+		_ = parentRead.Close()
 		// Waiting is explicitly gated so the observer sees a real zombie.
 		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+		_ = parentWrite.Close()
 		if err := command.Wait(); err != nil {
 			os.Exit(2)
 		}
 		return
 	}
+	if syscall.Getpgrp() != os.Getpid() {
+		os.Exit(2)
+	}
+	parentLifetime := os.NewFile(3, "parent-lifetime")
+	go func() {
+		_, _ = io.Copy(io.Discard, parentLifetime)
+		// This live child stops its current group; the parent never recovers
+		// ownership by signaling a PID found in the fixture record.
+		_ = syscall.Kill(0, syscall.SIGKILL)
+		os.Exit(2)
+	}()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		os.Exit(2)

@@ -94,7 +94,9 @@ export function logFailureEvidence(
 export async function journalFailureEvidence(journal: FixtureJournal) {
   const startedAt = new Date().toISOString();
   const snapshot = journal.failureSnapshot();
-  const endpoints = await Promise.all(snapshot.retained.map(fixtureProbe));
+  const endpoints = await Promise.all(
+    snapshot.retained.map((instance) => fixtureProbe(instance)),
+  );
   return {
     startedAt,
     completedAt: new Date().toISOString(),

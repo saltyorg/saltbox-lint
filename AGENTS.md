@@ -31,6 +31,52 @@
   files. Routine cleanup of verified task-generated temporary files needs no
   further approval.
 
+## Extension work
+
+- Before editing `extension/` or its build, test, packaging or CI integration,
+  read [docs/extension-testing.md](docs/extension-testing.md). Follow the relevant
+  upstream [VS Code API](https://code.visualstudio.com/api/references/vscode-api),
+  [extension testing](https://code.visualstudio.com/api/working-with-extensions/testing-extension)
+  and [bundling](https://code.visualstudio.com/api/working-with-extensions/bundling-extension)
+  instructions for the versions this repository supports.
+- Consult [Node documentation](https://nodejs.org/docs/),
+  [TypeScript documentation](https://www.typescriptlang.org/docs/),
+  [typescript-eslint documentation](https://typescript-eslint.io/rules/) and the
+  selected runner's public APIs, including [Mocha hooks](https://mochajs.org/features/hooks/)
+  and [VS Code test tooling](https://github.com/microsoft/vscode-test), for the
+  behavior being changed. Use versioned documentation or matching upstream
+  source when current documentation describes a newer version.
+- Use stable public APIs compatible with the declared minimum editor. Treat
+  external build/test Node and each editor's embedded Node/Electron as separate
+  runtimes; record actual host versions in qualification evidence. Preserve
+  existing pins unless a dependency change is part of the authorized task.
+- Record consulted source URLs and versions in the task's verification record.
+  Explain any upstream deviation or compatibility limit and validate the chosen
+  alternative. Microsoft's [test-writing guidance](https://github.com/microsoft/vscode/blob/main/.github/instructions/writing-tests.instructions.md)
+  supplies ownership and injection principles; its internal helpers are not
+  public extension APIs.
+- Test imported behavior with injected dependencies at the appropriate layer.
+  Keep real native adapter tests, named Mocha editor cases and installed VSIX
+  acceptance for their respective contracts. Preserve the guide's coverage map
+  and required runtime/platform coverage. Shared global patches and execution
+  of extracted source are not routine regression-test architecture.
+- Give each case unique fixtures and explicit ownership of pending operations,
+  subscriptions, timers, state changes and child processes. Register cleanup
+  during setup and await it after success or failure. Cancellation must join
+  admitted work, restore state and prove resource release within a separate
+  cleanup budget. A passing assertion, delivered kill signal or runner exit
+  does not establish cleanup.
+- Verify readiness through observable events or state, with listeners installed
+  before triggers. Test failure paths and helper cleanup, measure setup,
+  exercise and teardown separately, and retain both operation and cleanup
+  failures. Follow the guide's qualification checks before claiming stability;
+  retries, extra sleeps, force-exit or reduced coverage cannot establish it.
+- Freeze source and dependencies before qualification. Sequence dependency
+  installs, source edits and fault injection separately from checks that read
+  those inputs, or give each run an isolated verified snapshot. Record input
+  identities, preserve failure output and invalidate runs whose inputs changed;
+  a successful repeat does not make the original run valid.
+
 ## Design and rule development
 
 - Keep command handling, source analysis, rule evaluation, and reporting

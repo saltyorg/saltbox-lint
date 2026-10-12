@@ -1,4 +1,6 @@
+// @ts-check
 import { randomBytes } from "node:crypto";
+import assert from "node:assert/strict";
 import { renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { Worker } from "node:worker_threads";
@@ -7,9 +9,11 @@ const [record, parentToken, fd] = process.argv.slice(2);
 const token = randomBytes(32).toString("hex");
 const server = createServer((socket) => socket.end(token + "\n"));
 server.listen(0, "127.0.0.1", () => {
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
   writeFileSync(
     record + ".writer.tmp",
-    JSON.stringify({ pid: process.pid, port: server.address().port, token }),
+    JSON.stringify({ pid: process.pid, port: address.port, token }),
   );
   renameSync(record + ".writer.tmp", record + ".writer");
   const writer = new Worker(

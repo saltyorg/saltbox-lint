@@ -1,3 +1,4 @@
+// @ts-check
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
@@ -10,6 +11,9 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { ownedCommand } from "../scripts/owned-command.mjs";
+import { probeFixtureLifetime as probe } from "./support/fixture-lifetime.ts";
+import { withTestResources } from "./support/test-resources.ts";
+import { ownJoinedResource } from "./support/host-resources.ts";
 import { stageBinary } from "../scripts/stage-binary.mjs";
 import {
   groupHasLiveMembers,
@@ -22,56 +26,113 @@ const fixture = fileURLToPath(
 const outputFixture = fileURLToPath(
   new URL("testdata/owned-output.mjs", import.meta.url),
 );
+const denialGuardian = fileURLToPath(
+  new URL("testdata/owned-denial-guardian.mjs", import.meta.url),
+);
 
-async function record(filename) {
+/** @typedef {{pid: number, port: number, token: string}} FixtureInstance */
+/** @typedef {import("../scripts/owned-command.mjs").ClosedCommand} ClosedCommand */
+
+/** @param {unknown} value */
+function recordObject(value) {
+  assert.ok(value && typeof value === "object", "fixture record is an object");
+  return value;
+}
+
+/** @param {unknown} value @returns {FixtureInstance} */
+function instanceRecord(value) {
+  const record = recordObject(value);
+  assert.ok("pid" in record && typeof record.pid === "number");
+  assert.ok("port" in record && typeof record.port === "number");
+  assert.ok("token" in record && typeof record.token === "string");
+  return { pid: record.pid, port: record.port, token: record.token };
+}
+
+/** @param {unknown} value */
+function pendingRecord(value) {
+  const record = recordObject(value);
+  assert.ok("token" in record && typeof record.token === "string");
+  assert.ok("pending" in record && typeof record.pending === "boolean");
+  return { ...record, token: record.token, pending: record.pending };
+}
+
+/** @param {string} filename @returns {{pid: number, nonce?: string}} */
+function identityRecord(filename) {
+  const record = recordObject(JSON.parse(readFileSync(filename, "utf8")));
+  assert.ok("pid" in record && typeof record.pid === "number");
+  const nonce = "nonce" in record ? record.nonce : undefined;
+  assert.ok(nonce === undefined || typeof nonce === "string");
+  return { pid: record.pid, nonce };
+}
+
+/** @param {unknown} value @returns {number[][]} */
+function listenerCounts(value) {
+  assert.ok(Array.isArray(value));
+  return value.map((counts) => {
+    assert.ok(Array.isArray(counts));
+    return counts.map((count) => {
+      assert.equal(typeof count, "number");
+      return count;
+    });
+  });
+}
+
+/** @param {string} filename */
+function outputResult(filename) {
+  const record = recordObject(JSON.parse(readFileSync(filename, "utf8")));
+  assert.ok("elapsed" in record && typeof record.elapsed === "number");
+  assert.ok("settledAt" in record && typeof record.settledAt === "number");
+  assert.ok("before" in record && "after" in record);
+  const error = "error" in record ? record.error : undefined;
+  assert.ok(error === undefined || typeof error === "string");
+  return {
+    error,
+    elapsed: record.elapsed,
+    settledAt: record.settledAt,
+    before: listenerCounts(record.before),
+    after: listenerCounts(record.after),
+  };
+}
+
+/** @param {unknown} value @returns {import("../scripts/owned-command.mjs").CommandError} */
+function commandError(value) {
+  assert.ok(value instanceof Error);
+  if ("exitCode" in value)
+    assert.ok(value.exitCode == null || typeof value.exitCode === "number");
+  if ("stderr" in value)
+    assert.ok(value.stderr === undefined || typeof value.stderr === "string");
+  if ("stdout" in value)
+    assert.ok(value.stdout === undefined || typeof value.stdout === "string");
+  if ("ownershipReleased" in value)
+    assert.ok(
+      value.ownershipReleased === undefined ||
+        typeof value.ownershipReleased === "boolean",
+    );
+  return value;
+}
+
+/** @overload @param {string} filename @returns {Promise<FixtureInstance>} */
+/** @template T @overload @param {string} filename @param {(value: unknown) => T} decode @returns {Promise<T>} */
+/** @param {string} filename @param {(value: unknown) => unknown} [decode] @returns {Promise<unknown>} */
+async function record(filename, decode = instanceRecord) {
   const until = Date.now() + 30000;
   while (Date.now() < until) {
     try {
-      return JSON.parse(readFileSync(filename));
+      return decode(JSON.parse(readFileSync(filename, "utf8")));
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (!(
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ))
+        throw error;
     }
     await delay(10);
   }
   throw new Error(`Owned builder did not publish ${filename}`);
 }
 
-function probe(instance, request) {
-  return new Promise((resolve) => {
-    const socket = createConnection({ host: "127.0.0.1", port: instance.port });
-    let response = "";
-    let settled = false;
-    const finish = (state, error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({ state, ...(error ? { error } : {}) });
-    };
-    const timer = setTimeout(
-      () => finish("unavailable", "Owned builder probe timed out"),
-      1000,
-    );
-    if (request) socket.once("connect", () => socket.end(request));
-    socket.on("data", (chunk) => {
-      response += chunk.toString("ascii");
-      if (response.length > 65) finish("unavailable", "response exceeds bound");
-    });
-    socket.once("end", () => {
-      if (!/^[a-f0-9]{64}\n$/.test(response))
-        finish("unavailable", "invalid response");
-      else finish(response === instance.token + "\n" ? "alive" : "mismatch");
-    });
-    socket.once("close", () =>
-      finish("unavailable", "probe closed unexpectedly"),
-    );
-    socket.once("error", (error) => {
-      if (error.code === "ECONNREFUSED") finish("endpoint-absent");
-      else finish("unavailable", error.code ?? error.name);
-    });
-  });
-}
-
+/** @param {FixtureInstance} instance @param {string} [request] */
 async function running(instance, request) {
   const result = await probe(instance, request);
   if (result.state === "alive") return true;
@@ -83,6 +144,7 @@ async function running(instance, request) {
 
 // Exit observation requires a refused connection, never a reset, timeout or
 // foreign credential. Callers also verify the owned child/group has exited.
+/** @param {FixtureInstance} instance @param {string} [request] */
 async function endpointAbsent(instance, request) {
   const until = Date.now() + 1000;
   let result;
@@ -96,12 +158,137 @@ async function endpointAbsent(instance, request) {
   );
 }
 
+/**
+ * @typedef {{directory: string, guardian: () => Promise<FixtureInstance>, refused: () => Promise<FixtureInstance>, release: () => Promise<void>, launch: (command: string, args: string[], options: import("../scripts/owned-command.mjs").OwnedCommandOptions) => Promise<string | number | null>}} DenialFixture
+ */
+
+/** @template T @param {(fixture: DenialFixture) => Promise<T>} body @returns {Promise<T>} */
+async function withDeniedGuardian(body) {
+  return withTestResources({ cleanupTimeoutMs: 15000 }, async (resources) => {
+    const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-denial-"));
+    resources.defer("denial fixture files", () =>
+      rmSync(directory, { recursive: true, force: true }),
+    );
+    const filename = join(directory, "guardian.json");
+    const nonce = randomBytes(32).toString("hex");
+    /** @type {Promise<unknown>[]} */
+    const admitted = [];
+    const guardian = async () => {
+      const instance = await record(filename);
+      assert.equal(
+        instance.token,
+        nonce,
+        "the guardian belongs to this invocation",
+      );
+      return instance;
+    };
+    const release = async () => {
+      if (!admitted.length) return;
+      const instance = await guardian();
+      const result = await probe(instance, `release ${instance.token}\n`);
+      assert.ok(
+        result.state === "alive" || result.state === "endpoint-absent",
+        `authenticated guardian release: ${result.state}`,
+      );
+    };
+    /** @type {Promise<{ok: true} | {ok: false, error: unknown}> | undefined} */
+    let releasing;
+    ownJoinedResource(resources, "native denial guardian", {
+      dispose() {
+        releasing ??= release().then(
+          () => ({ ok: true }),
+          (error) => ({ ok: false, error }),
+        );
+      },
+      async join() {
+        const releaseResult = await releasing;
+        await Promise.all(admitted);
+        if (releaseResult && !releaseResult.ok) throw releaseResult.error;
+        if (admitted.length) {
+          const instance = await guardian();
+          assert.equal(
+            await endpointAbsent(instance, `probe ${instance.token}\n`),
+            true,
+          );
+          assert.equal(
+            await groupHasLiveMembers(instance.pid),
+            false,
+            "the exact guardian group is gone before files are removed",
+          );
+        }
+      },
+    });
+    return body({
+      directory,
+      guardian,
+      release,
+      async refused() {
+        const instance = await guardian();
+        const rejection = await record(filename + ".refused", recordObject);
+        assert.ok(
+          "pid" in rejection && "token" in rejection && "refusals" in rejection,
+        );
+        assert.equal(rejection.pid, instance.pid);
+        assert.equal(rejection.token, nonce);
+        assert.equal(
+          rejection.refusals,
+          1,
+          "the first actual guardian stop was refused",
+        );
+        assert.equal(
+          await running(instance, `probe ${instance.token}\n`),
+          true,
+        );
+        return instance;
+      },
+      launch(command, args, options) {
+        resources.signal.throwIfAborted();
+        const pending = ownedCommand(
+          command,
+          args,
+          {
+            ...options,
+            signal: resources.signal,
+            env: {
+              ...process.env,
+              ...options.env,
+              SALTBOX_TEST_GUARDIAN_RECORD: filename,
+              SALTBOX_TEST_GUARDIAN_NONCE: nonce,
+            },
+          },
+          { guardianPath: denialGuardian },
+        );
+        // Expected native failures are inspected by the body; this owner joins
+        // every actual command result before considering its tree released.
+        admitted.push(
+          pending.then(
+            () => undefined,
+            (error) => error,
+          ),
+        );
+        return pending;
+      },
+    });
+  });
+}
+
+/** @param {unknown} error */
+function deniedCleanup(error) {
+  assert.ok(error instanceof Error);
+  assert.equal(error.message, "kill EPERM control");
+  assert.ok("code" in error && "syscall" in error);
+  assert.equal(error.code, "EPERM");
+  assert.equal(error.syscall, "kill");
+}
+
 test("POSIX observer retains a live worker after its main thread exits", async () => {
   if (process.platform === "win32") return;
   const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-thread-"));
   const filename = join(directory, "thread.json");
   const binary = join(directory, "fixture");
+  /** @type {import("node:child_process").ChildProcess | undefined} */
   let child;
+  /** @type {Promise<ClosedCommand> | undefined} */
   let closed;
   try {
     await ownedCommand(
@@ -114,16 +301,17 @@ test("POSIX observer retains a live worker after its main thread exits", async (
       ],
       { phase: "thread fixture build", timeoutMs: 30000 },
     );
-    child = spawn(binary, [filename, randomBytes(32).toString("hex")], {
+    const started = spawn(binary, [filename, randomBytes(32).toString("hex")], {
       detached: true,
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["pipe", "ignore", "pipe"],
       timeout: 45000,
       killSignal: "SIGKILL",
     });
-    child.stderr.resume();
+    child = started;
+    started.stderr.resume();
     closed = new Promise((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", (code, signal) => resolve({ code, signal }));
+      started.once("error", reject);
+      started.once("close", (code, signal) => resolve({ code, signal }));
     });
     const instance = await record(filename);
     assert.equal(await running(instance, "probe\n"), true);
@@ -132,7 +320,8 @@ test("POSIX observer retains a live worker after its main thread exits", async (
       host: "127.0.0.1",
       port: instance.port,
     });
-    await new Promise((resolve, reject) => {
+    /** @type {Promise<void>} */
+    const mainExited = new Promise((resolve, reject) => {
       let response = "";
       trigger.setTimeout(1000, () =>
         trigger.destroy(new Error("Main-thread exit probe timed out")),
@@ -154,6 +343,7 @@ test("POSIX observer retains a live worker after its main thread exits", async (
       });
       trigger.end("exit-main\n");
     });
+    await mainExited;
     if (process.platform === "linux") {
       const until = Date.now() + 5000;
       let state;
@@ -179,7 +369,7 @@ test("POSIX observer retains a live worker after its main thread exits", async (
     );
     trigger.destroy();
   } finally {
-    if (child?.pid) process.kill(-child.pid, "SIGKILL");
+    child?.stdin?.end();
     if (closed)
       assert.deepEqual(await closed, { code: null, signal: "SIGKILL" });
     if (child?.pid) {
@@ -255,6 +445,7 @@ test("group snapshots require complete Linux threads and supported Darwin states
   assert.throws(
     () => liveGroupMembers(`123 123 R${"x".repeat(4096)}\n`, 123, "darwin"),
     (error) =>
+      error instanceof Error &&
       error.message.includes("darwin, owned group 123") &&
       error.message.includes("123 123 Rx") &&
       error.message.length < 400,
@@ -273,7 +464,9 @@ test("group snapshots require complete Linux threads and supported Darwin states
       /snapshot|Duplicate/,
     );
   }
-  for (const platform of ["linux", "darwin"]) {
+  /** @type {NodeJS.Platform[]} */
+  const platforms = ["linux", "darwin"];
+  for (const platform of platforms) {
     assert.throws(
       () => liveGroupMembers("123\n", 123, platform),
       /Unrecognized/,
@@ -300,8 +493,11 @@ test("POSIX group observation rejects cancellation and distinguishes a real reta
   const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-zombie-"));
   const filename = join(directory, "child.json");
   const binary = join(directory, "fixture");
+  /** @type {import("node:child_process").ChildProcess | undefined} */
   let supervisor;
+  /** @type {Promise<ClosedCommand> | undefined} */
   let exited;
+  /** @type {FixtureInstance | undefined} */
   let instance;
   try {
     await ownedCommand(
@@ -314,13 +510,14 @@ test("POSIX group observation rejects cancellation and distinguishes a real reta
       ],
       { phase: "zombie fixture build", timeoutMs: 30000 },
     );
-    supervisor = spawn(binary, ["parent", filename], {
+    const started = spawn(binary, ["parent", filename], {
       stdio: ["pipe", "ignore", "pipe"],
       timeout: 45000,
     });
+    supervisor = started;
     exited = new Promise((resolve, reject) => {
-      supervisor.once("error", reject);
-      supervisor.once("close", (code, signal) => resolve({ code, signal }));
+      started.once("error", reject);
+      started.once("close", (code, signal) => resolve({ code, signal }));
     });
     instance = await record(filename);
     assert.equal(await running(instance), true);
@@ -344,9 +541,10 @@ test("POSIX group observation rejects cancellation and distinguishes a real reta
         snapshot,
       );
       assert.ok(row, "complete single child process record");
+      assert.ok(process.geteuid, "POSIX exposes the effective owner identity");
       assert.deepEqual(
         row.slice(1, 5).map(Number),
-        [instance.pid, supervisor.pid, instance.pid, process.geteuid()],
+        [instance.pid, started.pid, instance.pid, process.geteuid()],
         "exact child remains owned by its supervisor in its original group",
       );
       state = row[5];
@@ -365,13 +563,15 @@ test("POSIX group observation rejects cancellation and distinguishes a real reta
       false,
       "zombies do not extend cleanup",
     );
-    supervisor.stdin.end("reap\n");
+    started.stdin.end("reap\n");
     assert.deepEqual(await exited, { code: 0, signal: null });
   } finally {
-    if (instance && (await groupHasLiveMembers(instance.pid)))
-      process.kill(-instance.pid, "SIGKILL");
-    supervisor?.stdin.end("reap\n");
+    supervisor?.stdin?.end("reap\n");
     if (exited) await exited;
+    if (instance) {
+      assert.equal(await endpointAbsent(instance), true);
+      assert.equal(await groupHasLiveMembers(instance.pid), false);
+    }
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -384,11 +584,15 @@ test("release exit probes keep connected resets and foreign credentials inconclu
       else socket.end(token + "\n");
     });
   });
-  await new Promise((resolve, reject) => {
+  /** @type {Promise<void>} */
+  const listening = new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
-  const instance = { pid: process.pid, port: server.address().port, token };
+  await listening;
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const instance = { pid: process.pid, port: address.port, token };
   try {
     assert.equal(await running(instance, "probe\n"), true);
     const reset = await probe(instance, "reset\n");
@@ -409,9 +613,11 @@ test("release exit probes keep connected resets and foreign credentials inconclu
       "mismatch",
     );
   } finally {
-    await new Promise((resolve, reject) =>
+    /** @type {Promise<void>} */
+    const closed = new Promise((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    await closed;
   }
   assert.equal(await endpointAbsent(instance, "probe\n"), true);
 });
@@ -437,7 +643,15 @@ test("release probes preserve output and identify command failures", async () =>
         timeoutMs: 30000,
       },
     ),
-    /metadata control: .*owned (?:Job launcher )?PID \d+.*exited 7\nbuilder failure/s,
+    (error) => {
+      const failure = commandError(error);
+      assert.match(
+        failure.message,
+        /metadata control: .*owned (?:Job launcher )?PID \d+.*exited 7\nbuilder failure/s,
+      );
+      assert.equal(failure.ownershipReleased, true);
+      return true;
+    },
   );
   await assert.rejects(
     ownedCommand("saltbox-missing-owned-builder", [], {
@@ -463,7 +677,7 @@ test("owned checks retain exit codes and join owner-cancelled descendants", asyn
     phase: "owner cancellation control",
     signal: controller.signal,
     returnExitCode: true,
-  }).catch((error) => error);
+  }).catch(commandError);
   try {
     const parent = await record(filename);
     const child = await record(filename + ".child");
@@ -511,73 +725,55 @@ test("source capture preserves NUL records and fails on overflow", async () => {
   );
 });
 
-test("successful capture still rejects a denied owned group cleanup", async (t) => {
+test("successful capture still rejects a denied owned group cleanup", async () => {
   if (process.platform === "win32") return;
-  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-denial-"));
-  const filename = join(directory, "builder.json");
-  const kill = process.kill.bind(process);
-  const denied = Object.assign(new Error("kill EPERM control"), {
-    code: "EPERM",
-    syscall: "kill",
-  });
-  const mock = t.mock.method(process, "kill", (pid, signal) => {
-    if (pid < 0 && signal === "SIGKILL") {
-      const instance = JSON.parse(readFileSync(filename));
-      if (pid === -instance.pid) throw denied;
-    }
-    return kill(pid, signal);
-  });
-  try {
-    await assert.rejects(
-      ownedCommand(
+  await withDeniedGuardian(async (f) => {
+    const filename = join(f.directory, "builder.json");
+    let settled = false;
+    const result = f
+      .launch(
         process.execPath,
         [
           "-e",
           `require("node:fs").writeFileSync(${JSON.stringify(filename)}, JSON.stringify({ pid: process.pid })); process.stdout.write("ok")`,
         ],
         { phase: "successful capture cleanup control", timeoutMs: 30000 },
-      ),
-      (error) => {
-        assert.match(error.message, /owned group cleanup failed/);
-        assert.equal(error.cause, denied);
-        assert.equal(error instanceof AggregateError, false);
-        return true;
-      },
-    );
-    assert.equal(
-      await groupHasLiveMembers(JSON.parse(readFileSync(filename)).pid),
-      false,
-    );
-  } finally {
-    mock.mock.restore();
-    rmSync(directory, { recursive: true, force: true });
-  }
+      )
+      .then(
+        (value) => {
+          settled = true;
+          return { ok: true, value };
+        },
+        (error) => {
+          settled = true;
+          return { ok: false, error: commandError(error) };
+        },
+      );
+    const guardian = await f.refused();
+    assert.equal(await groupHasLiveMembers(guardian.pid), true);
+    assert.equal(settled, false, "refusal cannot establish group release");
+    await f.release();
+    const outcome = await result;
+    assert.equal(outcome.ok, false);
+    assert.ok("error" in outcome);
+    assert.match(outcome.error.message, /owned group cleanup failed/);
+    deniedCleanup(outcome.error.cause);
+    assert.equal(outcome.error instanceof AggregateError, false);
+    assert.equal(outcome.error.ownershipReleased, false);
+    assert.equal(await groupHasLiveMembers(guardian.pid), false);
+  });
 });
 
-test("ordinary command exits preserve failures alongside denied cleanup", async (t) => {
+test("ordinary command exits preserve failures alongside denied cleanup", async () => {
   if (process.platform === "win32") return;
   for (const code of [0, 3]) {
     for (const returnExitCode of [false, true]) {
-      const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-exit-"));
-      const filename = join(directory, "builder.json");
-      const nonce = randomBytes(16).toString("hex");
-      const kill = process.kill.bind(process);
-      const denied = Object.assign(new Error("kill EPERM control"), {
-        code: "EPERM",
-        syscall: "kill",
-      });
-      let instance;
-      const mock = t.mock.method(process, "kill", (pid, signal) => {
-        if (pid < 0 && signal === "SIGKILL") {
-          instance = JSON.parse(readFileSync(filename));
-          assert.equal(instance.nonce, nonce);
-          if (pid === -instance.pid) throw denied;
-        }
-        return kill(pid, signal);
-      });
-      try {
-        await assert.rejects(
-          ownedCommand(
+      await withDeniedGuardian(async (f) => {
+        const filename = join(f.directory, "builder.json");
+        const nonce = randomBytes(16).toString("hex");
+        let settled = false;
+        const result = f
+          .launch(
             process.execPath,
             [
               "-e",
@@ -588,206 +784,161 @@ test("ordinary command exits preserve failures alongside denied cleanup", async 
               timeoutMs: 30000,
               returnExitCode,
             },
-          ),
-          (error) => {
-            if (code !== 0 && !returnExitCode) {
-              assert.ok(error instanceof AggregateError);
-              assert.equal(error.errors.length, 2);
-              const [primary, cleanup] = error.errors;
-              assert.notEqual(primary, cleanup);
-              assert.equal(primary.exitCode, code);
-              assert.equal(primary.stderr, "ordinary failure detail\n");
-              assert.match(
-                primary.message,
-                /exited 3\nordinary failure detail/,
-              );
-              assert.match(cleanup.message, /owned group cleanup failed/);
-              assert.equal(cleanup.cause, denied);
-              assert.equal(error.cause, primary);
-              assert.match(
-                error.message,
-                /exited 3\nordinary failure detail.*owned group cleanup failed/s,
-              );
-            } else {
-              assert.equal(error instanceof AggregateError, false);
-              assert.match(error.message, /owned group cleanup failed/);
-              assert.equal(error.cause, denied);
-              assert.equal(error.exitCode, undefined);
-              assert.equal(error.stderr, undefined);
-            }
-            return true;
-          },
+          )
+          .then(
+            (value) => {
+              settled = true;
+              return { ok: true, value };
+            },
+            (error) => {
+              settled = true;
+              return { ok: false, error: commandError(error) };
+            },
+          );
+        const guardian = await f.refused();
+        assert.equal(identityRecord(filename).nonce, nonce);
+        assert.equal(await groupHasLiveMembers(guardian.pid), true);
+        assert.equal(
+          settled,
+          false,
+          "refused cleanup retains actual group ownership",
         );
-        assert.equal(instance.nonce, nonce);
-        assert.equal(await groupHasLiveMembers(instance.pid), false);
-      } finally {
-        mock.mock.restore();
-        rmSync(directory, { recursive: true, force: true });
-      }
+        await f.release();
+        const outcome = await result;
+        assert.equal(outcome.ok, false);
+        assert.ok("error" in outcome);
+        const error = outcome.error;
+        if (code !== 0 && !returnExitCode) {
+          assert.ok(error instanceof AggregateError);
+          assert.equal(error.errors.length, 2);
+          const [primary, cleanup] = error.errors.map(commandError);
+          assert.notEqual(primary, cleanup);
+          assert.equal(primary.exitCode, code);
+          assert.equal(primary.stderr, "ordinary failure detail\n");
+          assert.match(primary.message, /exited 3\nordinary failure detail/);
+          assert.match(cleanup.message, /owned group cleanup failed/);
+          deniedCleanup(cleanup.cause);
+          assert.equal(
+            error.cause,
+            primary,
+            "outer aggregate preserves its original primary Error",
+          );
+          assert.match(
+            error.message,
+            /exited 3\nordinary failure detail.*owned group cleanup failed/s,
+          );
+        } else {
+          assert.equal(error instanceof AggregateError, false);
+          assert.match(error.message, /owned group cleanup failed/);
+          deniedCleanup(error.cause);
+          assert.equal(error.exitCode, undefined);
+          assert.equal(error.stderr, undefined);
+        }
+        assert.equal(await groupHasLiveMembers(guardian.pid), false);
+      });
     }
   }
 });
 
-test("source overflow retains cleanup errors and waits for owned group exit", async (t) => {
+test("source overflow retains cleanup errors and waits for owned group exit", async () => {
   if (process.platform === "win32") return;
-  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-overflow-"));
-  const filename = join(directory, "builder.json");
-  const controller = new AbortController();
-  const kill = process.kill.bind(process);
-  const denied = Object.assign(new Error("kill EPERM control"), {
-    code: "EPERM",
-    syscall: "kill",
-  });
-  let parent;
-  let descendant;
-  let mock;
-  let settled = false;
-  const result = ownedCommand(
-    process.execPath,
-    [fixture, "output-tree", filename],
-    {
-      phase: "source overflow cleanup control",
-      maxOutputBytes: 1024,
-      timeoutMs: 30000,
-      signal: controller.signal,
-    },
-  ).then(
-    () => {
-      settled = true;
-      throw new Error("Overflow unexpectedly succeeded");
-    },
-    (error) => {
-      settled = true;
-      return error;
-    },
-  );
-  try {
-    parent = await record(filename);
-    descendant = await record(filename + ".child");
-    let deniedKill;
-    const attempted = new Promise((resolve) => {
-      deniedKill = resolve;
-    });
-    mock = t.mock.method(process, "kill", (pid, signal) => {
-      if (pid === -parent.pid && signal === "SIGKILL") {
-        deniedKill();
-        throw denied;
-      }
-      return kill(pid, signal);
-    });
+  await withDeniedGuardian(async (f) => {
+    const filename = join(f.directory, "builder.json");
+    let settled = false;
+    const result = f
+      .launch(process.execPath, [fixture, "output-tree", filename], {
+        phase: "source overflow cleanup control",
+        maxOutputBytes: 1024,
+        timeoutMs: 30000,
+      })
+      .then(
+        (value) => {
+          settled = true;
+          return { ok: true, value };
+        },
+        (error) => {
+          settled = true;
+          return { ok: false, error: commandError(error) };
+        },
+      );
+    const parent = await record(filename);
+    const descendant = await record(filename + ".child");
     assert.equal(await running(parent, "stdout"), true);
-    await attempted;
+    const guardian = await f.refused();
     assert.equal(await running(parent), true);
     assert.equal(await running(descendant), true);
-    assert.equal(await groupHasLiveMembers(parent.pid), true);
+    assert.equal(await groupHasLiveMembers(guardian.pid), true);
     assert.equal(settled, false, "EPERM does not prove owned group exit");
-    mock.mock.restore();
-    kill(-parent.pid, "SIGKILL");
-    const error = await result;
+    await f.release();
+    const outcome = await result;
+    assert.equal(outcome.ok, false);
+    assert.ok("error" in outcome);
+    const error = outcome.error;
     assert.match(
       error.message,
-      /source overflow cleanup control: .*output exceeds 1024 bytes.*owned group cleanup failed: Error: kill EPERM control/s,
+      /source overflow cleanup control: .*output exceeds 1024 bytes.*owned group cleanup failed: kill EPERM control/s,
     );
     assert.ok(error instanceof AggregateError);
     assert.equal(error.errors.length, 2);
-    assert.match(error.errors[0].message, /output exceeds 1024 bytes/);
-    assert.equal(error.errors[1].cause, denied);
-    assert.equal(await groupHasLiveMembers(parent.pid), false);
+    const [primary, cleanup] = error.errors.map(commandError);
+    assert.match(primary.message, /output exceeds 1024 bytes/);
+    deniedCleanup(cleanup.cause);
+    assert.equal(error.cause, primary);
+    assert.equal(await groupHasLiveMembers(guardian.pid), false);
     assert.equal(await endpointAbsent(parent), true);
     assert.equal(await endpointAbsent(descendant), true);
-  } finally {
-    mock?.mock.restore();
-    controller.abort();
-    if (parent && (await groupHasLiveMembers(parent.pid))) {
-      // Signal only our recorded group after authenticating a live member.
-      assert.ok(
-        (await running(parent)) || (descendant && (await running(descendant))),
-      );
-      kill(-parent.pid, "SIGKILL");
-    }
-    await result;
-    rmSync(directory, { recursive: true, force: true });
-  }
+  });
 });
 
-test("owned deadline retains cleanup errors and waits for group exit", async (t) => {
+test("owned deadline retains cleanup errors and waits for group exit", async () => {
   if (process.platform === "win32") return;
-  const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-deadline-"));
-  const filename = join(directory, "builder.json");
-  const controller = new AbortController();
-  const kill = process.kill.bind(process);
-  const denied = Object.assign(new Error("kill EPERM control"), {
-    code: "EPERM",
-    syscall: "kill",
-  });
-  let parent;
-  let descendant;
-  let mock;
-  let settled = false;
-  const result = ownedCommand(process.execPath, [fixture, "tree", filename], {
-    phase: "owned deadline cleanup control",
-    timeoutMs: 30000,
-    returnExitCode: true,
-    signal: controller.signal,
-  }).then(
-    () => {
-      settled = true;
-      throw new Error("Deadline unexpectedly succeeded");
-    },
-    (error) => {
-      settled = true;
-      return error;
-    },
-  );
-  try {
-    parent = await record(filename);
-    descendant = await record(filename + ".child");
-    let deniedKill;
-    const attempted = new Promise((resolve) => {
-      deniedKill = resolve;
-    });
-    mock = t.mock.method(process, "kill", (pid, signal) => {
-      if (pid === -parent.pid && signal === "SIGKILL") {
-        deniedKill();
-        throw denied;
-      }
-      return kill(pid, signal);
-    });
-    await attempted;
+  await withDeniedGuardian(async (f) => {
+    const filename = join(f.directory, "builder.json");
+    let settled = false;
+    const result = f
+      .launch(process.execPath, [fixture, "tree", filename], {
+        phase: "owned deadline cleanup control",
+        timeoutMs: 30000,
+        returnExitCode: true,
+      })
+      .then(
+        (value) => {
+          settled = true;
+          return { ok: true, value };
+        },
+        (error) => {
+          settled = true;
+          return { ok: false, error: commandError(error) };
+        },
+      );
+    const parent = await record(filename);
+    const descendant = await record(filename + ".child");
+    const guardian = await f.refused();
     assert.equal(await running(parent), true);
     assert.equal(await running(descendant), true);
-    assert.equal(await groupHasLiveMembers(parent.pid), true);
+    assert.equal(await groupHasLiveMembers(guardian.pid), true);
     assert.equal(settled, false, "EPERM does not prove owned group exit");
-    mock.mock.restore();
-    kill(-parent.pid, "SIGKILL");
-    const error = await result;
+    await f.release();
+    const outcome = await result;
+    assert.equal(outcome.ok, false);
+    assert.ok("error" in outcome);
+    const error = outcome.error;
     assert.ok(error instanceof AggregateError);
     assert.equal(error.errors.length, 2);
-    const [primary, cleanup] = error.errors;
+    const [primary, cleanup] = error.errors.map(commandError);
     assert.notEqual(primary, cleanup);
     assert.match(primary.message, /timed out after 30000ms/);
     assert.match(cleanup.message, /owned group cleanup failed/);
-    assert.equal(cleanup.cause, denied);
+    deniedCleanup(cleanup.cause);
     assert.equal(error.cause, primary);
     assert.match(
       error.message,
       /timed out after 30000ms.*owned group cleanup failed/s,
     );
-    assert.equal(await groupHasLiveMembers(parent.pid), false);
+    assert.equal(await groupHasLiveMembers(guardian.pid), false);
     assert.equal(await endpointAbsent(parent), true);
     assert.equal(await endpointAbsent(descendant), true);
-  } finally {
-    mock?.mock.restore();
-    controller.abort();
-    if (parent && (await groupHasLiveMembers(parent.pid))) {
-      assert.ok(
-        (await running(parent)) || (descendant && (await running(descendant))),
-      );
-      kill(-parent.pid, "SIGKILL");
-    }
-    await result;
-    rmSync(directory, { recursive: true, force: true });
-  }
+  });
 });
 
 test("staging deadline names its command and closes the owned builder tree", async () => {
@@ -799,10 +950,7 @@ test("staging deadline names its command and closes the owned builder tree", asy
     prefix: [fixture, "tree", filename],
     output: join(directory, "saltbox-lint"),
     timeoutMs: 30000,
-  }).then(
-    () => undefined,
-    (error) => error,
-  );
+  }).then(() => undefined, commandError);
   try {
     const parent = await record(filename);
     const child = await record(filename + ".child");
@@ -848,10 +996,7 @@ for (const mode of ["exit", "error-exit"]) {
       prefix: [fixture, mode, filename],
       output: join(directory, "saltbox-lint"),
       timeoutMs: 30000,
-    }).then(
-      () => undefined,
-      (error) => error,
-    );
+    }).then(() => undefined, commandError);
     try {
       const parent = await record(filename);
       const child = await record(filename + ".child");
@@ -892,7 +1037,9 @@ for (const mode of ["exit", "error-exit"]) {
   });
 }
 
-for (const output of ["stdout", "stderr"]) {
+/** @type {("stdout" | "stderr")[]} */
+const outputs = ["stdout", "stderr"];
+for (const output of outputs) {
   test(`closed ${output} consumer rejects after exact owned cleanup`, async () => {
     await outputControl(output, "closed", "output-tree");
   });
@@ -929,13 +1076,15 @@ for (const mode of ["normal-output", "error-output"]) {
       assert.deepEqual(await exited, { code: 0, signal: null });
       assert.equal(stdout, "normal stdout\n");
       assert.equal(stderr, "normal stderr\n");
-      const result = JSON.parse(readFileSync(resultFile));
+      const result = outputResult(resultFile);
       assert.ok(
         Date.now() - result.settledAt < 5000,
         "no cleanup timer retains the owner after settlement",
       );
-      if (mode === "error-output") assert.match(result.error, /exited 7/);
-      else assert.equal(result.error, undefined);
+      if (mode === "error-output") {
+        assert.ok(typeof result.error === "string");
+        assert.match(result.error, /exited 7/);
+      } else assert.equal(result.error, undefined);
       assert.deepEqual(result.after, result.before);
     } finally {
       await exited;
@@ -944,10 +1093,24 @@ for (const mode of ["normal-output", "error-output"]) {
   });
 }
 
+/** @param {"stdout" | "stderr"} output @param {"closed" | "blocked"} consumer @param {string} mode */
 async function outputControl(output, consumer, mode) {
+  return withTestResources({ cleanupTimeoutMs: 15000 }, (resources) =>
+    outputControlOwned(resources, output, consumer, mode),
+  );
+}
+
+/** @param {import("./support/test-resources.ts").TestResources} resources @param {"stdout" | "stderr"} output @param {"closed" | "blocked"} consumer @param {string} mode */
+async function outputControlOwned(resources, output, consumer, mode) {
   const directory = mkdtempSync(join(tmpdir(), "saltbox-owned-output-"));
   const filename = join(directory, "builder.json");
   const resultFile = join(directory, "result.json");
+  let lifetimesAbsent = false;
+  resources.defer("native output fixture files", () => {
+    if (lifetimesAbsent) rmSync(directory, { recursive: true, force: true });
+    else
+      console.error(`Retained unverified native output fixture: ${directory}`);
+  });
   const owner = spawn(
     process.execPath,
     [outputFixture, fixture, mode, filename, resultFile],
@@ -963,9 +1126,29 @@ async function outputControl(output, consumer, mode) {
     owner.once("error", reject);
     owner.once("close", (code, signal) => resolve({ code, signal }));
   });
+  /** @type {FixtureInstance | undefined} */
   let parent;
+  /** @type {FixtureInstance | undefined} */
   let child;
+  /** @type {FixtureInstance | undefined} */
   let writer;
+  ownJoinedResource(resources, "native output driver", {
+    dispose() {
+      if (owner.exitCode === null && owner.signalCode === null)
+        owner.kill("SIGKILL");
+    },
+    async join() {
+      await exited;
+      assert.ok(
+        parent && child,
+        "credentialed fixture membership must be known before removing its evidence",
+      );
+      assert.equal(await endpointAbsent(parent), true);
+      assert.equal(await endpointAbsent(child), true);
+      if (writer) assert.equal(await endpointAbsent(writer), true);
+      lifetimesAbsent = true;
+    },
+  });
   try {
     parent = await record(filename);
     child = await record(filename + ".child");
@@ -975,7 +1158,7 @@ async function outputControl(output, consumer, mode) {
     trigger.on("error", () => {});
     trigger.end(output + "\n");
     if (consumer === "blocked") {
-      const status = await record(filename + ".pending");
+      const status = await record(filename + ".pending", pendingRecord);
       assert.equal(status.token, parent.token);
       if (process.platform === "win32") {
         writer = await record(filename + ".writer");
@@ -999,7 +1182,7 @@ async function outputControl(output, consumer, mode) {
         "actual unread output reached the pipe",
       );
       assert.deepEqual(
-        await record(filename + ".pending"),
+        await record(filename + ".pending", pendingRecord),
         { token: parent.token, pending: true },
         "actual large output write is pending",
       );
@@ -1015,15 +1198,18 @@ async function outputControl(output, consumer, mode) {
     const exit = await exited;
     trigger.destroy();
     assert.deepEqual(exit, { code: 0, signal: null }, otherOutput);
-    const result = JSON.parse(readFileSync(resultFile));
+    const result = outputResult(resultFile);
     assert.ok(
       Date.now() - result.settledAt < 5000,
       "no cleanup timer retains the owner after settlement",
     );
-    if (consumer === "closed") assert.match(result.error, /exited 7/);
-    else if (mode === "output-tree")
+    if (consumer === "closed") {
+      assert.ok(typeof result.error === "string");
+      assert.match(result.error, /exited 7/);
+    } else if (mode === "output-tree") {
+      assert.ok(typeof result.error === "string");
       assert.match(result.error, /timed out after 30000ms/);
-    else
+    } else
       assert.equal(
         result.error,
         undefined,
@@ -1049,17 +1235,8 @@ async function outputControl(output, consumer, mode) {
       );
     assert.doesNotMatch(otherOutput, /Unhandled 'error' event/);
   } finally {
+    if (owner.exitCode === null && owner.signalCode === null)
+      owner.kill("SIGKILL");
     await exited;
-    // A regression run against broken POSIX forwarding can exit the owner
-    // before it releases its group. Only clean our recorded, still-live tree.
-    if (process.platform !== "win32" && parent && child) {
-      const probes = await Promise.allSettled([
-        running(parent),
-        running(child),
-      ]);
-      if (probes.some((probe) => probe.status === "fulfilled" && probe.value))
-        process.kill(-parent.pid, "SIGKILL");
-    }
-    rmSync(directory, { recursive: true, force: true });
   }
 }

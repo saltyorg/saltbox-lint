@@ -63,6 +63,7 @@ function control() {
     process: { platform: "win32", env: { HELD_ENVIRONMENT: "exact" } },
     Buffer,
     TextDecoder,
+    AggregateError,
     Error: class extends Error {
       constructor(message: string) {
         super(message);
@@ -175,7 +176,7 @@ for (const category of processFailureCategories) {
   }
 }
 
-test("first stored error and category survive later stdin, termination, timeout and abort events", async () => {
+test("the first primary error and first cleanup failure both survive later events", async () => {
   for (const first of [
     "spawn",
     "stdin",
@@ -203,8 +204,10 @@ test("first stored error and category survive later stdin, termination, timeout 
     if (first === "output-limit")
       owned.child.stdout.emit("data", Buffer.from("too large"));
     if (first === "cancelled") owned.abort.abort();
-    owned.termination(new Error("later kill error"));
-    owned.child.stdin.emit("error", new Error("later stdin error"));
+    const laterKill = new Error("later kill error");
+    const laterStdin = new Error("later stdin error");
+    owned.termination(laterKill);
+    owned.child.stdin.emit("error", laterStdin);
     owned.child.emit("error", new Error("later spawn error"));
     owned.timers[0].callback();
     owned.abort.abort();
@@ -212,13 +215,19 @@ test("first stored error and category survive later stdin, termination, timeout 
     assert.deepEqual(labels, []);
     owned.child.emit("close", 2);
     const error = await caught;
-    assert.deepEqual(labels, [first]);
-    if (["spawn", "stdin", "termination"].includes(first))
-      assert.equal(error, original);
-    else {
-      assert.ok(error instanceof Error);
-      assert.equal(error, owned.constructed[0]);
-    }
+    assert.deepEqual(labels, [first === "termination" ? "stdin" : first]);
+    assert.ok(error instanceof AggregateError);
+    const primary =
+      first === "termination"
+        ? laterStdin
+        : ["spawn", "stdin"].includes(first)
+          ? original
+          : owned.constructed[0];
+    assert.equal(error.cause, primary);
+    assert.deepEqual(error.errors, [
+      primary,
+      first === "termination" ? original : laterKill,
+    ]);
   }
 });
 

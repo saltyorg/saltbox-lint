@@ -89,6 +89,84 @@ function record(): LiveCheckRecord {
     },
   };
 }
+test("independent live-checking evidence retains every original sample and control", () => {
+  const value = { ...record(), mode: "live-checking" as const };
+  validateLiveCheckRecord(value);
+  value.fixtures[1].samples.pop();
+  assert.throws(() => validateLiveCheckRecord(value));
+});
+
+test("component performance evidence preserves workloads and cannot claim installed event ownership", () => {
+  const value = record();
+  value.mode = "live-performance";
+  value.boundary = "component-cli-runner-spawn-and-close";
+  delete value.assertions.actualInstalled;
+  value.assertions.actualInstalledBackend = true;
+  for (const checkpoint of value.checkpoints)
+    checkpoint.requests = {
+      admitted: checkpoint.launches + 1,
+      settled: checkpoint.launches + 1,
+      cancelledBeforeSpawn: 1,
+    };
+  validateLiveCheckRecord(value);
+  value.assertions.actualInstalled = true;
+  assert.throws(() => validateLiveCheckRecord(value));
+  delete value.assertions.actualInstalled;
+  value.boundary = "installed-cli-spawn-and-close";
+  assert.throws(() => validateLiveCheckRecord(value));
+});
+
+for (const mutation of [
+  (value: LiveCheckRecord) => {
+    delete value.checkpoints[0].requests;
+  },
+  (value: LiveCheckRecord) => {
+    Reflect.set(value.checkpoints[0], "requests", undefined);
+  },
+  (value: LiveCheckRecord) => {
+    Reflect.set(value.checkpoints[0], "requests", null);
+  },
+  (value: LiveCheckRecord) => {
+    value.checkpoints[0].requests!.settled--;
+  },
+  (value: LiveCheckRecord) => {
+    value.checkpoints[0].requests!.cancelledBeforeSpawn++;
+  },
+  (value: LiveCheckRecord) => {
+    value.checkpoints[0].requests!.admitted = NaN;
+  },
+  (value: LiveCheckRecord) => {
+    Object.assign(value.checkpoints[0].requests!, { ignoredRequests: 1 });
+  },
+  (value: LiveCheckRecord) => {
+    Object.assign(value.checkpoints[0], { ignoredNativeCloses: 1 });
+  },
+  (value: LiveCheckRecord) => {
+    value.checkpoints[1].requests = {
+      admitted: value.checkpoints[1].launches,
+      settled: value.checkpoints[1].launches,
+      cancelledBeforeSpawn: 0,
+    };
+  },
+]) {
+  test("component checkpoints reject missing, pending or unaccounted request admission", () => {
+    const value = record();
+    value.mode = "live-performance";
+    value.boundary = "component-cli-runner-spawn-and-close";
+    delete value.assertions.actualInstalled;
+    value.assertions.actualInstalledBackend = true;
+    for (const checkpoint of value.checkpoints)
+      checkpoint.requests = {
+        admitted: checkpoint.launches + 1,
+        settled: checkpoint.launches + 1,
+        cancelledBeforeSpawn: 1,
+      };
+    validateLiveCheckRecord(value);
+    mutation(value);
+    assert.throws(() => validateLiveCheckRecord(value));
+  });
+}
+
 test("complete installed qualification recomputes nearest-rank median and p95", () => {
   validateLiveCheckRecord(record());
   assert.equal(

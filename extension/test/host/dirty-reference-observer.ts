@@ -20,7 +20,7 @@ interface Document {
   getText(): string;
 }
 interface Inputs {
-  childProcess: object;
+  childProcess?: object;
   document: Document;
   documents: () => readonly Document[];
   retainedDocuments?: () => readonly Document[];
@@ -383,6 +383,7 @@ export function observeDirtyReference(inputs: Inputs) {
     };
   }
   function installSpawn() {
+    if (!inputs.childProcess) return;
     spawnInstalled = wrap(
       inputs.childProcess,
       "spawn",
@@ -533,8 +534,9 @@ export function observeDirtyReference(inputs: Inputs) {
     return {
       schemaVersion: 1,
       boundary: "single_original_public_reference_request",
-      association:
-        matches > 1
+      association: !inputs.childProcess
+        ? "public_request_and_result_only_native_observation_unavailable"
+        : matches > 1
           ? "ambiguous_matching_native_candidates"
           : "known_cli_arguments_during_pending_public_attempt_no_provider_registration_observation",
       cancellation: "provider_token_unavailable",

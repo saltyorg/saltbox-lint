@@ -12,10 +12,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/saltyorg/saltbox-lint/internal/editorprocess"
 )
 
 type processInstance struct {
@@ -24,6 +27,8 @@ type processInstance struct {
 	Token string   `json:"token"`
 	Args  []string `json:"args"`
 }
+
+var bootstrapLifetime net.Conn
 
 // Report only fixed stages and error classes. Filesystem errors otherwise
 // include private paths, and gate records contain nonces and instance tokens.
@@ -69,6 +74,17 @@ func reportFailure(stage string, err error) {
 }
 
 func main() {
+	if value := os.Getenv("SALTBOX_TEST_BOOTSTRAP_CONTROL"); value != "" {
+		if err := waitForBootstrapRelease(value); err != nil {
+			reportFailure("bootstrap-control", err)
+			os.Exit(2)
+		}
+		defer func() { runtime.KeepAlive(bootstrapLifetime) }()
+	}
+	if err := editorprocess.StartFromEnvironment(); err != nil {
+		reportFailure("editor-supervisor", err)
+		os.Exit(2)
+	}
 	var instance *processInstance
 	if filename := os.Getenv("SALTBOX_TEST_PROCESS_INSTANCES"); filename != "" {
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -222,4 +238,51 @@ func main() {
 		return
 	}
 	fmt.Print(`{"schema_version":1,"path":"roles/example/defaults/main.yml","status":"ready","source_sha256":"bad","edits":[]}`)
+}
+
+// Test-only startup control exposes the window before guardian binding. Its
+// live authenticated connection lets the test release and join this process
+// after a spawner crash without signaling a stored numeric process ID.
+func waitForBootstrapRelease(value string) (result error) {
+	var control struct {
+		Address string `json:"address"`
+		Token   string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(value), &control); err != nil {
+		return errors.New("invalid bootstrap control")
+	}
+	host, _, err := net.SplitHostPort(control.Address)
+	token, tokenErr := hex.DecodeString(control.Token)
+	if err != nil || host != "127.0.0.1" || tokenErr != nil || len(token) != 32 {
+		return errors.New("invalid bootstrap owner")
+	}
+	connection, err := net.DialTimeout("tcp4", control.Address, 5*time.Second)
+	if err != nil {
+		return errors.New("bootstrap owner connection failed")
+	}
+	released := false
+	defer func() {
+		if !released {
+			if err := connection.Close(); err != nil {
+				result = errors.Join(result, errors.New("bootstrap owner close failed"))
+			}
+		}
+	}()
+	if err := json.NewEncoder(connection).Encode(struct {
+		Token string `json:"token"`
+		PID   int    `json:"pid"`
+	}{control.Token, os.Getpid()}); err != nil {
+		return errors.New("bootstrap readiness failed")
+	}
+	var command struct {
+		Release bool `json:"release"`
+	}
+	if err := json.NewDecoder(connection).Decode(&command); err != nil || !command.Release {
+		return errors.New("bootstrap owner did not release startup")
+	}
+	// Retain the endpoint until OS process exit, so its owner can join startup
+	// failure after release instead of mistaking a release acknowledgement for exit.
+	bootstrapLifetime = connection
+	released = true
+	return nil
 }

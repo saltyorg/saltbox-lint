@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -14,6 +14,121 @@ import {
   fixtureRunning,
   fixtureProbe,
 } from "../host/fixture-processes.ts";
+
+for (const kind of ["running", "observation"] as const) {
+  for (const scenario of [
+    "alive",
+    "mismatch",
+    "early error",
+    "timeout",
+  ] as const) {
+    test(`${kind} ${scenario} retains its exact client until native close`, async () => {
+      const answer =
+        scenario === "timeout"
+          ? undefined
+          : (scenario === "mismatch" ? "b" : "a").repeat(64) + "\n";
+      const live = await endpoint(answer);
+      const original = Object.assign(new Error("controlled lifetime failure"), {
+        code: "ECONNRESET",
+      });
+      let requested!: () => void;
+      const destroyRequested = new Promise<void>((resolve) => {
+        requested = resolve;
+      });
+      let release: (() => void) | undefined;
+      let clientClosed: Promise<void> | undefined;
+      let closed = false;
+      let settled = false;
+      const adapters = {
+        connect(port: number) {
+          const socket = createConnection({ host: "127.0.0.1", port });
+          const destroy = socket.destroy.bind(socket);
+          socket.destroy = () => {
+            requested();
+            return socket;
+          };
+          release = () => {
+            socket.destroy = destroy;
+            destroy();
+          };
+          clientClosed = new Promise<void>((resolve) =>
+            socket.once("close", () => {
+              closed = true;
+              resolve();
+            }),
+          );
+          if (scenario === "early error")
+            queueMicrotask(() => socket.emit("error", original));
+          return socket;
+        },
+      };
+      const pending =
+        kind === "running"
+          ? fixtureRunning(live.instance, adapters)
+          : fixtureProbe(live.instance, adapters);
+      const outcome = pending.then(
+        (value) => {
+          settled = true;
+          return { ok: true as const, value };
+        },
+        (error: unknown) => {
+          settled = true;
+          return { ok: false as const, error };
+        },
+      );
+      try {
+        await destroyRequested;
+        await Promise.resolve();
+        assert.equal(closed, false);
+        assert.equal(
+          settled,
+          false,
+          "classification and requested destroy cannot settle an unclosed socket",
+        );
+      } finally {
+        release?.();
+        await clientClosed;
+        await outcome;
+        await live.close();
+      }
+      const result = await outcome;
+      assert.equal(closed, true);
+      if (kind === "running") {
+        if (scenario === "early error") {
+          assert.equal(result.ok, false);
+          assert.ok("error" in result);
+          assert.equal(
+            result.error,
+            original,
+            "the exact native error is preserved through closure",
+          );
+        } else if (scenario === "timeout") {
+          assert.equal(result.ok, false);
+          assert.ok("error" in result && result.error instanceof Error);
+          assert.equal(
+            result.error.message,
+            `Fixture ${live.instance.pid} lifetime probe timed out`,
+          );
+        } else {
+          assert.deepEqual(result, { ok: true, value: scenario === "alive" });
+        }
+      } else {
+        assert.equal(result.ok, true);
+        assert.ok("value" in result && typeof result.value === "object");
+        assert.equal(
+          result.value.state,
+          scenario === "early error" || scenario === "timeout"
+            ? "unavailable"
+            : scenario,
+        );
+        if (scenario === "early error")
+          assert.equal(result.value.error, "ECONNRESET");
+        if (scenario === "timeout")
+          assert.equal(result.value.error, "lifetime probe timed out");
+      }
+    });
+  }
+}
 
 async function endpoint(answer: string | undefined, closeTimeoutMs = 5000) {
   const sockets = new Set<Socket>();

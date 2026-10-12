@@ -5,6 +5,11 @@ import { mkdir, symlink, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EditorIntegration } from "../../src/editor.ts";
+import {
+  withTestResources,
+  type TestResources,
+} from "../support/test-resources.ts";
+import { ownJoinedResource } from "../support/host-resources.ts";
 const jinja = '---\nvalue: "{{ value\n }}"\n';
 async function waitFor(test: () => boolean, message: string) {
   const deadline = Date.now() + 10000;
@@ -90,19 +95,46 @@ async function updateFolders(
     }
   });
 }
-export async function runRegressions(): Promise<void> {
+export async function runRegressions(
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  await withTestResources(
+    { cleanupTimeoutMs: 15000, operationSignal: parentSignal },
+    regressions,
+  );
+}
+
+async function regressions(resources: TestResources): Promise<void> {
   const extension = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
   await extension.activate();
   const roots = vscode.workspace.workspaceFolders!;
   const failures: string[] = [];
-  const run = async (name: string, test: () => Promise<void>) => {
+  const component = (owner: TestResources) =>
+    ownJoinedResource(
+      owner,
+      "regression component",
+      new EditorIntegration(
+        join(
+          extension.extensionPath,
+          "bin",
+          "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+        ),
+      ),
+    );
+  const run = async (
+    name: string,
+    test: (owner: TestResources) => Promise<void>,
+  ) => {
     if (
       process.env.SALTBOX_REVIEW_CASE &&
       !name.startsWith(process.env.SALTBOX_REVIEW_CASE)
     )
       return;
     try {
-      await test();
+      await withTestResources(
+        { cleanupTimeoutMs: 15000, operationSignal: resources.signal },
+        test,
+      );
       console.log(`PASS ${name}`);
     } catch (error) {
       failures.push(name);
@@ -111,7 +143,7 @@ export async function runRegressions(): Promise<void> {
   };
   await run(
     "I1 unrelated edits preserve current actions and pending format",
-    async () => {
+    async (owner) => {
       const document = await open(
         vscode.Uri.joinPath(roots[0].uri, "independent.yml"),
         jinja,
@@ -141,13 +173,7 @@ export async function runRegressions(): Promise<void> {
         (await actions(document)).length > 0,
         "another root's YAML save invalidated cached actions",
       );
-      const editor = new EditorIntegration(
-        join(
-          extension.extensionPath,
-          "bin",
-          "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
-        ),
-      );
+      const editor = component(owner);
       const changes = vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.contentChanges.length) editor.change(e.document);
       });
@@ -167,7 +193,7 @@ export async function runRegressions(): Promise<void> {
   );
   await run(
     "I1 unrelated Markdown preserves a pending actual CLI format",
-    async () => {
+    async (owner) => {
       const document = await open(
         vscode.Uri.joinPath(roots[0].uri, "pending.yml"),
         jinja,
@@ -175,13 +201,7 @@ export async function runRegressions(): Promise<void> {
       const markdownUri = vscode.Uri.joinPath(roots[1].uri, "pending.md");
       await vscode.workspace.fs.writeFile(markdownUri, Buffer.from("one"));
       const markdown = await vscode.workspace.openTextDocument(markdownUri);
-      const editor = new EditorIntegration(
-        join(
-          extension.extensionPath,
-          "bin",
-          "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
-        ),
-      );
+      const editor = component(owner);
       const changes = vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.contentChanges.length) editor.change(event.document);
       });
@@ -377,7 +397,7 @@ export async function runRegressions(): Promise<void> {
   );
   await run(
     "I6 parent root refresh preserves nested open diagnostics",
-    async () => {
+    async (owner) => {
       const nested = vscode.Uri.joinPath(roots[0].uri, "roles/example");
       await vscode.workspace.fs.writeFile(
         vscode.Uri.joinPath(nested, ".saltbox-lint"),
@@ -385,13 +405,7 @@ export async function runRegressions(): Promise<void> {
       );
       const index = vscode.workspace.workspaceFolders!.length;
       await updateFolders(index, 0, { uri: nested });
-      const editor = new EditorIntegration(
-        join(
-          extension.extensionPath,
-          "bin",
-          "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
-        ),
-      );
+      const editor = component(owner);
       try {
         const document = await open(
           vscode.Uri.joinPath(nested, "defaults/main.yml"),

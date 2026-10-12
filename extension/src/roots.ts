@@ -3,8 +3,17 @@ import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
 import { lstat } from "node:fs/promises";
 import * as path from "node:path";
 import { canonicalRoot, type Identity } from "./identity.ts";
+import {
+  combineDisposables,
+  disposeResources,
+  rollbackResources,
+} from "./disposables.ts";
 
 export const rootMarker = ".saltbox-lint";
+export interface RootAdapters {
+  lstat: typeof lstat;
+  createFileSystemWatcher: typeof vscode.workspace.createFileSystemWatcher;
+}
 interface Root {
   source: string;
   canonical?: string;
@@ -37,12 +46,24 @@ function markerIdentity(stat: BigIntStats): string {
 export class MarkedRoots implements vscode.Disposable {
   constructor(
     private readonly reportError: (error: unknown) => void = console.error,
-  ) {}
+    private readonly adapters: Partial<RootAdapters> = {},
+  ) {
+    this.changed = new vscode.EventEmitter<string>();
+    try {
+      this.fileChanged = new vscode.EventEmitter<vscode.Uri>();
+    } catch (error) {
+      rollbackResources(error, [this.changed]);
+    }
+    this.onDidChange = this.changed.event;
+    this.onDidChangeFile = this.fileChanged.event;
+  }
   private readonly roots = new Map<string, Root>();
-  private readonly changed = new vscode.EventEmitter<string>();
-  readonly onDidChange = this.changed.event;
-  private readonly fileChanged = new vscode.EventEmitter<vscode.Uri>();
-  readonly onDidChangeFile = this.fileChanged.event;
+  private readonly probes = new Set<Promise<void>>();
+  private disposed = false;
+  private readonly changed: vscode.EventEmitter<string>;
+  readonly onDidChange: vscode.Event<string>;
+  private readonly fileChanged: vscode.EventEmitter<vscode.Uri>;
+  readonly onDidChangeFile: vscode.Event<vscode.Uri>;
   private readonly fileWatchers = new Map<string, vscode.Disposable>();
 
   private readonly sourceWatchers = new Map<
@@ -51,6 +72,7 @@ export class MarkedRoots implements vscode.Disposable {
   >();
 
   watchSource(uri: vscode.Uri, identity: Identity): void {
+    if (this.disposed) return;
     if (
       ![...this.roots.values()].some((root) => root.canonical === identity.root)
     )
@@ -68,30 +90,31 @@ export class MarkedRoots implements vscode.Disposable {
     if (old?.root === identity.root && old.filename === identity.filename)
       return;
     this.forgetSource(key);
-    const watchers = [...new Set([uri.fsPath, identity.filename])].map(
-      (filename) => {
+    const acquired: vscode.Disposable[] = [];
+    try {
+      for (const filename of new Set([uri.fsPath, identity.filename])) {
         const literal = path
           .basename(filename)
           .replace(/[\[\]*?{}]/g, (character) => `[${character}]`);
-        const watcher = vscode.workspace.createFileSystemWatcher(
+        const watcher = this.createFileSystemWatcher(
           new vscode.RelativePattern(
             vscode.Uri.file(path.dirname(filename)),
             literal,
           ),
         );
+        acquired.push(watcher);
         const changed = (changed: vscode.Uri) => this.fileChanged.fire(changed);
-        return vscode.Disposable.from(
-          watcher,
-          watcher.onDidCreate(changed),
-          watcher.onDidChange(changed),
-          watcher.onDidDelete(changed),
-        );
-      },
-    );
+        acquired.push(watcher.onDidCreate(changed));
+        acquired.push(watcher.onDidChange(changed));
+        acquired.push(watcher.onDidDelete(changed));
+      }
+    } catch (error) {
+      rollbackResources(error, acquired);
+    }
     this.sourceWatchers.set(key, {
       root: identity.root,
       filename: identity.filename,
-      watcher: vscode.Disposable.from(...watchers),
+      watcher: combineDisposables(acquired),
     });
   }
   forgetSource(key: string): void {
@@ -138,32 +161,32 @@ export class MarkedRoots implements vscode.Disposable {
     for (const root of active) {
       if (this.fileWatchers.has(root)) continue;
       const changed = (uri: vscode.Uri) => this.fileChanged.fire(uri);
-      const watchers = [
-        "**/*.{[yY][mM][lL],[yY][aA][mM][lL]}",
-        "**/templates/**",
-        "**/*.j2",
-        "**/.gitignore",
-        ".git/info/exclude",
-      ].map((pattern) =>
-        vscode.workspace.createFileSystemWatcher(
-          new vscode.RelativePattern(vscode.Uri.file(root), pattern),
-        ),
-      );
-      this.fileWatchers.set(
-        root,
-        vscode.Disposable.from(
-          ...watchers.flatMap((watcher) => [
-            watcher,
-            watcher.onDidCreate(changed),
-            watcher.onDidChange(changed),
-            watcher.onDidDelete(changed),
-          ]),
-        ),
-      );
+      const acquired: vscode.Disposable[] = [];
+      try {
+        for (const pattern of [
+          "**/*.{[yY][mM][lL],[yY][aA][mM][lL]}",
+          "**/templates/**",
+          "**/*.j2",
+          "**/.gitignore",
+          ".git/info/exclude",
+        ]) {
+          const watcher = this.createFileSystemWatcher(
+            new vscode.RelativePattern(vscode.Uri.file(root), pattern),
+          );
+          acquired.push(watcher);
+          acquired.push(watcher.onDidCreate(changed));
+          acquired.push(watcher.onDidChange(changed));
+          acquired.push(watcher.onDidDelete(changed));
+        }
+        this.fileWatchers.set(root, combineDisposables(acquired));
+      } catch (error) {
+        rollbackResources(error, acquired);
+      }
     }
   }
 
   configure(): void {
+    if (this.disposed) return;
     const folders = new Set<string>();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       if (folder.uri.scheme !== "file") continue;
@@ -177,7 +200,7 @@ export class MarkedRoots implements vscode.Disposable {
       );
       if (this.roots.get(key)?.source === source) continue;
       this.remove(key);
-      const watcher = vscode.workspace.createFileSystemWatcher(
+      const watcher = this.createFileSystemWatcher(
         new vscode.RelativePattern(vscode.Uri.file(source), rootMarker),
       );
       const root: Root = {
@@ -186,17 +209,20 @@ export class MarkedRoots implements vscode.Disposable {
         ready: Promise.resolve(),
         watcher,
       };
-      this.roots.set(key, root);
       const refresh = () => {
         if (this.roots.get(key) !== root || this.unchangedMarker(root)) return;
         this.startProbe(key, root);
       };
-      root.watcher = vscode.Disposable.from(
-        watcher,
-        watcher.onDidCreate(refresh),
-        watcher.onDidDelete(() => this.startProbe(key, root)),
-        watcher.onDidChange(refresh),
-      );
+      const acquired: vscode.Disposable[] = [watcher];
+      try {
+        acquired.push(watcher.onDidCreate(refresh));
+        acquired.push(watcher.onDidDelete(() => this.startProbe(key, root)));
+        acquired.push(watcher.onDidChange(refresh));
+        root.watcher = combineDisposables(acquired);
+      } catch (error) {
+        rollbackResources(error, acquired);
+      }
+      this.roots.set(key, root);
       this.startProbe(key, root);
     }
     for (const key of this.roots.keys())
@@ -212,6 +238,7 @@ export class MarkedRoots implements vscode.Disposable {
     this.changed.fire(key);
   }
   async refresh(folder?: string): Promise<void> {
+    if (this.disposed) return;
     await Promise.all(
       [...this.roots]
         .filter(([key]) => !folder || key === folder)
@@ -249,9 +276,18 @@ export class MarkedRoots implements vscode.Disposable {
       let canonical: string | undefined;
       let identity: string | undefined;
       try {
-        const stat = await lstat(path.join(root.source, rootMarker), {
-          bigint: true,
-        });
+        const stat = await (this.adapters.lstat ?? lstat)(
+          path.join(root.source, rootMarker),
+          {
+            bigint: true,
+          },
+        );
+        if (
+          this.disposed ||
+          root.revision !== revision ||
+          this.roots.get(key) !== root
+        )
+          return;
         if (stat.isFile()) {
           canonical = await canonicalRoot(root.source, "");
           identity = markerIdentity(stat);
@@ -271,7 +307,25 @@ export class MarkedRoots implements vscode.Disposable {
         this.changed.fire(key);
       }
     })();
+    const work = root.ready;
+    this.probes.add(work);
+    work.then(
+      () => {
+        this.probes.delete(work);
+      },
+      () => {
+        this.probes.delete(work);
+      },
+    );
     return root.ready;
+  }
+  private createFileSystemWatcher(
+    ...args: Parameters<typeof vscode.workspace.createFileSystemWatcher>
+  ): vscode.FileSystemWatcher {
+    return (
+      this.adapters.createFileSystemWatcher ??
+      vscode.workspace.createFileSystemWatcher
+    )(...args);
   }
   private startProbe(key: string, root: Root): void {
     // Keep root.ready as the actual probe. Event reporting must not turn a
@@ -284,14 +338,24 @@ export class MarkedRoots implements vscode.Disposable {
   async ready(): Promise<void> {
     await Promise.all([...this.roots.values()].map((root) => root.ready));
   }
+  async join(): Promise<void> {
+    while (this.probes.size) await Promise.allSettled(this.probes);
+  }
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    const acquired: vscode.Disposable[] = [];
     for (const root of this.roots.values()) {
       root.revision++;
-      root.watcher.dispose();
+      acquired.push(root.watcher);
     }
     this.roots.clear();
-    this.synchronizeFileWatchers();
-    this.fileChanged.dispose();
-    this.changed.dispose();
+    for (const source of this.sourceWatchers.values())
+      acquired.push(source.watcher);
+    this.sourceWatchers.clear();
+    acquired.push(...this.fileWatchers.values());
+    this.fileWatchers.clear();
+    acquired.push(this.fileChanged, this.changed);
+    disposeResources(acquired);
   }
 }

@@ -1,3 +1,5 @@
+// @ts-check
+/** @param {NodeJS.ProcessEnv} env */
 export function hostInputs(env) {
   const expectedVersion =
     env.SALTBOX_TEST_EXPECTED_VSCODE_VERSION ?? env.VSCODE_VERSION ?? "1.137.0";

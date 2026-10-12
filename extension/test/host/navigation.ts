@@ -6,23 +6,17 @@ import {
   mkdirSync,
   writeFileSync,
   lstatSync,
-  rmdirSync,
   realpathSync,
   readFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { createRequire } from "node:module";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { EditorIntegration } from "../../src/editor.ts";
 import type { QueryReport } from "../../src/navigation-protocol.ts";
-import { createHash } from "node:crypto";
 import {
-  observeFirstDefinition,
-  withFirstDefinitionObservation,
-} from "./first-definition-observer.ts";
-import { navigationEqualityProjection } from "./navigation-equality-projection.ts";
-
+  withTestResources,
+  type TestResources,
+} from "../support/test-resources.ts";
+import { ownJoinedResource } from "../support/host-resources.ts";
 export function assertReferenceCanonicalOwner(
   referenceFilename: string,
   ownerFilename: string,
@@ -191,547 +185,14 @@ async function runNestedNavigation(
   }
   await replace(document, original);
 }
-async function runManualImpactFailure(document: vscode.TextDocument) {
-  const original = document.getText();
-  const temporary = await mkdtemp(
-    join(tmpdir(), "saltbox-navigation-failure-"),
+export async function runNavigation(parentSignal?: AbortSignal): Promise<void> {
+  await withTestResources(
+    { cleanupTimeoutMs: 15000, operationSignal: parentSignal },
+    navigation,
   );
-  const wrapper = join(temporary, "failure.cjs");
-  const payload = "PRIVATE_CHILD_RESPONSE_VARIABLE_1234";
-  const failureMessage =
-    "Static role lookup impact failed. Check the bundled CLI and try again.";
-  await writeFile(
-    wrapper,
-    "const {spawnSync}=require('node:child_process'); const result=spawnSync(process.argv[2],process.argv.slice(3),{stdio:'inherit',env:process.env}); if(result.error)throw result.error; process.stderr.write(" +
-      JSON.stringify(payload) +
-      ");process.exit(2);\n",
-  );
-  const childProcess = createRequire(__filename)(
-    "node:child_process",
-  ) as typeof import("node:child_process");
-  const spawnDescriptor = Object.getOwnPropertyDescriptor(
-    childProcess,
-    "spawn",
-  )!;
-  const spawn = childProcess.spawn;
-  const outputDescriptor = Object.getOwnPropertyDescriptor(
-    vscode.window,
-    "createOutputChannel",
-  )!;
-  // VS Code assigns each extension its own API object. Observe the installed
-  // command through the API belonging to its real extension path as well.
-  const installed = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
-  const installedAPI = createRequire(
-    join(installed.extensionPath, "package.json"),
-  )("vscode") as typeof vscode;
-  const noticeDescriptors = [
-    ...new Set([vscode.window, installedAPI.window]),
-  ].map((window) => ({
-    window,
-    descriptor: Object.getOwnPropertyDescriptor(window, "showErrorMessage")!,
-  }));
-  const createOutput = vscode.window.createOutputChannel;
-  const lines: string[] = [],
-    notices: string[] = [];
-  const joins: Promise<void>[] = [];
-  let adapter: EditorIntegration | undefined;
-  try {
-    Object.defineProperty(vscode.window, "createOutputChannel", {
-      ...outputDescriptor,
-      value: (...args: Parameters<typeof createOutput>) => {
-        const channel = Reflect.apply(
-          createOutput,
-          vscode.window,
-          args,
-        ) as vscode.OutputChannel;
-        return new Proxy(channel, {
-          get(target, key) {
-            if (key === "appendLine")
-              return (line: string) => {
-                lines.push(line);
-                target.appendLine(line);
-              };
-            const value: unknown = Reflect.get(target, key);
-            return typeof value === "function"
-              ? (value.bind(target) as unknown)
-              : value;
-          },
-        });
-      },
-    });
-    for (const { window, descriptor } of noticeDescriptors)
-      Object.defineProperty(window, "showErrorMessage", {
-        ...descriptor,
-        value: (message: string) => {
-          notices.push(message);
-          return Promise.resolve(undefined);
-        },
-      });
-    Object.defineProperty(childProcess, "spawn", {
-      ...spawnDescriptor,
-      value: function (this: unknown, ...args: Parameters<typeof spawn>) {
-        const [file, argv, options] = args;
-        if (Array.isArray(argv) && argv[0] === "query") {
-          const child = spawn(
-            process.execPath,
-            [wrapper, file, ...argv],
-            options,
-          );
-          joins.push(
-            new Promise<void>((resolve) =>
-              child.once("close", () => resolve()),
-            ),
-          );
-          return child;
-        }
-        return Reflect.apply(spawn, this, args);
-      },
-    });
-    adapter = new EditorIntegration(
-      process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!,
-    );
-    const position = document.positionAt(
-      document.getText().indexOf("_port") + 2,
-    );
-    const token = new vscode.CancellationTokenSource();
-    try {
-      assert.deepEqual(
-        await adapter.navigation.definition(document, position, token.token),
-        [],
-      );
-      assert.deepEqual(
-        lines.filter((line) => line === failureMessage),
-        [],
-      );
-      assert.ok(!JSON.stringify(lines).includes(payload));
-      assert.deepEqual(notices, []);
-      assert.equal(await adapter.navigation.impact(), undefined);
-      assert.deepEqual(
-        lines.filter((line) => line === failureMessage),
-        [failureMessage],
-      );
-      assert.ok(!JSON.stringify(lines).includes(payload));
-      assert.deepEqual(notices, ["Saltbox Lint: " + failureMessage]);
-      const editor = await vscode.window.showTextDocument(document);
-      editor.selection = new vscode.Selection(position, position);
-      assert.equal(
-        await vscode.commands.executeCommand("saltboxLint.showImpact"),
-        undefined,
-      );
-      assert.deepEqual(notices, [
-        "Saltbox Lint: " + failureMessage,
-        "Saltbox Lint: " + failureMessage,
-      ]);
-      assert.ok(!JSON.stringify({ lines, notices }).includes(payload));
-      Object.defineProperty(childProcess, "spawn", spawnDescriptor);
-      await replace(document, original.replace("'_port'", "dynamic_suffix"));
-      editor.selection = new vscode.Selection(
-        document.positionAt(document.getText().indexOf("dynamic_suffix") + 2),
-        document.positionAt(document.getText().indexOf("dynamic_suffix") + 2),
-      );
-      const dynamic = await adapter.navigation.impact();
-      assert.equal(dynamic?.state, "dynamic");
-      // Root refreshes can also emit legitimate stale-context status lines.
-      // The query must produce no additional failure or leaked child payload.
-      assert.deepEqual(
-        lines.filter((line) => line === failureMessage),
-        [failureMessage],
-      );
-      assert.ok(!JSON.stringify(lines).includes(payload));
-      assert.equal(notices.length, 2);
-      await vscode.commands.executeCommand(
-        "workbench.action.closeActiveEditor",
-      );
-      await replace(document, original);
-      await vscode.window.showTextDocument(document);
-      const target = await vscode.workspace.openTextDocument(
-        vscode.Uri.joinPath(
-          vscode.workspace.workspaceFolders![0].uri,
-          "roles/navtarget/defaults/main.yml",
-        ),
-      );
-      const targetOriginal = target.getText();
-      const targetIdentity = lstatSync(target.uri.fsPath, { bigint: true });
-      assert.equal(target.isDirty, false);
-      await vscode.window.showTextDocument(target);
-      await replace(target, targetOriginal + "# dirty manual target\n");
-      await vscode.window.showTextDocument(document);
-      editor.selection = new vscode.Selection(position, position);
-      assert.equal(await adapter.navigation.impact(), undefined);
-      // Root refreshes can also emit legitimate stale-context status lines.
-      // The query must produce no additional failure or leaked child payload.
-      assert.deepEqual(
-        lines.filter((line) => line === failureMessage),
-        [failureMessage],
-      );
-      assert.ok(!JSON.stringify(lines).includes(payload));
-      assert.equal(notices.length, 2);
-      // Restore the dirty-buffer control through the editor's undo stack. A
-      // save of unchanged bytes would generate a delayed context notification
-      // that can revoke the following manual marker control's first query.
-      await vscode.window.showTextDocument(target);
-      await vscode.commands.executeCommand("undo");
-      assert.equal(target.getText(), targetOriginal);
-      assert.equal(target.isDirty, false);
-      const restoredIdentity = lstatSync(target.uri.fsPath, { bigint: true });
-      assert.deepEqual(
-        [
-          restoredIdentity.ino,
-          restoredIdentity.mtimeNs,
-          restoredIdentity.ctimeNs,
-        ],
-        [targetIdentity.ino, targetIdentity.mtimeNs, targetIdentity.ctimeNs],
-        "dirty-target refusal restores the buffer without a context disk write",
-      );
-      await vscode.window.showTextDocument(document);
-    } finally {
-      token.dispose();
-    }
-  } finally {
-    adapter?.dispose();
-    Object.defineProperty(childProcess, "spawn", spawnDescriptor);
-    Object.defineProperty(
-      vscode.window,
-      "createOutputChannel",
-      outputDescriptor,
-    );
-    for (const { window, descriptor } of noticeDescriptors)
-      Object.defineProperty(window, "showErrorMessage", descriptor);
-    await Promise.all(joins);
-    await rm(temporary, { recursive: true, force: true });
-  }
 }
-export async function runManualMarkerRefresh(
-  document: vscode.TextDocument,
-  equality?: ReturnType<typeof navigationEqualityProjection>,
-) {
-  const workspace = createRequire(__filename)("vscode")
-    .workspace as typeof vscode.workspace;
-  const descriptor = Object.getOwnPropertyDescriptor(
-    workspace,
-    "createFileSystemWatcher",
-  )!;
-  const original = workspace.createFileSystemWatcher;
-  const marker = join(
-    vscode.workspace.getWorkspaceFolder(document.uri)!.uri.fsPath,
-    ".saltbox-lint",
-  );
-  const removeMarker = (missingAllowed = false) => {
-    try {
-      const stat = lstatSync(marker);
-      // The fixture owns a single file, link or empty directory. Never walk
-      // the parent-target junction while restoring this entry.
-      if (stat.isDirectory() && !stat.isSymbolicLink()) rmdirSync(marker);
-      else unlinkSync(marker);
-    } catch (error) {
-      if (!missingAllowed || (error as NodeJS.ErrnoException).code !== "ENOENT")
-        throw error;
-    }
-  };
-  let adapter: EditorIntegration | undefined;
-  // Hold this adapter's marker notifications throughout each manual command.
-  // Its real marker probes and canonical-root admission still read the disk.
-  Object.defineProperty(workspace, "createFileSystemWatcher", {
-    ...descriptor,
-    value: (...args: Parameters<typeof original>) => {
-      const watcher = original(...args);
-      const pattern = args[0];
-      if (typeof pattern === "string" || pattern.pattern !== ".saltbox-lint")
-        return watcher;
-      return new Proxy(watcher, {
-        get(target, key) {
-          if (
-            ["onDidCreate", "onDidChange", "onDidDelete"].includes(String(key))
-          )
-            return () => new vscode.Disposable(() => {});
-          const value: unknown = Reflect.get(target, key);
-          return typeof value === "function"
-            ? (value.bind(target) as unknown)
-            : value;
-        },
-      });
-    },
-  });
-  try {
-    adapter = new EditorIntegration(
-      process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!,
-    );
-  } finally {
-    Object.defineProperty(workspace, "createFileSystemWatcher", descriptor);
-  }
-  const position = document.positionAt(document.getText().indexOf("_port") + 2);
-  const impact = async () => {
-    const editor = await vscode.window.showTextDocument(document);
-    editor.selection = new vscode.Selection(position, position);
-    const answer = await adapter.navigation.impact();
-    if (answer)
-      await vscode.commands.executeCommand(
-        "workbench.action.closeActiveEditor",
-      );
-    return answer;
-  };
-  const failures: Error[] = [];
-  let replacement = "initial";
-  let step = "initial admission";
-  let contextPhase:
-    | {
-        childCount: number;
-        responseClosed: boolean;
-        delivered: boolean;
-        canonicalTargetMatchesURI: boolean;
-        assertion: string;
-      }
-    | undefined;
-  const failure = (error: unknown): Error => {
-    let kind: string;
-    try {
-      const stat = lstatSync(marker);
-      kind = stat.isSymbolicLink()
-        ? "symlink"
-        : stat.isDirectory()
-          ? "directory"
-          : stat.isFile()
-            ? "file"
-            : "other";
-    } catch (probe) {
-      const code = (probe as NodeJS.ErrnoException).code;
-      kind = code === "ENOENT" ? "missing" : `unavailable(${code})`;
-    }
-    return new Error(
-      `manual marker ${step}: replacement=${replacement} marker=${kind}` +
-        (step === "context event during response validation"
-          ? ` phases=${JSON.stringify(contextPhase)}`
-          : ""),
-      { cause: error },
-    );
-  };
-  try {
-    await waitFor(
-      async () => !!(await impact()),
-      "manual marker control starts eligible",
-    );
-    for (replacement of ["removed", "symlink", "directory"]) {
-      step = "remove regular marker";
-      removeMarker();
-      step = "install replacement";
-      if (replacement === "symlink")
-        symlinkSync(join(marker, ".."), marker, "junction");
-      if (replacement === "directory") mkdirSync(marker);
-      step = "reject replacement";
-      assert.equal(
-        await impact(),
-        undefined,
-        `manual impact refuses ${replacement} marker before watcher delivery`,
-      );
-      assert.equal(
-        vscode.window.activeTextEditor?.document.uri.toString(),
-        document.uri.toString(),
-      );
-      step = "remove replacement";
-      removeMarker(true);
-      step = "restore regular marker";
-      writeFileSync(marker, "");
-      step = "accept restored marker";
-      assert.ok(
-        await impact(),
-        `first manual impact accepts restored marker after ${replacement} without watcher delivery`,
-      );
-    }
-    // A real context event during response validation still revokes the query.
-    // Keep this distinct from the marker probe's controlled lack of delivery.
-    const contextPromises = createRequire(__filename)(
-      "node:fs/promises",
-    ) as typeof import("node:fs/promises");
-    const readDescriptor = Object.getOwnPropertyDescriptor(
-      contextPromises,
-      "readFile",
-    )!;
-    const originalRead = contextPromises.readFile;
-    const context = vscode.Uri.joinPath(
-      vscode.workspace.getWorkspaceFolder(document.uri)!.uri,
-      "roles/navtarget/defaults/main.yml",
-    );
-    // Match the identity used by resolveSource. VS Code fsPath lowercases a
-    // Windows drive letter, while native realpath can retain its casing.
-    const contextFilename = await contextPromises.realpath(context.fsPath);
-    const contextBytes = await contextPromises.readFile(contextFilename);
-    equality?.restorationHeld(contextBytes);
-    const sourceFilename = realpathSync.native(document.uri.fsPath);
-    const childProcess = createRequire(__filename)(
-      "node:child_process",
-    ) as typeof import("node:child_process");
-    const spawnDescriptor = Object.getOwnPropertyDescriptor(
-      childProcess,
-      "spawn",
-    )!;
-    const originalSpawn = childProcess.spawn;
-    const contextJoins: Promise<void>[] = [];
-    let contextMutation: Promise<void> | undefined;
-    let contextOpen = true;
-    const phase = {
-      childCount: 0,
-      responseClosed: false,
-      delivered: false,
-      canonicalTargetMatchesURI: contextFilename === context.fsPath,
-      assertion: "impact rejection",
-    };
-    contextPhase = phase;
-    step = "context event during response validation";
-    Object.defineProperty(childProcess, "spawn", {
-      ...spawnDescriptor,
-      value: (...args: Parameters<typeof originalSpawn>) => {
-        const child = Reflect.apply(originalSpawn, childProcess, args);
-        const [file, argv] = args;
-        if (
-          file === process.env.SALTBOX_TEST_INSTALLED_CLI_PATH &&
-          Array.isArray(argv) &&
-          argv[0] === "query" &&
-          argv.includes("references") &&
-          argv.includes(sourceFilename)
-        ) {
-          phase.childCount++;
-          contextJoins.push(
-            new Promise<void>((resolve) => {
-              child.once("close", () => {
-                phase.responseClosed = true;
-                resolve();
-              });
-            }),
-          );
-        }
-        return child;
-      },
-    });
-    Object.defineProperty(contextPromises, "readFile", {
-      ...readDescriptor,
-      value: async (...args: Parameters<typeof originalRead>) => {
-        const bytes = await Reflect.apply(originalRead, contextPromises, args);
-        if (
-          contextOpen &&
-          phase.responseClosed &&
-          !phase.delivered &&
-          args[0] === contextFilename
-        ) {
-          phase.delivered = true;
-          contextMutation = contextPromises
-            .writeFile(
-              contextFilename,
-              Buffer.concat([
-                contextBytes,
-                Buffer.from("# changed query context\n"),
-              ]),
-            )
-            .then(() => {
-              adapter.refresh([context]);
-            });
-          await contextMutation;
-        }
-        return bytes;
-      },
-    });
-    try {
-      assert.equal(await impact(), undefined);
-      phase.assertion = "exact query ownership";
-      assert.equal(
-        contextJoins.length,
-        1,
-        "the exact query owns the response gate",
-      );
-      phase.assertion = "target event delivery";
-      assert.equal(
-        phase.delivered,
-        true,
-        "real target validation reaches the event",
-      );
-      phase.assertion = "no impact view opens";
-      assert.equal(
-        vscode.window.activeTextEditor?.document.uri.toString(),
-        document.uri.toString(),
-      );
-    } finally {
-      // A read can outlive the command that was revoked. Stop new mutations
-      // and join the owned writer before restoring the fixture's bytes.
-      contextOpen = false;
-      Object.defineProperty(contextPromises, "readFile", readDescriptor);
-      Object.defineProperty(childProcess, "spawn", spawnDescriptor);
-      try {
-        await contextMutation;
-      } finally {
-        try {
-          if (phase.delivered) {
-            equality?.restorationWriteStarted();
-            await contextPromises.writeFile(contextFilename, contextBytes);
-            equality?.restorationWriteReturned();
-          }
-        } finally {
-          await Promise.all(contextJoins);
-        }
-      }
-    }
-    const promises = createRequire(__filename)(
-      "node:fs/promises",
-    ) as typeof import("node:fs/promises");
-    const lstatDescriptor = Object.getOwnPropertyDescriptor(promises, "lstat")!;
-    const originalLstat = promises.lstat;
-    let entered!: () => void;
-    let release!: () => void;
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const delayed = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const originalText = document.getText();
-    step = "edit during marker refresh";
-    Object.defineProperty(promises, "lstat", {
-      ...lstatDescriptor,
-      value: async (...args: Parameters<typeof originalLstat>) => {
-        if (args[0] === marker) {
-          entered();
-          await delayed;
-        }
-        return Reflect.apply(originalLstat, promises, args);
-      },
-    });
-    let pending: ReturnType<typeof impact> | undefined;
-    try {
-      pending = impact();
-      await started;
-      await replace(
-        document,
-        "# edit during manual marker refresh\n" + originalText,
-      );
-      release();
-      assert.equal(
-        await pending,
-        undefined,
-        "edit during marker refresh declines the old cursor",
-      );
-    } finally {
-      release();
-      await pending;
-      Object.defineProperty(promises, "lstat", lstatDescriptor);
-      await replace(document, originalText);
-    }
-  } catch (error) {
-    failures.push(failure(error));
-  } finally {
-    step = "cleanup restore marker";
-    try {
-      removeMarker(true);
-      writeFileSync(marker, "");
-    } catch (error) {
-      failures.push(failure(error));
-    } finally {
-      adapter.dispose();
-      await vscode.window.showTextDocument(document);
-    }
-  }
-  if (failures.length === 1) throw failures[0];
-  if (failures.length > 1)
-    throw new AggregateError(failures, "manual marker body and cleanup failed");
-}
-export async function runNavigation(): Promise<void> {
+
+async function navigation(resources: TestResources): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
   const sourceURI = vscode.Uri.joinPath(
     roots[0].uri,
@@ -741,36 +202,10 @@ export async function runNavigation(): Promise<void> {
   const editor = await vscode.window.showTextDocument(document);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
   let locations: Awaited<ReturnType<typeof definitions>> = [];
-  const cliPath = process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!;
-  const cliCanonicalPath = realpathSync.native(cliPath);
-  const product = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
-  const productCLI = join(
-    product.extensionPath,
-    "bin",
-    "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
-  );
-  const observer = observeFirstDefinition({
-    commands: createRequire(__filename)("vscode").commands as object,
-    childProcess: createRequire(__filename)("node:child_process") as object,
-    document,
-    position: document.positionAt(document.getText().indexOf("_port") + 2),
-    root: realpathSync.native(roots[0].uri.fsPath),
-    source: realpathSync.native(document.uri.fsPath),
-    cliPath,
-    cliCanonicalPath,
-    cliProductPath:
-      realpathSync.native(productCLI) === cliCanonicalPath
-        ? productCLI
-        : undefined,
-    cliHash: createHash("sha256").update(readFileSync(cliPath)).digest("hex"),
-    productActive: product.isActive,
-  });
-  await withFirstDefinitionObservation(observer, () =>
-    waitFor(async () => {
-      locations = await definitions(document);
-      return locations.length === 3;
-    }, "real definitions resolve all declaration layers"),
-  );
+  await waitFor(async () => {
+    locations = await definitions(document);
+    return locations.length === 3;
+  }, "real definitions resolve all declaration layers");
   assert.equal(locations.length, 3);
   for (const location of locations) {
     const declaration = await vscode.workspace.openTextDocument(
@@ -939,32 +374,9 @@ export async function runNavigation(): Promise<void> {
     "roles/navtarget/defaults/main.yml",
   );
   const targetBytes = readFileSync(targetURI.fsPath);
-  // Keep the manual control's context writes beside the existing target-save
-  // acceptance checks, after the source-only completion and undo assertions.
-  const equality = navigationEqualityProjection(targetBytes);
-  let openedTarget: vscode.TextDocument;
-  try {
-    equality.controlStarted("manual_impact_failure");
-    await runManualImpactFailure(document);
-    equality.controlReturned("manual_impact_failure");
-    equality.controlStarted("manual_marker_refresh");
-    await runManualMarkerRefresh(document, equality);
-    equality.controlReturned("manual_marker_refresh");
-    openedTarget = await vscode.workspace.openTextDocument(targetURI);
-    const targetDirty = openedTarget.isDirty;
-    equality.cleanObserved(!targetDirty);
-    assert.equal(targetDirty, false);
-    const diskBytes = readFileSync(targetURI.fsPath);
-    const matchesOriginal = diskBytes.equals(targetBytes);
-    equality.diskObserved(diskBytes, matchesOriginal);
-    assert.equal(matchesOriginal, true);
-  } catch (error) {
-    return equality.rethrow(error);
-  } finally {
-    equality.dispose();
-  }
-  // The preceding control restored disk bytes after an external context write.
-  // Resolve this owned clean buffer from disk before the editor-save control.
+  const openedTarget = await vscode.workspace.openTextDocument(targetURI);
+  assert.equal(openedTarget.isDirty, false);
+  assert.equal(readFileSync(targetURI.fsPath).equals(targetBytes), true);
   await vscode.window.showTextDocument(openedTarget, { preview: false });
   assert.equal(
     vscode.window.activeTextEditor?.document.uri.toString(),
@@ -1039,62 +451,7 @@ export async function runNavigation(): Promise<void> {
   const secondTargetText = secondTarget.getText();
   assert.equal(secondTarget.isDirty, false);
   const secondTargetStat = lstatSync(secondTargetURI.fsPath, { bigint: true });
-  const commands = createRequire(__filename)("vscode")
-    .commands as typeof vscode.commands;
-  const executeDescriptor = Object.getOwnPropertyDescriptor(
-    commands,
-    "executeCommand",
-  )!;
-  const originalExecute = commands.executeCommand;
-  const secondPosition = secondDocument.positionAt(
-    secondDocument.getText().indexOf("_port") + 2,
-  );
-  let acceptedBeforeEdit = false;
   let edited = false;
-  Object.defineProperty(commands, "executeCommand", {
-    ...executeDescriptor,
-    value: async (...args: Parameters<typeof originalExecute>) => {
-      const result: unknown = await Reflect.apply(
-        originalExecute,
-        commands,
-        args,
-      );
-      if (
-        !acceptedBeforeEdit &&
-        args[0] === "vscode.executeDefinitionProvider" &&
-        args[1] instanceof vscode.Uri &&
-        args[1].toString() === secondDocument.uri.toString() &&
-        args[2] instanceof vscode.Position &&
-        args[2].isEqual(secondPosition) &&
-        Array.isArray(result) &&
-        result.length === 3
-      ) {
-        // A was accepted by the actual provider before this public edit.
-        // Return A unchanged; a separate request must observe the dirty target.
-        acceptedBeforeEdit = true;
-        let observed = false;
-        const listener = vscode.workspace.onDidChangeTextDocument((event) => {
-          if (event.document === secondTarget && event.contentChanges.length)
-            observed = true;
-        });
-        try {
-          edited = true;
-          await replace(
-            secondTarget,
-            secondTargetText + "# later context edit\n",
-          );
-          assert.equal(observed, true);
-          assert.equal(secondTarget.isDirty, true);
-          console.log(
-            "SALTBOX_NAVIGATION_CONTROL accepted response before owned edit",
-          );
-        } finally {
-          listener.dispose();
-        }
-      }
-      return result;
-    },
-  });
   try {
     let secondLocations: Awaited<ReturnType<typeof definitions>> = [];
     await waitFor(async () => {
@@ -1107,10 +464,21 @@ export async function runNavigation(): Promise<void> {
         target(location).fsPath.startsWith(roots[1].uri.fsPath),
       ),
     );
-    assert.equal(acceptedBeforeEdit, true);
+    let observed = false;
+    const listener = vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document === secondTarget && event.contentChanges.length)
+        observed = true;
+    });
+    try {
+      edited = true;
+      await replace(secondTarget, secondTargetText + "# later context edit\n");
+      assert.equal(observed, true);
+      assert.equal(secondTarget.isDirty, true);
+    } finally {
+      listener.dispose();
+    }
     assert.deepEqual(await definitions(secondDocument), []);
   } finally {
-    Object.defineProperty(commands, "executeCommand", executeDescriptor);
     try {
       if (edited) {
         await vscode.window.showTextDocument(secondTarget);
@@ -1142,8 +510,10 @@ export async function runNavigation(): Promise<void> {
     "undo restores fresh second-root navigation acceptance",
   );
   await vscode.window.showTextDocument(document);
-  const adapter = new EditorIntegration(
-    process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!,
+  const adapter = ownJoinedResource(
+    resources,
+    "navigation control adapter",
+    new EditorIntegration(process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!),
   );
   try {
     const cancellation = new vscode.CancellationTokenSource();
@@ -1169,6 +539,7 @@ export async function runNavigation(): Promise<void> {
     staleToken.dispose();
   } finally {
     adapter.dispose();
+    await adapter.join();
   }
   await replace(document, original);
   const marker = vscode.Uri.joinPath(roots[0].uri, ".saltbox-lint");
@@ -1187,7 +558,7 @@ export async function runNavigation(): Promise<void> {
     "PASS actual providers isolate roots and reject cancellation, stale source and removed marker",
   );
   const { runNavigationLifecycle } = await import("./navigation-lifecycle.ts");
-  await runNavigationLifecycle(document);
+  await runNavigationLifecycle(document, resources.signal);
   const reopened = await vscode.workspace.openTextDocument(sourceURI);
   await vscode.window.showTextDocument(reopened);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");

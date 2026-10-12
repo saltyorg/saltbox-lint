@@ -3,6 +3,11 @@ import { runProcess } from "./process.ts";
 import { Scheduler } from "./scheduler.ts";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  combineDisposables,
+  disposeResources,
+  rollbackResources,
+} from "./disposables.ts";
 
 import { parseRegistry } from "./protocol.ts";
 import type { RuleMetadata } from "./protocol.ts";
@@ -44,30 +49,48 @@ export class RuleHelp implements vscode.Disposable {
   private readonly cache = new Map<string, Promise<RuleMetadata[]>>();
   private version?: { work: Promise<string>; pending: boolean };
   private disposed = false;
-  private readonly changed = new vscode.EventEmitter<vscode.Uri>();
+  private readonly changed: vscode.EventEmitter<vscode.Uri>;
   private readonly documents = new Map<string, vscode.MarkdownString>();
   private readonly registration: vscode.Disposable;
-  constructor(private readonly executable: string) {
-    this.registration = vscode.Disposable.from(
-      vscode.workspace.registerTextDocumentContentProvider(this.scheme, {
-        onDidChange: this.changed.event,
-        provideTextDocumentContent: (uri) =>
-          this.documents.get(uri.toString())?.value ?? "",
-      }),
-      vscode.languages.registerHoverProvider(
-        { scheme: this.scheme },
-        {
-          provideHover: (document) => {
-            const markdown = this.documents.get(document.uri.toString());
-            return markdown && new vscode.Hover(markdown);
+  constructor(
+    private readonly executable: string,
+    private readonly run: typeof runProcess = runProcess,
+  ) {
+    const acquired: vscode.Disposable[] = [];
+    try {
+      this.changed = new vscode.EventEmitter<vscode.Uri>();
+      acquired.push(this.changed);
+      const registrations: vscode.Disposable[] = [];
+      const own = (registration: vscode.Disposable) => {
+        acquired.push(registration);
+        registrations.push(registration);
+      };
+      own(
+        vscode.workspace.registerTextDocumentContentProvider(this.scheme, {
+          onDidChange: this.changed.event,
+          provideTextDocumentContent: (uri) =>
+            this.documents.get(uri.toString())?.value ?? "",
+        }),
+      );
+      own(
+        vscode.languages.registerHoverProvider(
+          { scheme: this.scheme },
+          {
+            provideHover: (document) => {
+              const markdown = this.documents.get(document.uri.toString());
+              return markdown && new vscode.Hover(markdown);
+            },
           },
-        },
-      ),
-    );
+        ),
+      );
+      this.registration = combineDisposables(registrations);
+    } catch (error) {
+      rollbackResources(error, acquired);
+    }
   }
   private async process(key: string, args: string[]): Promise<string> {
     const output = await this.processes.submit(key, 1, (signal) =>
-      runProcess(
+      this.run(
         {
           executable: this.executable,
           cwd: path.dirname(this.executable),
@@ -148,12 +171,12 @@ export class RuleHelp implements vscode.Disposable {
     return markdown;
   }
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.processes.dispose();
-    this.registration.dispose();
-    this.changed.dispose();
     this.documents.clear();
     this.cache.clear();
+    disposeResources([this.registration, this.changed]);
   }
   async join(): Promise<void> {
     await this.processes.join();

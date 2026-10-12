@@ -1,10 +1,12 @@
+import { mkdtemp, realpath, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { cleanupDependencies } from "../support/dependency-cleanup.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
-import { readFileSync } from "node:fs";
-import ts from "typescript";
 
 async function owner(entry: string, io: Record<string, unknown>) {
   const bundled = await build({
@@ -17,10 +19,10 @@ async function owner(entry: string, io: Record<string, unknown>) {
       {
         name: "background-io",
         setup(builder) {
-          builder.onResolve(
-            { filter: /^vscode$|^node:fs\/promises$|^\.\/identity\.ts$/ },
-            ({ path }) => ({ path, namespace: "background-io" }),
-          );
+          builder.onResolve({ filter: /^vscode$/ }, ({ path }) => ({
+            path,
+            namespace: "background-io",
+          }));
           builder.onLoad(
             { filter: /.*/, namespace: "background-io" },
             ({ path }) => ({
@@ -52,9 +54,14 @@ async function owner(entry: string, io: Record<string, unknown>) {
         checkBackground: (document: unknown) => void;
       };
     };
-    MarkedRoots: new (report: (error: unknown) => void) => {
+    MarkedRoots: new (
+      report: (error: unknown) => void,
+      adapters?: Partial<import("../../src/roots.ts").RootAdapters>,
+    ) => {
       configure: () => void;
       ready: () => Promise<void>;
+      refresh: () => Promise<void>;
+      join: () => Promise<void>;
       dispose: () => void;
     };
   };
@@ -123,7 +130,11 @@ test("startup background check preserves check-only admission and reports reject
   assert.deepEqual(reported, [original]);
 });
 
-test("event probe reports failure while readiness retains the original rejection", async () => {
+test("event probe reports failure while readiness retains the original rejection", async (test) => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-root-readiness-"));
+  test.after(() => rm(directory, { recursive: true, force: true }));
+  const root = await realpath(directory);
+  await writeFile(join(root, ".saltbox-lint"), "");
   const original = new Error("canonical watcher registration failed");
   const disposable = { dispose() {} };
   const watcher = {
@@ -146,7 +157,7 @@ test("event probe reports failure while readiness retains the original rejection
       workspace: {
         workspaceFolders: [
           {
-            uri: { scheme: "file", fsPath: "/source", toString: () => "root" },
+            uri: { scheme: "file", fsPath: root, toString: () => "root" },
           },
         ],
         getConfiguration: () => ({ get: () => "" }),
@@ -156,8 +167,6 @@ test("event probe reports failure while readiness retains the original rejection
         },
       },
     },
-    "node:fs/promises": { lstat: async () => ({ isFile: () => true }) },
-    "./identity.ts": { canonicalRoot: async () => "/source" },
   };
   const { MarkedRoots } = await owner("src/roots.ts", io);
   const reported: unknown[] = [];
@@ -174,23 +183,12 @@ test("event probe reports failure while readiness retains the original rejection
 });
 
 test("admission cleanup cancels its owner and joins the complete check before removing its gate", async () => {
-  const source = ts.createSourceFile(
-    "dependencies.ts",
-    readFileSync("test/host/dependencies.ts", "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const run = source.statements.find(
-    (statement): statement is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(statement) &&
-      statement.name?.text === "runDependencies",
-  );
-  assert.ok(run?.body);
-  const cleanup = run.body.statements.find(ts.isTryStatement)?.finallyBlock;
-  assert.ok(cleanup);
   let release!: () => void;
   let drain!: () => void;
+  let canceled!: () => void;
+  const cancellation = new Promise<void>((resolve) => {
+    canceled = resolve;
+  });
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
@@ -208,38 +206,46 @@ test("admission cleanup cancels its owner and joins the complete check before re
     await joined;
     completed = true;
   })();
-  const result = runInNewContext(`(async () => ${cleanup.getText(source)})()`, {
-    aliasRefresh: {
-      dispose: () => {
-        aliasRefreshDisposed = true;
+  const result = cleanupDependencies({
+    observers: [
+      {
+        dispose: () => {
+          aliasRefreshDisposed = true;
+        },
       },
-    },
-    aliasTemplateEvents: {
-      dispose: () => {
-        observerDisposed = true;
+      {
+        dispose: () => {
+          observerDisposed = true;
+        },
       },
-    },
-    editor: {
+    ],
+    owner: {
       dispose: () => {
         assert.equal(aliasRefreshDisposed, true);
         disposed = true;
         release();
+        canceled();
       },
     },
-    failed: false,
-    admissionControl: Promise.allSettled([operation]),
+    admission: Promise.allSettled([operation]),
+    afterDisposal: async () => {},
     subscriptions: [],
-    process: { env: {} },
-    aliasDirectory: { fsPath: "owned-alias-directory" },
-    temporary: "owned-gate-directory",
-    rm: async (path: string) => {
+    releaseAliases: async () => {
       assert.equal(completed, true);
       assert.equal(disposed, true);
-      removedPaths.push(path);
+      removedPaths.push("owned-alias-directory");
       removed = true;
     },
-  }) as Promise<void>;
+    restoreEnvironment() {},
+    releaseFiles: async () => {
+      assert.equal(completed, true);
+      assert.equal(disposed, true);
+      removedPaths.push("owned-gate-directory");
+      removed = true;
+    },
+  });
   try {
+    await cancellation;
     assert.equal(
       disposed,
       true,
@@ -265,4 +271,76 @@ test("admission cleanup cancels its owner and joins the complete check before re
   ]);
   assert.equal(observerDisposed, true);
   assert.equal(aliasRefreshDisposed, true);
+});
+
+test("disposing before root readiness joins its original probe and seals later configuration", async (test) => {
+  const directory = await mkdtemp(join(tmpdir(), "saltbox-root-cancellation-"));
+  test.after(() => rm(directory, { recursive: true, force: true }));
+  const root = await realpath(directory);
+  await writeFile(join(root, ".saltbox-lint"), "");
+  const entered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>();
+  let probes = 0,
+    watchers = 0;
+  const disposable = { dispose() {} };
+  const watcher = {
+    ...disposable,
+    onDidCreate: () => disposable,
+    onDidChange: () => disposable,
+    onDidDelete: () => disposable,
+  };
+  const { MarkedRoots } = await owner("src/roots.ts", {
+    vscode: {
+      EventEmitter: class {
+        event = () => disposable;
+        fire() {}
+        dispose() {}
+      },
+      RelativePattern: class {},
+      Disposable: { from: () => disposable },
+      Uri: { file: (path: string) => ({ fsPath: path }) },
+      workspace: {
+        workspaceFolders: [
+          { uri: { scheme: "file", fsPath: root, toString: () => "root" } },
+        ],
+        getConfiguration: () => ({ get: () => "" }),
+        createFileSystemWatcher: () => {
+          watchers++;
+          return watcher;
+        },
+      },
+    },
+  });
+  const native = await import("node:fs/promises");
+  const roots = new MarkedRoots(() => {}, {
+    lstat: (async (...args: Parameters<typeof native.lstat>) => {
+      probes++;
+      entered.resolve();
+      await release.promise;
+      return Reflect.apply(native.lstat, undefined, args);
+    }) as typeof native.lstat,
+  });
+  roots.configure();
+  await entered.promise;
+  roots.dispose();
+  let joined = false;
+  const pending = roots.join().then(() => {
+    joined = true;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      joined,
+      false,
+      "clearing configured roots cannot discard the original filesystem promise",
+    );
+    roots.configure();
+    await roots.refresh();
+    assert.equal(probes, 1);
+    assert.equal(watchers, 1);
+  } finally {
+    release.resolve();
+    await pending;
+  }
+  assert.equal(joined, true);
 });

@@ -1,3 +1,4 @@
+// @ts-check
 import { writeFileSync } from "node:fs";
 import { ownedCommand } from "../../scripts/owned-command.mjs";
 
@@ -22,7 +23,7 @@ try {
     stdio: "inherit",
   });
 } catch (failure) {
-  error = failure.message;
+  error = failure instanceof Error ? failure.message : String(failure);
 }
 writeFileSync(
   result,

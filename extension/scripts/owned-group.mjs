@@ -1,5 +1,7 @@
+// @ts-check
 import { execFile } from "node:child_process";
 
+/** @param {string} snapshot @param {number} group @param {NodeJS.Platform} [platform] */
 export function liveGroupMembers(snapshot, group, platform = process.platform) {
   if (!Number.isSafeInteger(group) || group <= 1)
     throw new Error("Invalid owned process group");
@@ -7,7 +9,9 @@ export function liveGroupMembers(snapshot, group, platform = process.platform) {
     throw new Error("Owned process group observation requires Linux or Darwin");
   let live = false;
   let rows = 0;
+  /** @type {Map<number, {count: number, threads: Set<number>}>} */
   const members = new Map();
+  const seenMembers = new Set();
   for (const line of snapshot.split("\n")) {
     if (!line.trim()) continue;
     const match = (
@@ -40,8 +44,9 @@ export function liveGroupMembers(snapshot, group, platform = process.platform) {
       member.threads.add(tid);
       if (match[5] !== "Z") live = true;
     } else {
-      if (members.has(pid)) throw new Error("Duplicate process group member");
-      members.set(pid, true);
+      if (seenMembers.has(pid))
+        throw new Error("Duplicate process group member");
+      seenMembers.add(pid);
       if (!match[3].startsWith("Z")) live = true;
     }
   }
@@ -57,36 +62,40 @@ export function liveGroupMembers(snapshot, group, platform = process.platform) {
   return live;
 }
 
+/** @param {number} group @param {AbortSignal} [signal] @returns {Promise<boolean>} */
 export async function groupHasLiveMembers(group, signal) {
   if (!["linux", "darwin"].includes(process.platform))
     throw new Error("Owned process group observation requires Linux or Darwin");
-  const snapshot = await new Promise((resolve, reject) => {
-    let result;
-    const probe = execFile(
-      "/bin/ps",
-      process.platform === "linux"
-        ? ["-A", "-L", "-o", "pgid=,pid=,lwp=,nlwp=,s="]
-        : ["-A", "-o", "pgid=,pid=,state="],
-      {
-        timeout: 1000,
-        killSignal: "SIGKILL",
-        maxBuffer: 4 * 1024 * 1024,
-        signal,
-        env: { ...process.env, LC_ALL: "C" },
-      },
-      (error, stdout) => {
-        result = { error, stdout };
-      },
-    );
-    // Abort/spawn errors can invoke execFile's callback before the child closes.
-    // Always join that exact probe before completing the observation.
-    probe.once("close", () => {
-      if (result?.error) reject(result.error);
-      else if (!result)
-        reject(new Error("Missing process group snapshot result"));
-      else resolve(result.stdout);
-    });
-  });
+  const snapshot = await /** @type {Promise<string>} */ (
+    new Promise((resolve, reject) => {
+      /** @type {{error: Error | null, stdout: string} | undefined} */
+      let result;
+      const probe = execFile(
+        "/bin/ps",
+        process.platform === "linux"
+          ? ["-A", "-L", "-o", "pgid=,pid=,lwp=,nlwp=,s="]
+          : ["-A", "-o", "pgid=,pid=,state="],
+        {
+          timeout: 1000,
+          killSignal: "SIGKILL",
+          maxBuffer: 4 * 1024 * 1024,
+          signal,
+          env: { ...process.env, LC_ALL: "C" },
+        },
+        (error, stdout) => {
+          result = { error, stdout };
+        },
+      );
+      // Abort/spawn errors can invoke execFile's callback before the child closes.
+      // Always join that exact probe before completing the observation.
+      probe.once("close", () => {
+        if (result?.error) reject(result.error);
+        else if (!result)
+          reject(new Error("Missing process group snapshot result"));
+        else resolve(result.stdout);
+      });
+    })
+  );
   // Linux's leader can be Z while another thread retains open endpoints. Check
   // every advertised thread. Darwin's SZOMB follows final-thread exit and task
   // detachment, so its process state proves the task has no remaining worker.

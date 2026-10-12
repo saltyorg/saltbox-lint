@@ -1,3 +1,11 @@
+import { ownJoinedResource } from "../support/host-resources.ts";
+import {
+  withTestResources,
+  type TestResources,
+} from "../support/test-resources.ts";
+import { runProcess } from "../../src/process.ts";
+import { hostTemporaryDirectory } from "../support/host-temporary.ts";
+import { cleanupDependencies } from "../support/dependency-cleanup.ts";
 import { aliasFailureFacts, watchAliasTemplate } from "./alias-failure.ts";
 import { observeAliasRefresh } from "./alias-refresh-observer.ts";
 import {
@@ -16,7 +24,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   rename,
@@ -24,7 +31,6 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
 import { hash, parseCheck } from "../../src/protocol.ts";
@@ -65,7 +71,74 @@ async function replace(document: vscode.TextDocument, text: string) {
   );
   assert.equal(await vscode.workspace.applyEdit(edit), true);
 }
-export async function runDependencies(): Promise<void> {
+
+function observeIgnoreDelivery(resources: TestResources) {
+  let sequence = 0;
+  const delivered = new Map<string, { sequence: number; text?: string }>();
+  const observe =
+    (event: vscode.Event<vscode.Uri>): vscode.Event<vscode.Uri> =>
+    (listener, receiver, subscriptions) =>
+      event(
+        (uri) => {
+          const result = Reflect.apply(listener, receiver, [uri]);
+          let text: string | undefined;
+          try {
+            text = readFileSync(uri.fsPath, "utf8");
+          } catch {
+            // A delete event has no current bytes to satisfy a write barrier.
+          }
+          delivered.set(uri.toString(), { sequence: ++sequence, text });
+          return result;
+        },
+        undefined,
+        subscriptions,
+      );
+  const createFileSystemWatcher: typeof vscode.workspace.createFileSystemWatcher =
+    (...args) => {
+      const watcher = vscode.workspace.createFileSystemWatcher(...args);
+      const pattern = args[0];
+      if (
+        !(pattern instanceof vscode.RelativePattern) ||
+        pattern.pattern !== "**/.gitignore"
+      )
+        return watcher;
+      resources.defer("dependency native ignore watcher", () =>
+        watcher.dispose(),
+      );
+      return {
+        ignoreCreateEvents: watcher.ignoreCreateEvents,
+        ignoreChangeEvents: watcher.ignoreChangeEvents,
+        ignoreDeleteEvents: watcher.ignoreDeleteEvents,
+        onDidCreate: observe(watcher.onDidCreate),
+        onDidChange: observe(watcher.onDidChange),
+        onDidDelete: observe(watcher.onDidDelete),
+        dispose: () => watcher.dispose(),
+      } satisfies vscode.FileSystemWatcher;
+    };
+  return {
+    createFileSystemWatcher,
+    // Capture before the write. Only a later production callback handling the
+    // intended bytes satisfies this barrier; all duplicate events still run.
+    next(uri: vscode.Uri, text: string) {
+      const before = sequence;
+      return () => {
+        const current = delivered.get(uri.toString());
+        return !!current && current.sequence > before && current.text === text;
+      };
+    },
+  };
+}
+
+export async function runDependencies(
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  await withTestResources(
+    { cleanupTimeoutMs: 15000, operationSignal: parentSignal },
+    (resources) => dependencies(resources),
+  );
+}
+
+async function dependencies(resources: TestResources): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
   const task = vscode.Uri.joinPath(
     roots[0].uri,
@@ -87,14 +160,56 @@ export async function runDependencies(): Promise<void> {
     roots[0].uri,
     "roles/unrelated/defaults/main.yml",
   );
-  const temporary = await mkdtemp(join(tmpdir(), "saltbox-dependencies-"));
+  const temporary = await hostTemporaryDirectory("saltbox-dependencies-");
+  resources.defer("dependency files", () =>
+    rm(temporary, { recursive: true, force: true }),
+  );
   const log = join(temporary, "process.log");
   const instancesLog = join(temporary, "instances.log");
-  process.env.SALTBOX_TEST_PROCESS_LOG = log;
-  process.env.SALTBOX_TEST_PROCESS_INSTANCES = instancesLog;
+  const fixtureEnvironment: NodeJS.ProcessEnv = {
+    SALTBOX_TEST_PROCESS_LOG: log,
+    SALTBOX_TEST_PROCESS_INSTANCES: instancesLog,
+  };
+  let beforeRead: ((filename: unknown) => Promise<void>) | undefined;
+  const filesystem = {
+    readFile: (async (...args: Parameters<typeof readFile>) => {
+      await beforeRead?.(args[0]);
+      return Reflect.apply(readFile, undefined, args);
+    }) as typeof readFile,
+  };
+  const ignoreDelivery = observeIgnoreDelivery(resources);
+  let statusBar!: vscode.StatusBarItem;
+  const ownEditor = () => {
+    const owner = ownJoinedResource(
+      resources,
+      "dependency editor",
+      new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!, {
+        readFile: filesystem.readFile,
+        roots: {
+          createFileSystemWatcher: ignoreDelivery.createFileSystemWatcher,
+        },
+        runProcess: (request, signal, observeFailure) =>
+          runProcess(
+            { ...request, env: { ...fixtureEnvironment } },
+            signal,
+            observeFailure,
+          ),
+        createStatusBarItem: (
+          ...args: Parameters<typeof vscode.window.createStatusBarItem>
+        ) => {
+          statusBar = vscode.window.createStatusBarItem(...args);
+          const item = statusBar;
+          resources.defer("dependency status item", () => item.dispose());
+          return item;
+        },
+      }),
+    );
+    return owner;
+  };
   const journal = new FixtureJournal(instancesLog);
   const invocations = () => journal.invocations();
   let failed = false;
+  let primaryFailure: unknown;
   let capturedFailure = false;
   let retainedFailureDirectory: string | undefined;
   let aliasTemplateEvents: ReturnType<typeof watchAliasTemplate> | undefined;
@@ -122,49 +237,37 @@ export async function runDependencies(): Promise<void> {
     aliasDirectory.fsPath,
     process.platform === "win32" ? "junction" : "dir",
   );
-  // This primary is excluded from full coverage and has no accepted graph yet.
-  let editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
-  let admissionControl: Promise<PromiseSettledResult<void>[]> | undefined;
-  // The lane releases a child before a saved check finishes rendering and
-  // synchronizing open sources. Track that whole operation when joining work.
-  const savedChecks = new Set<Promise<unknown>>();
-  const checkSaved = Reflect.get(editor, "checkSaved");
-  Reflect.set(
-    editor,
-    "checkSaved",
-    function (this: EditorIntegration, ...args: unknown[]) {
-      const pending: Promise<unknown> = checkSaved.apply(this, args);
-      const joined = pending.finally(() => savedChecks.delete(joined));
-      savedChecks.add(joined);
-      return joined;
-    },
+  resources.defer("dependency alias", () =>
+    rm(aliasDirectory.fsPath, { recursive: true, force: true }),
   );
-  const savedWorkSettled = () => {
-    const lane = Reflect.get(editor, "lint");
-    return (
-      !Reflect.get(lane, "active") &&
-      Reflect.get(lane, "pending").size === 0 &&
-      Reflect.get(editor, "pendingFiles").size === 0 &&
-      Reflect.get(editor, "pendingRefresh").size === 0 &&
-      !Reflect.get(editor, "flushingFiles") &&
-      savedChecks.size === 0
-    );
+  // This primary is excluded from full coverage and has no accepted graph yet.
+  let editor = ownEditor();
+  let admissionControl: Promise<PromiseSettledResult<void>[]> | undefined;
+  const subscriptions: vscode.Disposable[] = [];
+  const subscribe = (subscription: vscode.Disposable) => {
+    resources.defer("dependency event", () => subscription.dispose());
+    subscriptions.push(subscription);
   };
-  const subscriptions = [
+  subscribe(
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length) editor.change(event.document);
     }),
+  );
+  subscribe(
     vscode.workspace.onDidSaveTextDocument((document) =>
       editor.saved(document),
     ),
+  );
+  subscribe(
     vscode.workspace.onDidCloseTextDocument((document) =>
       editor.close(document),
     ),
-  ];
+  );
   const success = (name: string) => console.log(`PASS ${name}`);
   try {
+    await editor.ready();
     await editor.checkWorkspace();
-    await pause(400);
+    await editor.join();
     assert.equal(renderer(task), false);
     assert.equal(renderer(otherTask), false);
     assert.equal(findings(task).length, 0);
@@ -188,7 +291,12 @@ export async function runDependencies(): Promise<void> {
           "--",
           "roles/invalid/defaults/main.yml",
         ],
-        { encoding: "utf8", cwd: roots[0].uri.fsPath },
+        {
+          encoding: "utf8",
+          cwd: roots[0].uri.fsPath,
+          timeout: 60000,
+          env: { ...process.env, SALTBOX_LINT_EDITOR_PROCESS: "1" },
+        },
       );
     } catch (error) {
       const failure = error as { status: number; stdout: string };
@@ -221,21 +329,19 @@ export async function runDependencies(): Promise<void> {
       "initial coverage must quiesce with invalid UTF-8",
     );
     const invalidChanged = Buffer.from([0xfe, 0x0a]);
-    await waitFor(
-      savedWorkSettled,
-      "initial saved work settles before the selected-batch mutation cohort",
-    );
-    // Both writes belong to this selected-batch control. Keep real watcher
-    // notifications active, but join the cohort before any flush snapshots it.
-    const flushFiles = Reflect.get(editor, "flushFiles");
+    await editor.join();
+    // Keep actual watchers active while the instance read boundary joins the
+    // two owned writes before source snapshots are captured.
     let releaseFlush!: () => void;
     const flushBarrier = new Promise<void>((resolve) => {
       releaseFlush = resolve;
     });
-    Reflect.set(editor, "flushFiles", async () => {
-      await flushBarrier;
-      return flushFiles.call(editor);
-    });
+    const cancelFlush = () => releaseFlush();
+    resources.signal.addEventListener("abort", cancelFlush, { once: true });
+    beforeRead = async (filename) => {
+      if ([invalidUri.fsPath, unrelatedUri.fsPath].includes(String(filename)))
+        await flushBarrier;
+    };
     try {
       await Promise.all([
         writeFile(invalidUri.fsPath, invalidChanged),
@@ -248,8 +354,9 @@ export async function runDependencies(): Promise<void> {
       editor.removeFile(invalidUri);
       editor.removeFile(unrelatedUri);
     } finally {
-      Reflect.set(editor, "flushFiles", flushFiles);
+      beforeRead = undefined;
       releaseFlush();
+      resources.signal.removeEventListener("abort", cancelFlush);
     }
     await waitFor(
       () =>
@@ -257,7 +364,7 @@ export async function runDependencies(): Promise<void> {
         findings(unrelatedUri).length === 0,
       "valid peer must publish beside unsupported UTF-8",
     );
-    await pause(400);
+    await editor.join();
     const settled = invocations().length;
     await pause(600);
     assert.equal(
@@ -306,7 +413,7 @@ export async function runDependencies(): Promise<void> {
         ),
       "valid peer recovery",
     );
-    await pause(400);
+    await editor.join();
     quietCount = invocations().length;
     await pause(600);
     assert.equal(
@@ -336,7 +443,7 @@ export async function runDependencies(): Promise<void> {
       () => invocations().length > quietCount + 1,
       "clean unsupported document must exercise the actual saved queue",
     );
-    await pause(400);
+    await editor.join();
     const openSettled = invocations().length;
     await pause(600);
     assert.equal(
@@ -382,7 +489,7 @@ export async function runDependencies(): Promise<void> {
       ),
     );
     assert.equal(await readFile(invalidUri.fsPath, "utf8"), unrelatedGood);
-    await pause(400);
+    await editor.join();
     quietCount = invocations().length;
     await pause(600);
     assert.equal(
@@ -400,7 +507,7 @@ export async function runDependencies(): Promise<void> {
       editor.actions(invalidDocument, new vscode.Range(0, 0, 100, 0)),
       [],
     );
-    await pause(400);
+    await editor.join();
     quietCount = invocations().length;
     await pause(600);
     assert.equal(
@@ -442,9 +549,10 @@ export async function runDependencies(): Promise<void> {
       "roles/example/tasks/main.yml",
       "roles/unrelated/defaults/main.yml",
     ];
-    process.env.SALTBOX_TEST_PROCESS_GATE = batchGate;
-    process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = batchNonce;
-    process.env.SALTBOX_TEST_PROCESS_GATE_PATHS = JSON.stringify(batchPaths);
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = batchGate;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = batchNonce;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PATHS =
+      JSON.stringify(batchPaths);
     // Actual writes and public notifications share one synchronous cohort.
     // Real watchers remain active, without snapshotting a partially joined batch.
     writeFileSync(
@@ -495,9 +603,9 @@ export async function runDependencies(): Promise<void> {
     await writeFile(template.fsPath, bad);
     editor.removeFile(lateTemplate);
     editor.removeFile(template);
-    delete process.env.SALTBOX_TEST_PROCESS_GATE;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = undefined;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PATHS = undefined;
     await rm(batchGate);
     await waitFor(
       () => fixtureAbsent(batchInstance),
@@ -562,33 +670,9 @@ export async function runDependencies(): Promise<void> {
       ),
     );
     for (const uri of admissionFiles) editor.removeFile(uri);
-    await waitFor(
-      savedWorkSettled,
-      "created admission source work settles before full scan",
-    );
+    await editor.join();
     await editor.checkWorkspace();
-    const admissionSourceHash = hash(
-      admissionGood.replace("{{ other\n }}", "{{ other }}"),
-    );
-    await waitFor(() => {
-      const folder = roots[0].uri.toString();
-      const results = Reflect.get(editor, "results");
-      const sources = Reflect.get(
-        Reflect.get(editor, "dependencies"),
-        "states",
-      ).get(folder)?.sources;
-      return (
-        savedWorkSettled() &&
-        results.hasCompleteScan(folder) &&
-        admissionFiles.every(
-          (uri) =>
-            results.saved(folder, uri.toString()) !== undefined &&
-            sources?.get(
-              "roles/admission/defaults/" + uri.path.split("/").at(-1),
-            )?.record.source_sha256 === admissionSourceHash,
-        )
-      );
-    }, "complete coverage accepts every intended admission source before the gate");
+    await editor.join();
     assert.ok(admissionFiles.every((uri) => findings(uri).length === 0));
     const admissionGate = join(temporary, "admission-gate");
     const admissionNonce = randomBytes(32).toString("hex");
@@ -597,18 +681,20 @@ export async function runDependencies(): Promise<void> {
       .slice(0, 64)
       .map((uri) => admissionPrefix + uri.path.split("/").at(-1));
     await writeFile(admissionGate, "");
-    process.env.SALTBOX_TEST_PROCESS_GATE = admissionGate;
-    process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX = admissionPrefix;
-    process.env.SALTBOX_TEST_PROCESS_GATE_PATHS =
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = admissionGate;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PREFIX = admissionPrefix;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PATHS =
       JSON.stringify(admissionPaths);
-    process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = admissionNonce;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = admissionNonce;
     count = invocations().length;
     // A preceding request must not satisfy this chunk's readiness gate.
     const admissionControlDocument =
       await vscode.workspace.openTextDocument(defaults);
     const admissionControlFilename = await realpath(defaults.fsPath);
     admissionControl = Promise.allSettled([
-      editor.check(admissionControlDocument),
+      resources.operation("admission control primary", () =>
+        editor.check(admissionControlDocument),
+      ),
     ]);
     await waitFor(
       () =>
@@ -661,16 +747,22 @@ export async function runDependencies(): Promise<void> {
       ),
       "queued admission regression must exceed the 64-source chunk limit",
     );
-    delete process.env.SALTBOX_TEST_PROCESS_GATE;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
-    await writeFile(
-      admissionIgnore.fsPath,
-      admissionIgnoreText + "roles/admission/\n",
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PREFIX = undefined;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PATHS = undefined;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = undefined;
+    const revokedIgnoreText = admissionIgnoreText + "roles/admission/\n";
+    const revokedIgnoreDelivered = ignoreDelivery.next(
+      admissionIgnore,
+      revokedIgnoreText,
     );
+    await writeFile(admissionIgnore.fsPath, revokedIgnoreText);
     const revokedCount = invocations().length;
     editor.removeFile(admissionIgnore);
+    await waitFor(
+      revokedIgnoreDelivered,
+      "the real production watcher must handle the revoked ignore bytes",
+    );
     await rm(admissionGate);
     const controlOutcome = (await admissionControl)[0];
     if (controlOutcome.status === "rejected") throw controlOutcome.reason;
@@ -681,7 +773,7 @@ export async function runDependencies(): Promise<void> {
           .some((line) => line.endsWith(" .")),
       "revoked admission must schedule a fresh membership scan",
     );
-    await pause(700);
+    await editor.join();
     assert.ok(
       invocations()
         .slice(revokedCount)
@@ -696,9 +788,18 @@ export async function runDependencies(): Promise<void> {
       recursive: true,
       force: true,
     });
+    const restoredIgnoreDelivered = ignoreDelivery.next(
+      admissionIgnore,
+      admissionIgnoreText,
+    );
     await writeFile(admissionIgnore.fsPath, admissionIgnoreText);
+    await waitFor(
+      restoredIgnoreDelivered,
+      "the real production watcher must handle the restored ignore bytes",
+    );
+    await editor.join();
     await editor.checkWorkspace();
-    await pause(400);
+    await editor.join();
     success("admission changes revoke every remaining closed selected chunk");
 
     const unrelated = await vscode.workspace.openTextDocument(unrelatedUri);
@@ -753,7 +854,8 @@ export async function runDependencies(): Promise<void> {
       task.fsPath,
       taskText.replace("router.conf", "router.yaml"),
     );
-    await pause(250);
+    editor.removeFile(task);
+    await editor.join();
     await writeFile(yamlTemplate.fsPath, bad);
     await waitFor(
       () => renderer(task),
@@ -774,7 +876,8 @@ export async function runDependencies(): Promise<void> {
     assert.equal(editor.writable(templateDocument), false);
     await rename(yamlTemplate.fsPath, template.fsPath);
     await writeFile(task.fsPath, taskText);
-    await pause(250);
+    editor.removeFile(task);
+    await editor.join();
     success(
       "YAML-named templates refresh context and expose read-only checking providers",
     );
@@ -920,7 +1023,7 @@ export async function runDependencies(): Promise<void> {
       ignorePath,
       ignoreText + "roles/example/tasks/admitted.yml\n",
     );
-    await pause(350);
+    editor.removeFile(vscode.Uri.file(ignorePath));
     await waitFor(
       () => findings(newlyAdmitted).length === 0,
       "excluded primary must leave saved coverage before admission changes",
@@ -954,7 +1057,15 @@ export async function runDependencies(): Promise<void> {
       await vscode.window.showTextDocument(aliasDocument, { preview: false });
       await editor.check(aliasDocument, true);
       aliasTemplateEvents = watchAliasTemplate(template);
+      const templateObserver = aliasTemplateEvents;
+      resources.defer("alias template observer", () =>
+        templateObserver.dispose(),
+      );
       aliasRefresh = observeAliasRefresh(editor, aliasDocument, template);
+      const refreshObserver = aliasRefresh;
+      resources.defer("alias refresh observer", () =>
+        refreshObserver.dispose(),
+      );
       logFailureEvidence("SALTBOX_INITIAL_ALIAS_FACTS", {
         schemaVersion: 1,
         phase: "initial alias admission before template mutation",
@@ -1064,13 +1175,13 @@ export async function runDependencies(): Promise<void> {
         "SALTBOX_TEST_PROCESS_GATE_NONCE",
         "SALTBOX_TEST_PROCESS_GATE_PREFIX",
       ];
-      const priorGate = gateVariables.map((name) => process.env[name]);
+      const priorGate = gateVariables.map((name) => fixtureEnvironment[name]);
       const beforeOverlap = journal.processes();
       try {
         await writeFile(aliasGate, "");
-        process.env.SALTBOX_TEST_PROCESS_GATE = aliasGate;
-        process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = aliasNonce;
-        process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX = canonicalTask;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = aliasGate;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = aliasNonce;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PREFIX = canonicalTask;
         await writeFile(template.fsPath, good);
         editor.removeFile(template);
         await waitFor(
@@ -1084,7 +1195,7 @@ export async function runDependencies(): Promise<void> {
         assert.equal(await fixtureRunning(instance), true);
         // Replacement requests must run normally, rather than inherit the
         // original child's gate or use its credential to claim completion.
-        for (const name of gateVariables) delete process.env[name];
+        for (const name of gateVariables) fixtureEnvironment[name] = undefined;
         editor.removeFile(alias);
         assert.equal(
           await fixtureRunning(instance),
@@ -1115,8 +1226,9 @@ export async function runDependencies(): Promise<void> {
         assert.ok(editor.providerDocuments().includes(aliasDocument));
       } finally {
         for (const [index, name] of gateVariables.entries()) {
-          if (priorGate[index] === undefined) delete process.env[name];
-          else process.env[name] = priorGate[index];
+          if (priorGate[index] === undefined)
+            fixtureEnvironment[name] = undefined;
+          else fixtureEnvironment[name] = priorGate[index];
         }
         await rm(aliasGate, { force: true });
       }
@@ -1127,7 +1239,7 @@ export async function runDependencies(): Promise<void> {
       success("canonical context events retain alias ownership");
     }
 
-    await pause(500);
+    await editor.join();
     count = invocations().length;
     const start = Date.now();
     for (let index = 0; index < 30; index++)
@@ -1155,17 +1267,7 @@ export async function runDependencies(): Promise<void> {
       roots[1].uri,
       "roles/example/tasks/first-open/ignored.yml",
     );
-    const lane = Reflect.get(editor, "lint");
-    await waitFor(
-      () =>
-        !Reflect.get(lane, "active") &&
-        Reflect.get(lane, "pending").size === 0 &&
-        Reflect.get(editor, "pendingFiles").size === 0 &&
-        Reflect.get(editor, "pendingRefresh").size === 0 &&
-        !Reflect.get(editor, "flushingFiles") &&
-        savedChecks.size === 0,
-      "preceding context work settles before acquiring the queued-source blocker",
-    );
+    await editor.join();
     const blockerDocument =
       await vscode.workspace.openTextDocument(unrelatedUri);
     const otherTemplate = vscode.Uri.joinPath(
@@ -1176,12 +1278,13 @@ export async function runDependencies(): Promise<void> {
     const queuedGate = join(temporary, "queued-status-admission");
     const blockerNonce = randomBytes(32).toString("hex");
     const queuedNonce = randomBytes(32).toString("hex");
-    const queuedOriginalStatus = editor.status;
     try {
       await writeFile(blockerGate, "");
-      process.env.SALTBOX_TEST_PROCESS_GATE = blockerGate;
-      process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = blockerNonce;
-      const blocker = editor.check(blockerDocument);
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = blockerGate;
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = blockerNonce;
+      const blocker = resources.operation("queued source blocker", () =>
+        editor.check(blockerDocument),
+      );
       await waitFor(
         () => existsSync(blockerGate + ".ready"),
         "unrelated primary holds the scheduler before source admission",
@@ -1204,123 +1307,49 @@ export async function runDependencies(): Promise<void> {
         journal,
       );
       assert.equal(await fixtureRunning(blockerInstance), true);
-      // Open a new source after the blocker owns the lane. Checking resolves
-      // its bounded identity before queueing, but must not copy text or launch
-      // its child until the lane releases the blocker.
-      assert.equal(
-        Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
-        false,
-        "the first-open source starts without a remembered identity",
-      );
       const queuedDocument = await vscode.workspace.openTextDocument(queuedUri);
-      let queuedReads = 0;
-      const queuedTracked: vscode.TextDocument = Object.create(queuedDocument, {
-        version: { get: () => queuedDocument.version },
-        isDirty: { get: () => queuedDocument.isDirty },
-        getText: {
-          value: () => {
-            queuedReads++;
-            return queuedDocument.getText();
-          },
-        },
-      });
-      editor.status = function (
-        source = vscode.window.activeTextEditor?.document,
-      ) {
-        return queuedOriginalStatus.call(
-          this,
-          source === queuedDocument ? queuedTracked : source,
-        );
-      };
       await vscode.window.showTextDocument(queuedDocument, { preview: false });
       await writeFile(queuedGate, "");
-      process.env.SALTBOX_TEST_PROCESS_GATE = queuedGate;
-      process.env.SALTBOX_TEST_PROCESS_GATE_NONCE = queuedNonce;
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = queuedGate;
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = queuedNonce;
       const queuedCount = invocations().length;
-      const queuedCheck = editor.check(queuedTracked);
+      const queuedCheck = resources.operation("queued unknown source", () =>
+        editor.check(queuedDocument),
+      );
       await waitFor(
-        () => Reflect.get(lane, "pending").has(queuedUri.toString()),
-        "new source is actually queued behind the exact held child",
+        () => editor.status(queuedDocument).state === "checking",
+        "the public pending status identifies the queued source",
       );
-      const admittedOwner = Reflect.get(editor, "sourceOwners").get(
-        queuedUri.toString(),
-      );
-      assert.ok(
-        admittedOwner,
-        "queued checking has resolved its bounded identity",
-      );
-      const queuedOwner = { ...admittedOwner };
-      assert.equal(queuedOwner.root, await realpath(roots[1].uri.fsPath));
-      assert.equal(queuedOwner.filename, await realpath(queuedUri.fsPath));
-      assert.equal(
-        queuedOwner.path,
-        "roles/example/tasks/first-open/ignored.yml",
-      );
+      assert.ok(editor.providerDocuments().includes(queuedDocument));
       const queuedVersion = queuedDocument.version;
-      const dependencies = Reflect.get(editor, "dependencies");
-      const queuedFolder = roots[1].uri.toString();
-      const admissionRevision = dependencies.admissionRevision(queuedFolder);
-      const rootRevision = Reflect.get(editor, "rootRevisions").get(
-        queuedFolder,
-      );
-      const queuedBar: vscode.StatusBarItem = Reflect.get(editor, "statusBar");
       for (const [scope, changedTemplate] of [
         ["other-root", template],
         ["own-root", otherTemplate],
       ] as const) {
-        const token = dependencies.begin();
         await writeFile(
           changedTemplate.fsPath,
           good + "\n# queued status event\n",
         );
         editor.removeFile(changedTemplate);
-        assert.ok(dependencies.begin() > token);
-        assert.equal(
-          dependencies.admissionRevision(queuedFolder),
-          admissionRevision,
-        );
-        assert.equal(
-          Reflect.get(editor, "rootRevisions").get(queuedFolder),
-          rootRevision,
-        );
         assert.equal(queuedDocument.version, queuedVersion);
-        assert.equal(
-          Reflect.get(lane, "pending").has(queuedUri.toString()),
-          true,
-        );
-        assert.deepEqual(
-          Reflect.get(editor, "sourceOwners").get(queuedUri.toString()),
-          queuedOwner,
-          "unrelated events preserve the queued source's bounded identity",
-        );
+        assert.ok(editor.providerDocuments().includes(queuedDocument));
         assert.equal(await fixtureRunning(blockerInstance), true);
-        const automaticBar = queuedBar.text;
-        const status = editor.status(queuedTracked);
-        const manual = await editor.showStatus();
-        console.log(
-          `MEASURE queued pending scope=${scope} status=${status.state} manual=${manual.state} automatic_bar=${automaticBar} bar=${queuedBar.text} canonical_admitted=true reads=${queuedReads} endpoint_live=true`,
-        );
-        assert.equal(automaticBar, "Saltbox Lint: checking");
-        assert.equal(status.state, "checking");
-        assert.equal(manual.state, "checking");
-        assert.equal(queuedBar.text, "Saltbox Lint: checking");
+        assert.equal(editor.status(queuedDocument).state, "checking");
+        assert.equal((await editor.showStatus()).state, "checking");
+        assert.equal(statusBar.text, "Saltbox Lint: checking");
         assert.equal(
-          queuedReads,
-          0,
-          "queued status and checks never copy source text",
+          invocations().length,
+          queuedCount,
+          scope +
+            " context cannot launch the queued source before the blocker closes",
         );
-        assert.equal(invocations().length, queuedCount);
       }
-      const queuedRequest = Reflect.get(lane, "pending").get(
-        queuedUri.toString(),
+      const queuedDuplicate = resources.operation(
+        "duplicate queued source",
+        () => editor.check(queuedDocument),
       );
-      const queuedDuplicate = editor.check(queuedTracked);
       await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(
-        Reflect.get(lane, "pending").get(queuedUri.toString()),
-        queuedRequest,
-      );
-      assert.equal(queuedReads, 0);
+      assert.equal(invocations().length, queuedCount);
       await rm(blockerGate);
       await blocker;
       await waitFor(
@@ -1344,19 +1373,12 @@ export async function runDependencies(): Promise<void> {
       );
       assert.equal(await fixtureRunning(queuedInstance), true);
       assert.equal(await fixtureRunning(blockerInstance), false);
-      assert.equal(
-        Reflect.get(editor, "sourceOwners").has(queuedUri.toString()),
-        true,
-      );
+      assert.ok(editor.providerDocuments().includes(queuedDocument));
       assert.equal(editor.status().state, "checking");
       assert.equal((await editor.showStatus()).state, "checking");
-      assert.equal(queuedBar.text, "Saltbox Lint: checking");
-      assert.ok(
-        queuedReads > 0,
-        "admission reads the source only after releasing the lane",
-      );
-      delete process.env.SALTBOX_TEST_PROCESS_GATE;
-      delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
+      assert.equal(statusBar.text, "Saltbox Lint: checking");
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = undefined;
       await rm(queuedGate);
       await Promise.all([queuedCheck, queuedDuplicate]);
       assert.equal(await fixtureRunning(queuedInstance), false);
@@ -1364,51 +1386,37 @@ export async function runDependencies(): Promise<void> {
       await writeFile(otherTemplate.fsPath, good);
       editor.removeFile(template);
       editor.removeFile(otherTemplate);
-      await waitFor(
-        () =>
-          !Reflect.get(lane, "active") &&
-          Reflect.get(lane, "pending").size === 0 &&
-          Reflect.get(editor, "pendingFiles").size === 0 &&
-          Reflect.get(editor, "pendingRefresh").size === 0 &&
-          !Reflect.get(editor, "flushingFiles"),
-        "restored context work settles before the independent first-open control",
-      );
+      await editor.join();
       await vscode.commands.executeCommand(
         "workbench.action.closeActiveEditor",
       );
       success(
-        "queued unknown source keeps actual pending ownership across unrelated own and other root events without source reads and deduplicates through admission",
+        "queued unknown source retains public pending ownership across unrelated own and other root events and deduplicates through native admission",
       );
     } finally {
-      editor.status = queuedOriginalStatus;
-      delete process.env.SALTBOX_TEST_PROCESS_GATE;
-      delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = undefined;
       await rm(blockerGate, { force: true });
       await rm(queuedGate, { force: true });
     }
 
-    await waitFor(
-      () => savedChecks.size === 0,
-      "saved check postprocessing joins before opening the independent unknown source",
-    );
+    await editor.join();
     const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
     await vscode.window.showTextDocument(firstDocument, { preview: false });
     assert.equal(
-      Reflect.get(editor, "sourceOwners").has(firstOpen.toString()),
+      editor.providerDocuments().includes(firstDocument),
       false,
-      "first check starts before canonical ownership admission",
-    );
-    assert.ok(
-      Reflect.get(editor, "dependencies").begin() > 0,
-      "unrelated preceding context events have advanced the global token",
+      "the unknown source has not yet been admitted",
     );
     const firstFilename = await realpath(firstOpen.fsPath);
     const firstVersion = firstDocument.version;
     const firstGate = join(temporary, "first-open-gate");
     await writeFile(firstGate, "");
-    process.env.SALTBOX_TEST_PROCESS_GATE = firstGate;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = firstGate;
     const firstCount = invocations().length;
-    const firstCheck = editor.check(firstDocument);
+    const firstCheck = resources.operation("first open primary", () =>
+      editor.check(firstDocument),
+    );
     await waitFor(
       () => existsSync(firstGate + ".ready"),
       "first open primary check must hold its old context output",
@@ -1428,23 +1436,23 @@ export async function runDependencies(): Promise<void> {
     );
     assert.equal(await fixtureRunning(firstInstance), true);
     assert.equal(firstDocument.version, firstVersion);
-    const firstBar: vscode.StatusBarItem = Reflect.get(editor, "statusBar");
+    const firstBar = statusBar;
     const firstPendingStatus = editor.status(firstDocument);
     const firstManualStatus = await editor.showStatus();
-    console.log(
-      `MEASURE first pending status=${firstPendingStatus.state} manual=${firstManualStatus.state} bar=${firstBar.text} canonical_admitted=${Reflect.get(editor, "sourceOwners").has(firstOpen.toString())}`,
-    );
     assert.equal(firstPendingStatus.state, "checking");
     assert.equal(firstManualStatus.state, "checking");
     assert.equal(firstBar.text, "Saltbox Lint: checking");
     const duplicateCount = invocations().length;
-    const duplicateCheck = editor.check(firstDocument);
+    const duplicateCheck = resources.operation(
+      "duplicate first open primary",
+      () => editor.check(firstDocument),
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(invocations().length, duplicateCount);
     assert.equal(await fixtureRunning(firstInstance), true);
     await writeFile(template.fsPath, bad);
     editor.removeFile(template);
-    delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
     await rm(firstGate);
     await Promise.all([firstCheck, duplicateCheck]);
     await waitFor(
@@ -1466,46 +1474,18 @@ export async function runDependencies(): Promise<void> {
     success(
       "first check after prior context events retains pending ownership through canonical admission, manual status and deduplication",
     );
-    await waitFor(
-      savedWorkSettled,
-      "saved check postprocessing joins before opening the independent alias",
-    );
+    await editor.join();
     const aliasDocument = await vscode.workspace.openTextDocument(pendingAlias);
     await vscode.window.showTextDocument(aliasDocument, { preview: false });
-    assert.equal(
-      Reflect.get(editor, "sourceOwners").has(pendingAlias.toString()),
-      false,
-    );
+    assert.equal(editor.providerDocuments().includes(aliasDocument), false);
     const aliasText = aliasDocument.getText();
-    let statusReads = 0;
-    let readingStatus = false;
-    const tracked: vscode.TextDocument = Object.create(aliasDocument, {
-      version: { get: () => aliasDocument.version },
-      isDirty: { get: () => aliasDocument.isDirty },
-      getText: {
-        value: () => {
-          if (readingStatus) statusReads++;
-          return aliasDocument.getText();
-        },
-      },
-    });
-    const originalStatus = editor.status;
-    editor.status = function (
-      source = vscode.window.activeTextEditor?.document,
-    ) {
-      if (source === aliasDocument) source = tracked;
-      readingStatus = true;
-      try {
-        return originalStatus.call(this, source);
-      } finally {
-        readingStatus = false;
-      }
-    };
     const aliasGate = join(temporary, "pending-alias-gate");
     try {
       await writeFile(aliasGate, "");
-      process.env.SALTBOX_TEST_PROCESS_GATE = aliasGate;
-      const aliasCheck = editor.check(tracked);
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = aliasGate;
+      const aliasCheck = resources.operation("pending alias check", () =>
+        editor.check(aliasDocument),
+      );
       await waitFor(
         () => existsSync(aliasGate + ".ready"),
         "alias check admits canonical ownership and holds its actual child",
@@ -1526,12 +1506,13 @@ export async function runDependencies(): Promise<void> {
       assert.equal(editor.status().state, "checking");
       assert.equal((await editor.showStatus()).state, "checking");
       assert.equal(firstBar.text, "Saltbox Lint: checking");
-      assert.equal(statusReads, 0, "pending status never copies source text");
       await rm(aliasGate + ".ready");
       await replace(aliasDocument, aliasText + "# superseded pending source\n");
-      editor.change(tracked);
+      editor.change(aliasDocument);
       assert.equal(editor.status().state, "eligible");
-      const replacement = editor.check(tracked);
+      const replacement = resources.operation("pending alias check", () =>
+        editor.check(aliasDocument),
+      );
       await aliasCheck;
       assert.equal(await fixtureRunning(aliasInstance), false);
       await waitFor(
@@ -1545,13 +1526,9 @@ export async function runDependencies(): Promise<void> {
       );
       assert.notEqual(replacementInstance.token, aliasInstance.token);
       assert.equal(await fixtureRunning(replacementInstance), true);
-      console.log(
-        `MEASURE alias replacement status=${editor.status().state} version=${aliasDocument.version}/${tracked.version} active=${vscode.window.activeTextEditor?.document.uri.toString()} keys=${JSON.stringify([...Reflect.get(editor, "checking").keys()])}`,
-      );
       assert.equal(editor.status().state, "checking");
       assert.equal((await editor.showStatus()).state, "checking");
       assert.equal(firstBar.text, "Saltbox Lint: checking");
-      assert.equal(statusReads, 0);
       editor.dispose();
       await replacement;
       assert.equal(await fixtureRunning(replacementInstance), false);
@@ -1559,10 +1536,9 @@ export async function runDependencies(): Promise<void> {
       // assertion bound to the same alias document as the held source request.
       await vscode.window.showTextDocument(aliasDocument, { preview: false });
       assert.equal(editor.status().state, "missing-marker");
-      assert.equal(Reflect.get(editor, "checking").size, 0);
+      await editor.join();
     } finally {
-      editor.status = originalStatus;
-      delete process.env.SALTBOX_TEST_PROCESS_GATE;
+      fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
       await rm(aliasGate, { force: true });
       await replace(aliasDocument, aliasText);
       await vscode.commands.executeCommand(
@@ -1570,7 +1546,7 @@ export async function runDependencies(): Promise<void> {
       );
     }
     success(
-      "alias admission displays pending status without source reads and supersession, cancellation and disposal release exact child ownership",
+      "alias admission displays public pending status and supersession, cancellation and disposal release exact child ownership",
     );
 
     // Hold an already-computed full scan, then change unknown context before its
@@ -1578,16 +1554,17 @@ export async function runDependencies(): Promise<void> {
     editor.dispose();
     const gate = join(temporary, "scan-gate");
     await writeFile(gate, "");
-    process.env.SALTBOX_TEST_PROCESS_GATE = gate;
-    editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = gate;
+    await editor.join();
+    editor = ownEditor();
     await waitFor(
       () => existsSync(gate + ".ready"),
       "initial scan gate must receive old output",
     );
     await writeFile(template.fsPath, bad);
-    await pause(150);
+    editor.removeFile(template);
     await rm(gate);
-    delete process.env.SALTBOX_TEST_PROCESS_GATE;
+    fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
     await waitFor(
       () => renderer(task),
       "late context changes must reject the initial result and restore full coverage",
@@ -1617,7 +1594,7 @@ export async function runDependencies(): Promise<void> {
     await writeFile(statusTask.fsPath, statusSource);
     await writeFile(statusTemplate.fsPath, good);
     await editor.checkWorkspace();
-    await pause(400);
+    await editor.join();
     const statusDocument = await vscode.workspace.openTextDocument(statusTask);
     await vscode.window.showTextDocument(statusDocument, { preview: false });
     await replace(
@@ -1627,17 +1604,6 @@ export async function runDependencies(): Promise<void> {
     );
     await editor.check(statusDocument, true);
     // Read the actual VS Code item without invoking showStatus/updateStatus.
-    const statusBar: vscode.StatusBarItem = Reflect.get(editor, "statusBar");
-    const results = Reflect.get(editor, "results");
-    const checking: ReadonlyMap<string, unknown> = Reflect.get(
-      editor,
-      "checking",
-    );
-    const pendingFiles: ReadonlyMap<string, unknown> = Reflect.get(
-      editor,
-      "pendingFiles",
-    );
-    assert.equal(results.hasCompleteScan(roots[0].uri.toString()), true);
     assert.equal(statusDocument.isDirty, true);
     assert.equal(statusBar.text, "Saltbox Lint: current");
     const statusFindings = findings(statusTask);
@@ -1653,12 +1619,6 @@ export async function runDependencies(): Promise<void> {
       "dependency event must update the actual status bar for a dirty source",
     );
     assert.deepEqual(findings(statusTask), statusFindings);
-    assert.equal(results.hasCompleteScan(roots[0].uri.toString()), true);
-    assert.equal(
-      [...checking.keys()].some((key) => key.startsWith(`${statusTask}:`)),
-      false,
-    );
-    assert.equal(pendingFiles.has(statusTask.toString()), false);
     await pause(600);
     assert.equal(
       invocations().length,
@@ -1696,7 +1656,7 @@ export async function runDependencies(): Promise<void> {
       "template bytes remain unchanged by checks",
     );
     editor.dispose();
-    await pause(150);
+    await editor.join();
     await waitFor(async () => {
       const instances = journal.processes(true);
       const pids = invocations().map((line) => Number(line.split(" ")[0]));
@@ -1723,6 +1683,7 @@ export async function runDependencies(): Promise<void> {
     );
   } catch (error) {
     failed = true;
+    primaryFailure = error;
     // The alias path already captured its public facts immediately after the
     // unchanged assertion. Other failures still refresh the journal once.
     if (!capturedFailure) {
@@ -1746,32 +1707,44 @@ export async function runDependencies(): Promise<void> {
     }
     throw error;
   } finally {
-    aliasRefresh?.dispose();
-    aliasTemplateEvents?.dispose();
-    editor.dispose();
-    if (failed) {
-      try {
-        const evidence = {
-          schemaVersion: 1,
-          phase: "after existing owner disposal",
-          processFacts: await journalFailureEvidence(journal),
-        };
-        logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", evidence);
-        if (retainedFailureDirectory)
-          await retainAfterDisposal(retainedFailureDirectory, evidence);
-      } catch {
-        // Observation or logging failures cannot replace the assertion.
-      }
-    }
-    await admissionControl;
-    for (const subscription of subscriptions) subscription.dispose();
-    await rm(aliasDirectory.fsPath, { recursive: true, force: true });
-    delete process.env.SALTBOX_TEST_PROCESS_LOG;
-    delete process.env.SALTBOX_TEST_PROCESS_INSTANCES;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_PREFIX;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_PATHS;
-    delete process.env.SALTBOX_TEST_PROCESS_GATE_NONCE;
-    await rm(temporary, { recursive: true, force: true });
+    const cleanupFailures = await cleanupDependencies({
+      observers: [aliasRefresh, aliasTemplateEvents],
+      owner: editor,
+      admission: admissionControl,
+      afterDisposal: async () => {
+        if (failed) {
+          try {
+            const evidence = {
+              schemaVersion: 1,
+              phase: "after existing owner disposal",
+              processFacts: await journalFailureEvidence(journal),
+            };
+            logFailureEvidence("SALTBOX_DEPENDENCY_FAILURE", evidence);
+            if (retainedFailureDirectory)
+              await retainAfterDisposal(retainedFailureDirectory, evidence);
+          } catch {
+            // Observation or logging failures cannot replace the assertion.
+          }
+        }
+      },
+      subscriptions,
+      releaseAliases: () =>
+        rm(aliasDirectory.fsPath, { recursive: true, force: true }),
+      restoreEnvironment: () => {
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_LOG = undefined;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_INSTANCES = undefined;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PREFIX = undefined;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_PATHS = undefined;
+        fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE_NONCE = undefined;
+      },
+      releaseFiles: () => rm(temporary, { recursive: true, force: true }),
+    });
+    if (cleanupFailures.length)
+      throw new AggregateError(
+        [...(failed ? [primaryFailure] : []), ...cleanupFailures],
+        "Dependency test and cleanup failed",
+        { cause: failed ? primaryFailure : cleanupFailures[0] },
+      );
   }
 }

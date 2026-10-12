@@ -1,8 +1,15 @@
+import {
+  createLiveBounded,
+  cancelLiveControl,
+  captureLiveFailure,
+  finishLiveFailure,
+} from "../support/live-controls.ts";
+import { createRequire } from "node:module";
+import { build } from "esbuild";
+import type { replaceLiveBuffer } from "../host/live-editor.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import ts from "typescript";
 import {
   createLiveControlEvidence,
   captureLiveInvocationFailure,
@@ -20,29 +27,6 @@ import {
   liveControlEvidenceLimit,
 } from "../host/live-control-vocabulary.ts";
 
-const source = ts.createSourceFile(
-  "live-checking.ts",
-  readFileSync("test/host/live-checking.ts", "utf8"),
-  ts.ScriptTarget.Latest,
-  true,
-  ts.ScriptKind.TS,
-);
-function declaration(name: string): ts.FunctionDeclaration {
-  let found: ts.FunctionDeclaration | undefined;
-  function visit(node: ts.Node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === name)
-      found = node;
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
-  assert.ok(found);
-  return found;
-}
-function javascript(text: string): string {
-  return ts.transpileModule(text, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-}
 function projection(evidence: LiveControlEvidence | undefined) {
   const messages: string[] = [];
   reportLiveControlFailure(
@@ -62,25 +46,100 @@ function boundedControl(evidence = createLiveControlEvidence()) {
   const callbacks: (() => void)[] = [];
   const cleared: unknown[] = [];
   const durations: number[] = [];
-  const bounded = runInNewContext(
-    javascript(declaration("bounded").getText(source)) + "\nbounded;",
-    {
-      deadlineMs: 15000,
-      noteLiveOperation,
-      setTimeout: (callback: () => void, milliseconds: number) => {
-        callbacks.push(callback);
-        durations.push(milliseconds);
-        return callbacks.length;
-      },
-      clearTimeout: (timer: unknown) => cleared.push(timer),
+  const bounded = createLiveBounded({
+    schedule: (callback, milliseconds) => {
+      callbacks.push(callback);
+      durations.push(milliseconds);
+      const id = callbacks.length;
+      return () => {
+        cleared.push(id);
+      };
     },
-  ) as (
-    operation: PromiseLike<unknown>,
-    name: string,
-    evidence: LiveControlEvidence | undefined,
-  ) => Promise<unknown>;
+  });
   return { evidence, callbacks, cleared, durations, bounded };
 }
+
+for (const failure of ["cancel", "timer"] as const) {
+  test(`a live deadline joins the losing operation and retains its ${failure} cleanup failure`, async () => {
+    const operation = Promise.withResolvers<void>();
+    const cleanup = new Error("controlled deadline cleanup failure");
+    let expire!: () => void;
+    let settled = false;
+    const bounded = createLiveBounded({
+      schedule: (callback) => {
+        expire = callback;
+        return () => {
+          if (failure === "timer") throw cleanup;
+        };
+      },
+      cancel: () => {
+        if (failure === "cancel") throw cleanup;
+      },
+    });
+    const pending = bounded(operation.promise, "manual", undefined);
+    const observed = pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    expire();
+    await Promise.resolve();
+    assert.equal(
+      settled,
+      false,
+      "the timeout cannot release its admitted writer before completion",
+    );
+    operation.resolve();
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors.length, 2);
+      assert.equal(
+        (error.errors[0] as Error).message,
+        "Live checking control deadline",
+      );
+      assert.equal(error.errors[1], cleanup);
+      assert.equal(error.cause, error.errors[0]);
+      return true;
+    });
+    await observed;
+  });
+}
+
+test("a live control canceled before native readiness seals launch admission and releases its listener", async () => {
+  const controller = new AbortController();
+  const entered = Promise.withResolvers<void>();
+  const original = new Error("owned readiness canceled");
+  const context = {
+    evidence: undefined,
+    performance,
+    signal: controller.signal,
+    controlledInvocations: new Map(),
+    launchControl: undefined,
+    controlNumber: 0,
+    heavy: {},
+    slow: "original workload",
+    replace: async () => {
+      entered.resolve();
+    },
+    observed: async () => {},
+    bounded: createLiveBounded(),
+  };
+  const pending = cancelLiveControl(
+    "manual",
+    async () => {
+      throw new Error("late action must not run");
+    },
+    context,
+  );
+  await entered.promise;
+  controller.abort(original);
+  await assert.rejects(pending, (error: unknown) => error === original);
+  assert.equal(context.launchControl, undefined);
+  assert.equal(context.controlledInvocations.size, 0);
+});
 
 test("unentered operations and controls have no observed completion", () => {
   const value = projection(createLiveControlEvidence());
@@ -133,6 +192,7 @@ test("actual timeout preserves the exact error and records the existing bounded 
     return true;
   });
   control.callbacks[0]();
+  operation.resolve();
   await rejection;
   const value = projection(control.evidence);
   assert.equal(value.deadline, "enable-setting");
@@ -177,11 +237,10 @@ for (const name of liveControlNames) {
       },
       bounded: control.bounded,
     };
-    const cancel = runInNewContext(
-      javascript(declaration("cancelControl").getText(source)) +
-        "\ncancelControl;",
-      context,
-    ) as (name: string, action: () => Promise<void>) => Promise<number>;
+    const cancel = (
+      name: import("../host/live-control-vocabulary.ts").LiveControlName,
+      action: () => Promise<unknown>,
+    ) => cancelLiveControl(name, action, context);
     const pending = cancel(name, () => action.promise);
     const stage = () =>
       projection(control.evidence).controls.find(
@@ -228,39 +287,72 @@ test("actual applyEdit wrapper preserves arguments and default absent collector 
     positionAt: (offset: number) => offset,
   };
   const replacements: unknown[][] = [];
-  const replace = runInNewContext(
-    javascript(declaration("replace").getText(source)) + "\nreplace;",
-    {
-      assert,
-      bounded: control.bounded,
-      vscode: {
-        WorkspaceEdit: class {
-          replace(...args: unknown[]) {
-            replacements.push(args);
-          }
+  const bundled = await build({
+    entryPoints: ["test/host/live-editor.ts"],
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "cjs",
+    plugins: [
+      {
+        name: "live-editor-api",
+        setup(builder) {
+          builder.onResolve({ filter: /^vscode$/ }, () => ({
+            path: "vscode",
+            namespace: "live-api",
+          }));
+          builder.onLoad({ filter: /.*/, namespace: "live-api" }, () => ({
+            contents: "module.exports = globalThis.api",
+            loader: "js",
+          }));
         },
-        Range: class {
-          readonly start: number;
-          readonly end: number;
-          constructor(start: number, end: number) {
-            this.start = start;
-            this.end = end;
-          }
-        },
-        workspace: {
-          applyEdit: async () => {
-            calls++;
-            return true;
-          },
+      },
+    ],
+  });
+  const module = {
+    exports: {} as { replaceLiveBuffer: typeof replaceLiveBuffer },
+  };
+  runInNewContext(bundled.outputFiles[0].text, {
+    module,
+    exports: module.exports,
+    require: createRequire(import.meta.url),
+    Error,
+    Buffer,
+    api: {
+      WorkspaceEdit: class {
+        replace(...args: unknown[]) {
+          replacements.push(args);
+        }
+      },
+      Range: class {
+        readonly start: number;
+        readonly end: number;
+        constructor(start: number, end: number) {
+          this.start = start;
+          this.end = end;
+        }
+      },
+      workspace: {
+        applyEdit: async () => {
+          calls++;
+          return true;
         },
       },
     },
-  ) as (
+  });
+  const replace = (
     document: unknown,
     text: string,
-    name: string,
+    name: import("../host/live-control-vocabulary.ts").LiveOperationName,
     evidence: undefined,
-  ) => Promise<void>;
+  ) =>
+    module.exports.replaceLiveBuffer(
+      document as import("vscode").TextDocument,
+      text,
+      name,
+      evidence,
+      control.bounded,
+    );
   await replace(document, "replacement", "default-off-edit", undefined);
   assert.equal(calls, 1);
   assert.equal(replacements.length, 1);
@@ -284,12 +376,6 @@ test("collector faults and reporter faults preserve actual primary failure ident
     control.bounded(Promise.reject(original), "manual", faulty),
     (error: unknown) => error === original,
   );
-  const run = declaration("runLiveChecking");
-  const hook = run.body!.statements.find(ts.isTryStatement)!.catchClause!;
-  const failedBranch = run.body!.statements.find(
-    (item): item is ts.IfStatement =>
-      ts.isIfStatement(item) && item.expression.getText(source) === "failed",
-  )!;
   for (const evidence of [undefined, faulty, createLiveControlEvidence()]) {
     const context = {
       error: original,
@@ -307,7 +393,7 @@ test("collector faults and reporter faults preserve actual primary failure ident
       fixtureRecords: [],
       checkpoints: [],
       cleanupFailures: [],
-      reportLiveControlFailure: (
+      report: (
         state: LiveControlEvidence | undefined,
         counts: { fixtures: number; checkpoints: number },
         _write: undefined,
@@ -324,13 +410,9 @@ test("collector faults and reporter faults preserve actual primary failure ident
           pendingInvocations,
         ),
     };
-    await assert.rejects(
-      runInNewContext(
-        javascript(
-          `async function reject() { ${hook.block.getText(source)} ${failedBranch.getText(source)} } reject();`,
-        ),
-        context,
-      ) as Promise<void>,
+    captureLiveFailure(original, context);
+    assert.throws(
+      () => finishLiveFailure(context, context.cleanupFailures),
       (error: unknown) => error === original,
     );
     assert.equal(context.primaryFailure, original);
@@ -422,7 +504,7 @@ for (const stoppedStage of [
       replace: async () => {},
       bounded: (
         operation: PromiseLike<unknown>,
-        name: string,
+        name: import("../host/live-control-vocabulary.ts").LiveOperationName,
         evidence: LiveControlEvidence | undefined,
       ) => {
         const pending = control.bounded(operation, name, evidence);
@@ -430,11 +512,10 @@ for (const stoppedStage of [
         return pending;
       },
     };
-    const cancel = runInNewContext(
-      javascript(declaration("cancelControl").getText(source)) +
-        "\ncancelControl;",
-      context,
-    ) as (name: string, action: () => Promise<void>) => Promise<number>;
+    const cancel = (
+      name: import("../host/live-control-vocabulary.ts").LiveControlName,
+      action: () => Promise<unknown>,
+    ) => cancelLiveControl(name, action, context);
     const pending = cancel("manual", () => action.promise);
     await entered.promise;
     const invocation: { closed?: number; cancelled?: boolean } = {};
@@ -448,7 +529,6 @@ for (const stoppedStage of [
       message: "Live checking control deadline",
     });
     control.callbacks[0]();
-    await rejection;
     const record = projection(control.evidence);
     assert.equal(record.deadline, "manual");
     assert.equal(
@@ -459,7 +539,6 @@ for (const stoppedStage of [
       record.operations.find((item) => item.operation === "manual")!.completion,
       "unknown",
     );
-    assert.deepEqual(control.cleared, [1]);
     // Release held test promises after the assertion. No native SDK ran here.
     if (stoppedStage === "waiting-for-launch")
       context.launchControl!(invocation);
@@ -467,6 +546,8 @@ for (const stoppedStage of [
     invocation.closed = 20;
     invocation.cancelled = true;
     close.resolve();
+    await rejection;
+    assert.deepEqual(control.cleared, [1]);
   });
 }
 
@@ -966,12 +1047,6 @@ test("pending projection rejects added private fields, inferred claims and inval
 
 test("actual primary failure hook preserves the original error when the new projection clock or held inputs fail", async () => {
   const original = new Error("original pending control failure");
-  const run = declaration("runLiveChecking");
-  const hook = run.body!.statements.find(ts.isTryStatement)!.catchClause!;
-  const failedBranch = run.body!.statements.find(
-    (item): item is ts.IfStatement =>
-      ts.isIfStatement(item) && item.expression.getText(source) === "failed",
-  )!;
   for (const fault of ["clock", "primary", "deadline", "started"] as const) {
     const input = pendingContext();
     const evidence =
@@ -1013,7 +1088,7 @@ test("actual primary failure hook preserves the original error when the new proj
       evidence,
       primaryFilenames,
       captureLiveInvocationFailure,
-      captureLivePendingInvocations: (
+      capturePending: (
         ...args: Parameters<typeof captureLivePendingInvocations>
       ) => {
         captured = captureLivePendingInvocations(
@@ -1033,15 +1108,11 @@ test("actual primary failure hook preserves the original error when the new proj
       fixtureRecords: [],
       checkpoints: [],
       cleanupFailures: [],
-      reportLiveControlFailure,
+      report: () => {},
     };
-    await assert.rejects(
-      runInNewContext(
-        javascript(
-          `async function reject() { ${hook.block.getText(source)} ${failedBranch.getText(source)} } reject();`,
-        ),
-        context,
-      ) as Promise<void>,
+    captureLiveFailure(original, context);
+    assert.throws(
+      () => finishLiveFailure(context, context.cleanupFailures),
       (error: unknown) => error === original,
     );
     assert.equal(captured, "unknown");

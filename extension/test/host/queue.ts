@@ -1,11 +1,15 @@
+import { hostTemporaryDirectory } from "../support/host-temporary.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
+import { runProcess } from "../../src/process.ts";
+import { TestResources, withTestResources } from "../support/test-resources.ts";
+import { ownJoinedResource } from "../support/host-resources.ts";
+import { componentUI } from "../support/component-ui.ts";
 
 async function waitFor(predicate: () => boolean, message: string) {
   const deadline = Date.now() + 15000;
@@ -17,204 +21,209 @@ const findings = (document: vscode.TextDocument) =>
   vscode.languages
     .getDiagnostics(document.uri)
     .filter((item) => item.source === "saltbox-lint");
-
-export async function runQueue(): Promise<void> {
-  const roots = vscode.workspace.workspaceFolders!;
-  const temporary = await mkdtemp(join(tmpdir(), "saltbox-queue-"));
-  const log = join(temporary, "process.log");
-  const gate = join(temporary, "gate");
-  process.env.SALTBOX_TEST_PROCESS_LOG = log;
-  const invocations = () =>
-    existsSync(log)
-      ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
-      : [];
-  const documents = await Promise.all(
-    Array.from({ length: 40 }, (_, index) =>
-      vscode.workspace.openTextDocument(
-        vscode.Uri.joinPath(roots[0].uri, `queue-${index}.yml`),
-      ),
+async function replace(document: vscode.TextDocument, text: string) {
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(
+    document.uri,
+    new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(document.getText().length),
     ),
+    text,
   );
-  for (const document of documents)
-    await vscode.window.showTextDocument(document, { preview: false });
-  const failures: string[] = [];
-  const run = async (name: string, operation: () => Promise<void>) => {
-    try {
-      await operation();
-      console.log(`PASS ${name}`);
-    } catch (error) {
-      failures.push(name);
-      console.error(`FAIL ${name}`, error);
-    }
-  };
-  let editor: EditorIntegration | undefined;
-  const release = async () => {
-    delete process.env.SALTBOX_TEST_PROCESS_GATE;
-    await rm(gate, { force: true });
-  };
-  const hold = async () => {
-    await rm(gate + ".ready", { force: true });
-    await writeFile(gate, "");
-    process.env.SALTBOX_TEST_PROCESS_GATE = gate;
-    const pending = editor!.check(documents[0]);
-    await waitFor(
-      () => existsSync(gate + ".ready"),
-      "held check reached fixture gate",
-    );
-    return { pending };
-  };
-  try {
-    await run(
-      "queue root activation diagnoses all 40 open documents",
-      async () => {
+  assert.equal(await vscode.workspace.applyEdit(edit), true);
+}
+
+export async function runQueue(parentSignal?: AbortSignal): Promise<void> {
+  return withTestResources(
+    { cleanupTimeoutMs: 5000, operationSignal: parentSignal },
+    async (resources) => {
+      const roots = vscode.workspace.workspaceFolders!;
+      const temporary = await hostTemporaryDirectory("saltbox-queue-");
+      resources.defer("queue fixtures", () =>
+        rm(temporary, { recursive: true, force: true }),
+      );
+      const log = join(temporary, "process.log"),
+        gate = join(temporary, "gate");
+      const fixtureEnv: NodeJS.ProcessEnv = { SALTBOX_TEST_PROCESS_LOG: log };
+      const requests: {
+        filename: string;
+        input: string | Uint8Array | undefined;
+      }[] = [];
+      const invocations = () =>
+        existsSync(log)
+          ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
+          : [];
+      const documents = await Promise.all(
+        Array.from({ length: 40 }, (_, index) =>
+          vscode.workspace.openTextDocument(
+            vscode.Uri.joinPath(roots[0].uri, `queue-${index}.yml`),
+          ),
+        ),
+      );
+      for (const document of documents)
+        await vscode.window.showTextDocument(document, { preview: false });
+      let editor: EditorIntegration | undefined;
+      const failures: string[] = [];
+      const release = async () => {
+        delete fixtureEnv.SALTBOX_TEST_PROCESS_GATE;
+        await rm(gate, { force: true });
+      };
+      resources.defer("startup gate", release);
+      const run = async (
+        name: string,
+        operation: (owner: TestResources) => Promise<void>,
+      ) => {
+        try {
+          await withTestResources(
+            { cleanupTimeoutMs: 5000, operationSignal: resources.signal },
+            operation,
+          );
+          console.log(`PASS ${name}`);
+        } catch (error) {
+          failures.push(name);
+          console.error(`FAIL ${name}`, error);
+        }
+      };
+      const hold = async (owner: TestResources) => {
+        owner.defer("release case gate", release);
+        await rm(gate + ".ready", { force: true });
         await writeFile(gate, "");
-        process.env.SALTBOX_TEST_PROCESS_GATE = gate;
-        editor = new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!);
+        fixtureEnv.SALTBOX_TEST_PROCESS_GATE = gate;
+        const pending = owner.operation("held native queue check", (signal) =>
+          editor!.check(documents[0], false, undefined, false, signal),
+        );
         await waitFor(
           () => existsSync(gate + ".ready"),
-          "startup check held at fixture gate",
+          "held check reached fixture gate",
         );
-        await release();
-        await waitFor(
-          () =>
-            documents.every((document) =>
-              findings(document).some(
-                (d) => diagnosticCode(d) === "jinja-layout",
-              ),
-            ),
-          `all 40 open documents must receive diagnostics`,
-        );
-      },
-    );
-    // Drain startup work before each subsequent controlled queue exercise.
-    await editor!.checkWorkspace();
-    await run(
-      "queue root refresh diagnoses all 40 open documents",
-      async () => {
-        const { pending } = await hold();
-        editor!.refresh([roots[0].uri]);
-        await release();
-        await pending;
-        await waitFor(
-          () =>
-            documents.every((document) =>
-              findings(document).some(
-                (d) => diagnosticCode(d) === "jinja-layout",
-              ),
-            ),
-          "root refresh must not lose open documents",
-        );
-      },
-    );
-    await editor!.checkWorkspace();
-    const invalidations = [
-      "none",
-      "edit",
-      "version",
-      "close",
-      "root",
-      "dispose",
-    ] as const;
-    for (const [index, invalidation] of invalidations.entries()) {
+        return { pending };
+      };
       await run(
-        invalidation === "none"
-          ? "queue snapshots are created only when a current check runs"
-          : `queue snapshots are lazy and ${invalidation} invalidates pending checks`,
-        async () => {
-          const root = invalidation === "root" ? roots[1] : roots[0];
-          const document = await vscode.workspace.openTextDocument(
-            vscode.Uri.joinPath(root.uri, `queue-${40 + index}.yml`),
+        "queue root activation diagnoses all 40 open documents",
+        async (owner) => {
+          owner.defer("release startup gate", release);
+          await writeFile(gate, "");
+          fixtureEnv.SALTBOX_TEST_PROCESS_GATE = gate;
+          editor = ownJoinedResource(
+            resources,
+            "queue adapter",
+            new EditorIntegration(process.env.SALTBOX_TEST_FIXTURE_PATH!, {
+              ...componentUI(resources),
+              runProcess: (request, signal, observer) => {
+                const at = request.args.indexOf("--stdin-filename");
+                if (request.args[0] === "check" && at >= 0)
+                  requests.push({
+                    filename: request.args[at + 1],
+                    input: request.input,
+                  });
+                return runProcess(
+                  { ...request, env: fixtureEnv },
+                  signal,
+                  observer,
+                );
+              },
+            }),
           );
-          await vscode.window.showTextDocument(document, { preview: false });
-          const canonicalFilename = await realpath(document.uri.fsPath);
-          assert.equal(document.languageId, "yaml");
-          assert.equal(document.isClosed, false);
-          let reads = 0;
-          let statusReads = 0;
-          let readingStatus = false;
-          let requested = false;
-          // VS Code freezes TextDocument methods. Use an inheriting observer,
-          // not a Proxy that violates non-writable property invariants.
-          const tracked: vscode.TextDocument = Object.create(document, {
-            getText: {
-              value: (...args: Parameters<vscode.TextDocument["getText"]>) => {
-                reads++;
-                if (readingStatus) statusReads++;
-                return document.getText(...args);
-              },
-            },
-            version: {
-              get: () => {
-                requested = true;
-                return document.version;
-              },
-            },
-          });
-          const { pending: active } = await hold();
-          let activeStatusCalls = 0;
-          // Observe the real status method, including updateStatus's active
-          // document path. The frozen VS Code document cannot be instrumented.
-          const originalStatus = editor!.status;
-          editor!.status = function (
-            source = vscode.window.activeTextEditor?.document,
-          ) {
-            if (source === document) {
-              if (arguments.length) activeStatusCalls++;
-              readingStatus = true;
-              try {
-                return originalStatus.call(this, tracked);
-              } finally {
-                readingStatus = false;
-              }
+          await waitFor(
+            () => existsSync(gate + ".ready"),
+            "startup check held at fixture gate",
+          );
+          await release();
+          await waitFor(
+            () =>
+              documents.every((document) =>
+                findings(document).some(
+                  (finding) => diagnosticCode(finding) === "jinja-layout",
+                ),
+              ),
+            "all 40 open documents receive findings",
+          );
+        },
+      );
+      assert.deepEqual(
+        failures,
+        [],
+        "startup must establish the remaining queue controls",
+      );
+      await editor!.checkWorkspace();
+      await editor!.join();
+      await run(
+        "queue root refresh diagnoses all 40 open documents",
+        async (owner) => {
+          const { pending } = await hold(owner);
+          editor!.refresh([roots[0].uri]);
+          await release();
+          await pending;
+          await waitFor(
+            () =>
+              documents.every((document) =>
+                findings(document).some(
+                  (finding) => diagnosticCode(finding) === "jinja-layout",
+                ),
+              ),
+            "root refresh keeps all 40 documents",
+          );
+        },
+      );
+      await editor!.checkWorkspace();
+      await editor!.join();
+      for (const [index, invalidation] of [
+        "none",
+        "edit",
+        "version",
+        "close",
+        "root",
+        "dispose",
+      ].entries()) {
+        await run(
+          invalidation === "none"
+            ? "queue current requests transmit the actual native buffer"
+            : `queue ${invalidation} invalidates pending native checks`,
+          async (owner) => {
+            const root = invalidation === "root" ? roots[1] : roots[0];
+            const document = await vscode.workspace.openTextDocument(
+              vscode.Uri.joinPath(root.uri, `queue-${40 + index}.yml`),
+            );
+            await vscode.window.showTextDocument(document, { preview: false });
+            const filename = await realpath(document.uri.fsPath);
+            const original = document.getText();
+            owner.defer("restore native queued buffer", async () => {
+              if (!document.isClosed && document.getText() !== original)
+                await replace(document, original);
+            });
+            if (invalidation === "none") {
+              await replace(document, original + "# current native input\n");
+              editor!.change(document);
             }
-            return originalStatus.call(this, source);
-          };
-          const before = invocations().length;
-          let pending: Promise<void>;
-          let queuedState: string;
-          try {
-            pending = editor!.check(
-              tracked,
-              false,
-              invalidation === "version" ? undefined : document.version,
+            const { pending: active } = await hold(owner);
+            const before = invocations().length,
+              beforeRequests = requests.length;
+            let settled = false;
+            const pending = owner.operation(
+              "queued native source check",
+              async (signal) => {
+                try {
+                  await editor!.check(
+                    document,
+                    false,
+                    invalidation === "version" ? undefined : document.version,
+                    false,
+                    signal,
+                  );
+                } finally {
+                  settled = true;
+                }
+              },
             );
             await waitFor(
-              () => requested,
-              "requested document version captured",
+              () => editor!.status(document).state === "checking",
+              "the actual native model is queued behind the held child",
             );
-            // Roots are ready. The fixture gate holds the active subprocess
-            // while check's enqueue and active-editor status update finish.
-            await new Promise<void>((resolve) => setImmediate(resolve));
-            await waitFor(
-              () => editor!.status().state === "checking",
-              "active source check is queued behind the fixture gate",
-            );
-            queuedState = editor!.status().state;
-            assert.ok(activeStatusCalls > 0, "active status path was observed");
-          } finally {
-            editor!.status = originalStatus;
-          }
-          let settled = false;
-          pending.then(
-            () => {
-              settled = true;
-            },
-            () => {
-              settled = true;
-            },
-          );
-          // The original pending promise is joined below and retains failures.
-          const queuedReads = reads;
-          try {
+            const queuedState = editor!.status(document).state;
             if (invalidation === "edit" || invalidation === "version") {
-              const edit = new vscode.WorkspaceEdit();
-              edit.insert(
-                document.uri,
-                new vscode.Position(0, 0),
-                "# unsaved\n",
-              );
-              assert.equal(await vscode.workspace.applyEdit(edit), true);
-              if (invalidation === "edit") editor!.change(tracked);
+              await replace(document, "# unsaved\n" + document.getText());
+              if (invalidation === "edit") editor!.change(document);
             } else if (invalidation === "close") {
               const tabs = vscode.window.tabGroups.all
                 .flatMap((group) => group.tabs)
@@ -223,17 +232,34 @@ export async function runQueue(): Promise<void> {
                     tab.input instanceof vscode.TabInputText &&
                     tab.input.uri.toString() === document.uri.toString(),
                 );
-              await vscode.window.tabGroups.close(tabs, true);
-              editor!.close(tracked);
+              assert.equal(
+                await vscode.window.tabGroups.close(tabs, true),
+                true,
+              );
+              await waitFor(
+                () =>
+                  !vscode.window.tabGroups.all.some((group) =>
+                    group.tabs.some(
+                      (tab) =>
+                        tab.input instanceof vscode.TabInputText &&
+                        tab.input.uri.toString() === document.uri.toString(),
+                    ),
+                  ),
+                "the selected native tab is absent",
+              );
+              editor!.close(document);
             } else if (invalidation === "root") {
+              let done!: () => void;
               const changed = new Promise<void>((resolve) => {
-                const listener = vscode.workspace.onDidChangeWorkspaceFolders(
-                  () => {
-                    listener.dispose();
-                    resolve();
-                  },
-                );
+                done = resolve;
               });
+              const listener = vscode.workspace.onDidChangeWorkspaceFolders(
+                () => {
+                  listener.dispose();
+                  done();
+                },
+              );
+              owner.defer("root removal listener", () => listener.dispose());
               assert.equal(vscode.workspace.updateWorkspaceFolders(1, 1), true);
               await changed;
               editor!.configureRoots();
@@ -241,67 +267,43 @@ export async function runQueue(): Promise<void> {
             if (invalidation !== "none" && invalidation !== "version")
               await waitFor(
                 () => settled,
-                "invalidation must remove pending work before the active gate releases",
+                "invalidation settles queued work before releasing the active child",
               );
             await release();
             await Promise.all([active, pending]);
-            assert.equal(queuedState, "checking", "queued status is checking");
-            assert.equal(
-              statusReads,
-              0,
-              "active queued status must not copy document text",
-            );
-            assert.equal(
-              queuedReads,
-              0,
-              "pending requests must not copy document text or construct indexes",
-            );
+            assert.equal(queuedState, "checking");
+            const selected = requests
+              .slice(beforeRequests)
+              .filter((request) => request.filename === filename);
+            const executed = invocations()
+              .slice(before)
+              .some((line) => line.includes(filename));
             if (invalidation === "none") {
-              assert.ok(
-                reads > 0,
-                "current queued request must create its snapshot when running",
+              assert.equal(selected.length, 1);
+              assert.equal(
+                selected[0].input,
+                document.getText(),
+                "native check receives current source bytes",
               );
-              assert.ok(
-                invocations()
-                  .slice(before)
-                  .some((line) => line.includes(canonicalFilename)),
-                "current queued check must execute",
-              );
+              assert.equal(executed, true);
               assert.ok(
                 findings(document).some(
                   (finding) => diagnosticCode(finding) === "jinja-layout",
                 ),
-                "current queued check must publish",
               );
-              return;
+            } else {
+              assert.deepEqual(
+                selected,
+                [],
+                "obsolete native input never reaches the backend adapter",
+              );
+              assert.equal(executed, false);
+              assert.equal(findings(document).length, 0);
             }
-            assert.equal(
-              reads,
-              0,
-              "obsolete queued work must not create a snapshot",
-            );
-            assert.ok(
-              !invocations()
-                .slice(before)
-                .some((line) => line.includes(canonicalFilename)),
-              "obsolete queued check executed",
-            );
-            assert.equal(
-              findings(document).length,
-              0,
-              "obsolete queued check published diagnostics",
-            );
-          } finally {
-            await release();
-          }
-        },
-      );
-    }
-  } finally {
-    editor?.dispose();
-    await release();
-    delete process.env.SALTBOX_TEST_PROCESS_LOG;
-    await rm(temporary, { recursive: true, force: true });
-  }
-  assert.deepEqual(failures, [], "queue regressions");
+          },
+        );
+      }
+      assert.deepEqual(failures, [], "queue regressions");
+    },
+  );
 }

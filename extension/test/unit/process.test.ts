@@ -184,6 +184,56 @@ test("a no-input request omits the writer that rejects a closed owned child pipe
   }
 });
 const base = { executable: process.execPath, cwd: process.cwd() };
+test("instance process observations receive native lifecycle without changing results", async () => {
+  const events: string[] = [];
+  assert.equal(
+    await runProcess(
+      {
+        ...base,
+        args: ["-e", 'process.stdout.write("owned");process.exitCode=1'],
+        successCodes: [1],
+      },
+      new AbortController().signal,
+      undefined,
+      {
+        spawned(pid) {
+          assert.ok(pid);
+          events.push("spawned");
+          throw new Error("observer failure");
+        },
+        closed(code, signal) {
+          assert.equal(code, 1);
+          assert.equal(signal, null);
+          events.push("closed");
+          throw new Error("observer failure");
+        },
+      },
+    ),
+    "owned",
+  );
+  assert.deepEqual(events, ["spawned", "closed"]);
+});
+test("request environment is isolated and cannot disable editor ownership", async () => {
+  const before = process.env.SALTBOX_PROCESS_REQUEST_TEST;
+  const env = Object.freeze({
+    SALTBOX_PROCESS_REQUEST_TEST: "request value",
+    SALTBOX_LINT_EDITOR_PROCESS: "0",
+  });
+  const output = await runProcess(
+    {
+      ...base,
+      args: [
+        "-e",
+        "process.stdout.write(JSON.stringify([process.env.SALTBOX_PROCESS_REQUEST_TEST,process.env.SALTBOX_LINT_EDITOR_PROCESS,Boolean(process.env.PATH)]))",
+      ],
+      env,
+    },
+    new AbortController().signal,
+  );
+  assert.deepEqual(JSON.parse(output), ["request value", "1", true]);
+  assert.equal(process.env.SALTBOX_PROCESS_REQUEST_TEST, before);
+  assert.equal(env.SALTBOX_LINT_EDITOR_PROCESS, "0");
+});
 test("an explicit empty source snapshot still receives piped EOF", async () => {
   assert.equal(
     await runProcess(
@@ -435,5 +485,97 @@ test(
     assert.ok(ids);
     await awaitTermination(ids.parent);
     await awaitTermination(ids.descendant);
+  },
+);
+
+test(
+  "native stderr, nonzero exit and setup errors survive denied group cleanup",
+  { skip: process.platform === "win32" },
+  async () => {
+    const bundled = await build({
+      entryPoints: ["src/process.ts"],
+      bundle: true,
+      write: false,
+      platform: "node",
+      format: "cjs",
+    });
+    for (const mode of ["stderr", "exit-status", "setup"] as const) {
+      const cleanup = Object.assign(
+        new Error("injected denied group cleanup"),
+        { code: "EPERM" },
+      );
+      let nativeClosed = false;
+      const labels: string[] = [];
+      const module = { exports: {} as { runProcess: typeof runProcess } };
+      runInNewContext(bundled.outputFiles[0].text, {
+        module,
+        exports: module.exports,
+        require: createRequire(import.meta.url),
+        Buffer,
+        TextDecoder,
+        AbortController,
+        Error,
+        AggregateError,
+        setTimeout,
+        clearTimeout,
+        process: {
+          platform: process.platform,
+          env: { ...process.env, SALTBOX_LINT_EDITOR_SUPERVISOR: undefined },
+          kill(pid: number, signal: NodeJS.Signals) {
+            assert.ok(
+              pid < 0,
+              "only this instance's owned process group reaches the adapter",
+            );
+            assert.equal(signal, "SIGKILL");
+            throw cleanup;
+          },
+        },
+      });
+      const request = {
+        ...base,
+        args: [
+          "-e",
+          mode === "stderr"
+            ? 'process.stderr.write("primary stderr")'
+            : mode === "exit-status"
+              ? "process.exit(2)"
+              : "process.exit(0)",
+        ],
+        // This deliberate invalid runtime value fails stdin setup after native spawn.
+        ...(mode === "setup"
+          ? { input: Object.create(null) as Uint8Array }
+          : {}),
+      };
+      await assert.rejects(
+        module.exports.runProcess(
+          request,
+          new AbortController().signal,
+          (label) => labels.push(label),
+          {
+            closed() {
+              nativeClosed = true;
+            },
+          },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof AggregateError);
+          assert.equal(nativeClosed, true);
+          assert.equal(error.errors.length, 2);
+          assert.equal(error.errors[1], cleanup);
+          assert.equal(error.cause, error.errors[0]);
+          if (mode === "stderr")
+            assert.match(String(error.errors[0]), /primary stderr/);
+          if (mode === "exit-status")
+            assert.match(String(error.errors[0]), /exited with status 2/);
+          if (mode === "setup")
+            assert.equal(
+              (error.errors[0] as NodeJS.ErrnoException).code,
+              "ERR_INVALID_ARG_TYPE",
+            );
+          return true;
+        },
+      );
+      assert.deepEqual(labels, [mode]);
+    }
   },
 );

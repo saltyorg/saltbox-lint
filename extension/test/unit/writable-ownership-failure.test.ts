@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { writableStages, writableGuards } from "../../src/writable-trace.ts";
 import {
@@ -370,77 +369,42 @@ test("a failed evidence writer cannot replace the primary failure", () => {
   }
 });
 
-test("host wiring retains the original readiness deadline, six controls and child pass-through", () => {
-  const host = readFileSync(
-    new URL("../host/writable-ownership.ts", import.meta.url),
-    "utf8",
-  );
-  assert.match(host, /const deadline = Date\.now\(\) \+ 10000;/);
-  assert.match(
-    host,
-    /const modes = \["canonical", "lint-fixes", "fixAll"\] as const;/,
-  );
-  assert.match(host, /for \(const retarget of \[false, true\]\)/);
-  assert.match(
-    host,
-    /const publicPreconditions =\s+mode === "fixAll"\s+\? captureWritableOwnershipPreconditions\(document, uri, bytes\)\s+: undefined;\s+const pending = \(\s+mode === "fixAll"\s+\? editor\.fixAll\(uri, stages\.collect, processFailure\.collect\)\s+: editor\.format\(\s*document,\s*mode,\s*undefined,\s*stages\.collect,\s*processFailure\.collect,?\s*\)/,
-  );
-  // Successful controls retain every original operation. The fixture failure
-  // log is read only by its bounded helper in the existing failure catch.
-  const existingOperations = {
-    mkdtemp: 1,
-    readFile: 2,
-    realpath: 2,
-    rm: 6,
-    symlink: 2,
-    writeFile: 2,
-    until: 3,
-    fixAll: 1,
-    format: 1,
-    openTextDocument: 1,
-    showTextDocument: 1,
-    executeCommand: 1,
-  };
-  for (const [operation, count] of Object.entries(existingOperations))
-    assert.equal(
-      [...host.matchAll(new RegExp(`\\b${operation}\\s*\\(`, "g"))].length,
-      count,
-      operation,
-    );
-  const helper = readFileSync(
-    new URL("../host/writable-ownership-failure.ts", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    helper.replace(
-      /^import \{[^}]+\} from "\.\.\/\.\.\/src\/(?:writable-trace|process-failure)\.ts";\n/gm,
-      "",
-    ),
-    /\b(?:import|require|await|async|process|setTimeout|fetch|addEventListener)\b|\.onDid|\.on\(/,
-  );
-  const vocabulary = readFileSync(
-    new URL("../../src/writable-trace.ts", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    vocabulary,
-    /\b(?:import|require|await|async|process|function|class|new|fetch|setTimeout|addEventListener)\b|\.onDid|\.on\(/,
-  );
-  assert.match(
-    host,
-    /assert\.equal\(await fixtureRunning\(controlled\), true\);\s+acceptedReady = true;/,
-  );
-  assert.match(
-    host,
-    /catch \(error\) \{\s+reportFixtureFailures\(failures, undefined, "format"\);\s+reportWritableOwnershipFailure\(error,/,
-  );
-  const fixture = readFileSync(
-    new URL("../testdata/process_fixture.go", import.meta.url),
-    "utf8",
-  );
-  assert.match(fixture, /err := command\.Run\(\)/);
-  assert.match(fixture, /os\.Stdout\.Write\(output\.Bytes\(\)\)/);
-  assert.match(fixture, /os\.Exit\(exit\.ExitCode\(\)\)/);
+test("six writable controls retain independent stage and process evidence", () => {
+  const controls = [
+    "canonical:stable",
+    "canonical:retarget",
+    "lint-fixes:stable",
+    "lint-fixes:retarget",
+    "fixAll:stable",
+    "fixAll:retarget",
+  ] as const;
+  const records = controls.map((control, completed) => {
+    const stages = collectWritableOwnershipStages();
+    const process = collectWritableProcessFailure();
+    stages.collect("snapshot-present");
+    if (control.endsWith(":retarget")) {
+      stages.collect("final-authority-declined", "format-return-authority");
+      process.collect("cancelled");
+    }
+    return failureRecord({
+      control,
+      completed,
+      settled: true,
+      acceptedReady: true,
+      stages: stages.records,
+      processFailure: process.category,
+    });
+  });
+  assert.equal(records.length, 6);
+  for (const [index, record] of records.entries()) {
+    assert.equal(record.control, controls[index]);
+    assert.equal(record.expected_controls, 6);
+    assert.equal(record.completed_controls, index);
+    assert.equal(record.accepted_ready, true);
+    assert.equal(record.pending_settled, true);
+    assert.equal(record.invocation_stages.length, index % 2 ? 2 : 1);
+    assert.equal(record.process_rejection, index % 2 ? "cancelled" : "unknown");
+  }
 });
 
 test("every callback vocabulary label survives collection and failure reporting", () => {

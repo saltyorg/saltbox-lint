@@ -1,24 +1,7 @@
+import { cleanupLiveControls } from "../support/live-controls.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFileSync } from "node:fs";
-import ts from "typescript";
-import { runInNewContext } from "node:vm";
 
-const source = ts.createSourceFile(
-  "live-checking.ts",
-  readFileSync("test/host/live-checking.ts", "utf8"),
-  ts.ScriptTarget.Latest,
-  true,
-  ts.ScriptKind.TS,
-);
-const run = source.statements.find(
-  (statement): statement is ts.FunctionDeclaration =>
-    ts.isFunctionDeclaration(statement) &&
-    statement.name?.text === "runLiveChecking",
-);
-assert.ok(run?.body);
-const cleanup = run.body.statements.find(ts.isTryStatement)?.finallyBlock;
-assert.ok(cleanup);
 for (const failure of [
   "none",
   "deactivate",
@@ -34,27 +17,15 @@ for (const failure of [
       calls.push(name);
       if (name === failure) throw original;
     };
-    const operation = runInNewContext(
-      `(async () => ${cleanup.getText(source)})()`,
-      {
-        launchControl: () => {},
-        runtime: { deactivate: async () => control("deactivate") },
-        bounded: (promise: Promise<void>) => promise,
-        observed: async () => control("join"),
-        invocations: [],
-        evidence: undefined,
-        failed: false,
-        fixtureRecords: [],
-        checkpoints: [],
-        reportLiveControlFailure: () => {},
-        cleanupFailures: errors,
-        Object: { defineProperty: () => control("restore") },
-        childProcesses: {},
-        descriptor: {},
-        changeListener: { dispose: () => control("unsubscribe") },
-      },
-    ) as Promise<void>;
-    await operation;
+    errors.push(
+      ...(await cleanupLiveControls({
+        stopLaunch() {},
+        deactivate: async () => control("deactivate"),
+        join: async () => control("join"),
+        restore: () => control("restore"),
+        unsubscribe: () => control("unsubscribe"),
+      })),
+    );
     assert.ok(calls.includes("restore"));
     assert.ok(calls.includes("unsubscribe"));
     assert.deepEqual(errors, failure === "none" ? [] : [original]);

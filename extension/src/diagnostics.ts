@@ -5,6 +5,10 @@ import { identify, resolveSource } from "./identity.ts";
 import { SnapshotIndex } from "./protocol.ts";
 import type { Finding } from "./protocol.ts";
 
+export interface DiagnosticAdapters {
+  readFile: typeof readFile;
+}
+
 export function range(value: {
   start: { line: number; character: number };
   end: { line: number; character: number };
@@ -22,6 +26,7 @@ export async function renderDiagnostics(
   index: SnapshotIndex,
   root: string,
   documentedRules: ReadonlySet<string> = new Set(),
+  adapters: Partial<DiagnosticAdapters> = {},
 ): Promise<vscode.Diagnostic[]> {
   const relatedIndexes = new Map<
     string,
@@ -43,7 +48,9 @@ export async function renderDiagnostics(
         }
         return {
           uri: vscode.Uri.file(filename),
-          index: new SnapshotIndex(await readFile(filename, "utf8")),
+          index: new SnapshotIndex(
+            await (adapters.readFile ?? readFile)(filename, "utf8"),
+          ),
         };
       })().catch(() => undefined);
       relatedIndexes.set(relative, work);

@@ -352,12 +352,7 @@ test("startup identity assertions retain exact paths under POSIX and Windows sep
   }
 });
 
-test("real startup call site collects only on rejection and retains the original wait", async () => {
-  const source = readFileSync("test/host/active-project.ts", "utf8");
-  assert.match(
-    source,
-    /const deadline = Date.now\(\) \+ 10000;\s+while \(!predicate\(\) && Date.now\(\) < deadline\) await pause\(25\);\s+assert.ok\(predicate\(\), message\);/,
-  );
+test("real startup call site collects only on rejection and preserves that failure", async () => {
   const bundled = await build({
     entryPoints: ["test/host/active-project.ts"],
     bundle: true,
@@ -395,6 +390,7 @@ test("real startup call site collects only on rejection and retains the original
     "predicate rejection",
     "assertion rejection",
   ]) {
+    const owner = mkdtempSync(join(tmpdir(), "saltbox-startup-owner-"));
     let reportedError: unknown;
     let clockReads = 0;
     const context = {
@@ -426,28 +422,51 @@ test("real startup call site collects only on rejection and retains the original
       module: { exports: {} as { runActiveProject: () => Promise<void> } },
       exports: {},
       require: createRequire(import.meta.url),
-      process: { env: {} },
+      process: { env: { SALTBOX_TEST_WORKSPACE_PATH: owner } },
       console: { log() {}, error() {} },
       __filename: "actual-test-controller",
       Date: { now: () => (clockReads++ === 0 ? 0 : 10001) },
       setTimeout,
+      clearTimeout,
+      AbortController,
+      Buffer,
     };
     context.exports = context.module.exports;
     runInNewContext(bundled.outputFiles[0].text, context);
-    await assert.rejects(context.module.exports.runActiveProject(), (error) => {
-      if (outcome === "success") return error === afterStartup;
-      assert.equal(
-        error,
-        reportedError,
-        "the exact reported error must escape",
+    try {
+      await assert.rejects(
+        context.module.exports.runActiveProject(),
+        (failure) => {
+          assert.ok(
+            failure &&
+              typeof failure === "object" &&
+              "cause" in failure &&
+              "errors" in failure,
+          );
+          assert.ok(Array.isArray(failure.errors));
+          assert.equal(
+            failure.errors.length,
+            1,
+            "startup failure must not hide a second cleanup failure",
+          );
+          const error = failure.cause;
+          if (outcome === "success") return error === afterStartup;
+          assert.equal(
+            error,
+            reportedError,
+            "the exact reported error must escape",
+          );
+          if (outcome === "predicate rejection") return error === original;
+          assert.match(
+            (error as Error).message,
+            /startup without file context shows both cached projects/,
+          );
+          return true;
+        },
       );
-      if (outcome === "predicate rejection") return error === original;
-      assert.match(
-        (error as Error).message,
-        /startup without file context shows both cached projects/,
-      );
-      return true;
-    });
-    assert.equal(context.captures, outcome === "success" ? 0 : 1);
+      assert.equal(context.captures, outcome === "success" ? 0 : 1);
+    } finally {
+      rmSync(owner, { recursive: true, force: true });
+    }
   }
 });

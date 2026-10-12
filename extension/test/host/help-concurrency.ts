@@ -1,12 +1,13 @@
+import { hostTemporaryDirectory } from "../support/host-temporary.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { RuleHelp } from "../../src/help.ts";
-import { helpChildMatcher } from "./help-child.ts";
+import { runProcess } from "../../src/process.ts";
+import { withTestResources } from "../support/test-resources.ts";
 import {
   fixtureGateInstance,
   fixtureProcesses,
@@ -24,174 +25,152 @@ async function waitFor(
   assert.ok(await predicate(), message);
 }
 
-export async function runHelpConcurrency(document: vscode.TextDocument) {
-  const originalEditor = vscode.window.activeTextEditor;
-  assert.ok(originalEditor);
-  assert.equal(originalEditor.document, document);
-  const originalColumn = originalEditor.viewColumn;
-  assert.ok(originalColumn);
-  const product = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
-  const executable = join(
-    product.extensionPath,
-    "bin",
-    "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
-  );
-  const temporary = await mkdtemp(join(tmpdir(), "saltbox-help-"));
-  const gate = join(temporary, "gate");
-  const instances = join(temporary, "instances.jsonl");
-  // Observe the installed product's real command and process adapter. Redirect
-  // only help children through the lifetime/gate fixture, which runs its exact
-  // installed CLI. The product executable, source and other children stay intact.
-  const childProcess = createRequire(__filename)(
-    "node:child_process",
-  ) as typeof import("node:child_process");
-  const descriptor = Object.getOwnPropertyDescriptor(childProcess, "spawn")!;
-  const originalSpawn = childProcess.spawn;
-  const matchesHelpChild = helpChildMatcher(executable);
-  const calls: string[][] = [];
-  const versionRequests: string[] = [];
-  let prefix = "--version";
-  const owned = new RuleHelp(executable);
-  const pending: Promise<unknown>[] = [];
-  try {
-    Object.defineProperty(childProcess, "spawn", {
-      ...descriptor,
-      value: function (
-        this: unknown,
-        ...args: Parameters<typeof originalSpawn>
-      ) {
-        const [file, argv, options] = args;
-        if (Array.isArray(argv) && matchesHelpChild(file, argv)) {
-          calls.push([...argv]);
-          if (argv[0] === "--version") versionRequests.push(file);
-          return originalSpawn(process.env.SALTBOX_TEST_FIXTURE_PATH!, argv, {
-            ...options,
-            env: {
-              ...options?.env,
-              SALTBOX_TEST_REAL_CLI: executable,
-              SALTBOX_TEST_PROCESS_INSTANCES: instances,
-              SALTBOX_TEST_PROCESS_GATE: gate,
-              SALTBOX_TEST_PROCESS_GATE_PREFIX: prefix,
-            },
-          });
-        }
-        return Reflect.apply(originalSpawn, this, args);
-      },
-    });
-    await writeFile(gate, "held");
-    // All twelve calls stay outstanding while the first version observation is
-    // held, including calls from both roots of the installed multi-root host.
-    for (const root of vscode.workspace.workspaceFolders!) {
-      const source = await vscode.workspace.openTextDocument(
-        vscode.Uri.joinPath(root.uri, "roles/example/defaults/main.yml"),
-      );
-      await vscode.window.showTextDocument(source, { preview: false });
-      for (let index = 0; index < 6; index++)
-        pending.push(
-          Promise.resolve(
-            vscode.commands.executeCommand(
-              "saltboxLint.explainRule",
-              "jinja-layout",
-            ),
-          ),
+export async function runHelpConcurrency(
+  document: vscode.TextDocument,
+  parentSignal?: AbortSignal,
+): Promise<void> {
+  await withTestResources(
+    { cleanupTimeoutMs: 15000, operationSignal: parentSignal },
+    async (resources) => {
+      const original = vscode.window.activeTextEditor!;
+      assert.equal(original.document, document);
+      resources.defer("original help tab", async () => {
+        await vscode.window.showTextDocument(document, {
+          viewColumn: original.viewColumn,
+          preview: false,
+        });
+      });
+      // Public installed commands execute unchanged. Their scheduling is observed
+      // through their returned promises; forced overlap belongs to the component.
+      const installed: Promise<vscode.MarkdownString>[] = [];
+      for (const root of vscode.workspace.workspaceFolders!) {
+        const source = await vscode.workspace.openTextDocument(
+          vscode.Uri.joinPath(root.uri, "roles/example/defaults/main.yml"),
         );
-    }
-    await waitFor(
-      () => existsSync(gate + ".ready"),
-      "manual version child reaches gate",
-    );
-    const ready = JSON.parse(readFileSync(gate + ".ready", "utf8"));
-    const contextExecutable = join(
-      product.extensionUri.fsPath,
-      "bin",
-      "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
-    );
-    assert.equal(
-      versionRequests[0],
-      contextExecutable,
-      "observed installed version child uses the context URI filesystem path",
-    );
-    assert.equal(
-      realpathSync.native(versionRequests[0]),
-      realpathSync.native(executable),
-      "actual intercepted child owns the exact installed executable identity",
-    );
-    console.log(
-      `MEASURE help executable request=${JSON.stringify(versionRequests[0])} extension_path=${JSON.stringify(executable)} canonical=${JSON.stringify(realpathSync.native(executable))} argv=["--version"]`,
-    );
-    assert.equal(
-      await fixtureRunning(fixtureGateInstance(ready, instances)),
-      true,
-    );
-    await vscode.commands.executeCommand("saltboxLint.showStatus");
-    await rm(gate);
-    const values = await Promise.all(pending);
-    assert.ok(values.every((value) => value instanceof vscode.MarkdownString));
-    assert.equal(
-      calls.filter((args) => args[0] === "--version").length,
-      1,
-      "twelve overlapping installed manual commands share one version child",
-    );
-    console.log(
-      "PASS installed overlapping help commands share one version child across both roots",
-    );
-
-    calls.length = 0;
-    prefix = "rules";
-    await rm(gate + ".ready");
-    await writeFile(gate, "held");
-    const first = owned.registry(true);
-    pending.push(first.catch(() => undefined));
-    await waitFor(
-      () => existsSync(gate + ".ready"),
-      "registry child reaches gate",
-    );
-    const held = JSON.parse(readFileSync(gate + ".ready", "utf8"));
-    assert.equal(
-      await fixtureRunning(fixtureGateInstance(held, instances)),
-      true,
-    );
-    const refreshed = owned.registry(true);
-    const outcomes = Promise.allSettled([first, refreshed]);
-    pending.push(outcomes);
-    owned.dispose();
-    assert.ok(
-      (await outcomes).every((outcome) => outcome.status === "rejected"),
-    );
-    await assert.rejects(owned.registry(true), /Canceled/);
-    assert.deepEqual(
-      calls.map((args) => args[0]),
-      ["--version", "rules"],
-      "disposal prevents queued and late version children",
-    );
-    console.log(
-      "PASS installed CLI help disposal joins its held registry and prevents queued and late children",
-    );
-  } finally {
-    owned.dispose();
-    await rm(gate, { force: true });
-    await Promise.allSettled(pending);
-    Object.defineProperty(childProcess, "spawn", descriptor);
-    try {
+        await vscode.window.showTextDocument(source, { preview: false });
+        for (let index = 0; index < 6; index++)
+          installed.push(
+            resources.operation("installed help command", () =>
+              vscode.commands.executeCommand<vscode.MarkdownString>(
+                "saltboxLint.explainRule",
+                "jinja-layout",
+              ),
+            ),
+          );
+      }
+      assert.ok(
+        (await Promise.all(installed)).every(
+          (value) => value instanceof vscode.MarkdownString,
+        ),
+      );
+      const temporary = await hostTemporaryDirectory("saltbox-help-");
+      resources.defer("help fixture files", () =>
+        rm(temporary, { recursive: true, force: true }),
+      );
+      const executable = process.env.SALTBOX_TEST_INSTALLED_CLI_PATH!;
+      const instances = join(temporary, "instances.jsonl");
+      const calls: string[][] = [];
+      const createHelp = (prefix: string) => {
+        const nonce = randomUUID();
+        const gate = join(temporary, `gate-${nonce}`);
+        const help = new RuleHelp(executable, (request, signal, observer) => {
+          calls.push([...request.args]);
+          return runProcess(
+            {
+              ...request,
+              executable: process.env.SALTBOX_TEST_FIXTURE_PATH!,
+              env: {
+                SALTBOX_TEST_REAL_CLI: executable,
+                SALTBOX_TEST_PROCESS_INSTANCES: instances,
+                SALTBOX_TEST_PROCESS_GATE: gate,
+                SALTBOX_TEST_PROCESS_GATE_NONCE: nonce,
+                SALTBOX_TEST_PROCESS_GATE_PREFIX: prefix,
+              },
+            },
+            signal,
+            observer,
+          );
+        });
+        resources.defer("help component", async () => {
+          help.dispose();
+          await help.join();
+        });
+        resources.signal.addEventListener("abort", () => help.dispose(), {
+          once: true,
+        });
+        return { help, gate, nonce };
+      };
+      const first = createHelp("--version");
+      await writeFile(first.gate, "held");
+      const overlapping = Array.from({ length: 12 }, () =>
+        resources.operation("overlapping registry", () =>
+          first.help.registry(),
+        ),
+      );
+      await waitFor(
+        () => existsSync(first.gate + ".ready"),
+        "shared version child reaches its exact gate",
+      );
+      const ready = JSON.parse(readFileSync(first.gate + ".ready", "utf8"));
+      assert.equal(ready.nonce, first.nonce);
+      assert.equal(
+        await fixtureRunning(fixtureGateInstance(ready, instances)),
+        true,
+      );
+      await rm(first.gate);
+      assert.ok(
+        (await Promise.all(overlapping)).every((rules) =>
+          rules.some((rule) => rule.id === "jinja-layout"),
+        ),
+      );
+      assert.deepEqual(
+        calls.map((args) => args[0]),
+        ["--version", "rules"],
+        "twelve forced-overlap component calls share one version and registry child",
+      );
+      calls.length = 0;
+      const second = createHelp("rules");
+      await writeFile(second.gate, "held");
+      const pending = second.help.registry(true);
+      const observedPending = pending.catch(() => undefined);
+      await waitFor(
+        () => existsSync(second.gate + ".ready"),
+        "fresh registry child reaches disposal gate",
+      );
+      const held = JSON.parse(readFileSync(second.gate + ".ready", "utf8"));
+      assert.equal(held.nonce, second.nonce);
+      assert.equal(
+        await fixtureRunning(fixtureGateInstance(held, instances)),
+        true,
+      );
+      const refreshed = second.help.registry(true);
+      const outcomes = resources.operation("disposed help outcomes", () =>
+        Promise.allSettled([pending, refreshed]),
+      );
+      second.help.dispose();
+      await second.help.join();
+      await observedPending;
+      assert.ok(
+        (await outcomes).every((outcome) => outcome.status === "rejected"),
+      );
+      await assert.rejects(second.help.registry(true), /Canceled/);
+      assert.deepEqual(
+        calls.map((args) => args[0]),
+        ["--version", "rules"],
+        "disposal prevents queued and late component children",
+      );
+      first.help.dispose();
+      await first.help.join();
       await waitFor(
         async () =>
           (
             await Promise.all(fixtureProcesses(instances).map(fixtureAbsent))
           ).every(Boolean),
-        "all observed help child lifetimes terminate",
+        "all exact component help instances terminate",
       );
       console.log(
-        `MEASURE help cleanup observed_processes=${fixtureProcesses(instances).length} surviving=0`,
+        "PASS twelve unchanged installed help commands and twelve gated native component calls; disposal joins exact component children",
       );
-    } finally {
-      await rm(temporary, { recursive: true, force: true });
-      // Reuse the caller's tab. A new tab starts a check that can supersede
-      // the next quick-fix action while the command crosses the host boundary.
-      await vscode.window.showTextDocument(document, {
-        viewColumn: originalColumn,
-        preview: false,
-      });
-      assert.equal(vscode.window.activeTextEditor?.viewColumn, originalColumn);
-    }
-  }
+    },
+  );
 }

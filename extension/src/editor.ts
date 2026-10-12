@@ -1,6 +1,7 @@
 import {
   Navigation,
   validateNavigation,
+  type NavigationAdapters,
   type NavigationAnswer,
 } from "./navigation.ts";
 import { parseQuery, type QueryOperation } from "./navigation-protocol.ts";
@@ -31,9 +32,14 @@ import type { ProcessFailureObserver } from "./process-failure.ts";
 import { range, renderDiagnostics } from "./diagnostics.ts";
 import { Scheduler, typingPreempted } from "./scheduler.ts";
 import { LiveChecks } from "./live-checks.ts";
-import { MarkedRoots } from "./roots.ts";
+import { MarkedRoots, type RootAdapters } from "./roots.ts";
 import { Results } from "./results.ts";
 import { Dependencies } from "./dependencies.ts";
+import {
+  combineDisposables,
+  disposeResources,
+  rollbackResources,
+} from "./disposables.ts";
 import {
   contentFingerprint,
   fileFingerprint,
@@ -77,6 +83,20 @@ export interface CheckStatus {
     | "failed";
   reason: string;
 }
+export interface EditorAdapters {
+  runProcess: typeof runProcess;
+  readFile: typeof readFile;
+  stat: typeof stat;
+  schedule: (perform: () => void, milliseconds: number) => () => void;
+  roots: Partial<RootAdapters>;
+  navigation: Partial<NavigationAdapters>;
+  createOutputChannel: (name: string) => vscode.OutputChannel;
+  createStatusBarItem: (
+    alignment?: vscode.StatusBarAlignment,
+    priority?: number,
+  ) => vscode.StatusBarItem;
+  showErrorMessage: (message: string) => PromiseLike<unknown>;
+}
 interface Snapshot extends Identity {
   logical?: LogicalSource;
   sourceFilename: string;
@@ -112,9 +132,9 @@ function textEdits(edits: EditorEdit[]): vscode.TextEdit[] {
 
 export class EditorIntegration implements vscode.Disposable {
   private physicalSources?: WeakSet<vscode.TextDocument>;
-  private readonly roots = new MarkedRoots((error) => this.error(error, false));
-  private readonly eligibilityChanged = new vscode.EventEmitter<void>();
-  readonly onDidChangeEligibility = this.eligibilityChanged.event;
+  private readonly roots: MarkedRoots;
+  private readonly eligibilityChanged: vscode.EventEmitter<void>;
+  readonly onDidChangeEligibility: vscode.Event<void>;
   private readonly rootListener: vscode.Disposable;
   private readonly fileListener: vscode.Disposable;
   private readonly displayListeners: vscode.Disposable;
@@ -130,18 +150,14 @@ export class EditorIntegration implements vscode.Disposable {
     ["references", new Scheduler()],
   ]);
   private queryRevision = 0;
-  readonly navigation = new Navigation(
-    (document, position, operation, token, manual) =>
-      this.query(document, position, operation, token, manual),
-  );
+  readonly navigation: Navigation;
   private revokeQueries(): void {
     this.queryRevision++;
     for (const lane of this.queryLanes.values()) lane.cancelAll();
   }
 
-  private readonly collection =
-    vscode.languages.createDiagnosticCollection("saltbox-lint");
-  private readonly output = vscode.window.createOutputChannel("Saltbox Lint");
+  private readonly collection: vscode.DiagnosticCollection;
+  private readonly output: vscode.OutputChannel;
   private readonly results = new Results<DocumentResult>();
   private readonly dependencies = new Dependencies();
   private readonly checking = new Map<string, PendingCheck>();
@@ -163,56 +179,106 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly pendingDiskReload = new Set<string>();
   private readonly missingFiles = new Map<string, string | undefined>();
   private readonly scanRevisions = new Map<string, number>();
-  private fileTimer?: ReturnType<typeof setTimeout>;
+  private fileTimer?: () => void;
+  private backgroundWork?: Set<Promise<void>>;
+  private producerWaiters?: Set<() => void>;
   private flushingFiles = false;
   private nextRevision = 0;
   private relatedRevision = 0;
   private disposed = false;
-  private refreshTimer?: ReturnType<typeof setTimeout>;
+  private refreshTimer?: () => void;
   private readonly help: RuleHelp;
-  private readonly statusBar = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    0,
-  );
+  private readonly statusBar: vscode.StatusBarItem;
   private readonly failures = new Map<
     string,
     { token: string; message: string }
   >();
   private readonly executable: string;
-  constructor(executable: string) {
+  private readonly initialization: Promise<void>;
+  constructor(
+    executable: string,
+    private readonly adapters: Partial<EditorAdapters> = {},
+  ) {
     this.executable = executable;
-    this.help = new RuleHelp(executable);
-    this.statusBar.command = "saltboxLint.showStatus";
-    this.rootListener = this.roots.onDidChange((folder) => {
-      for (const [uri, owner] of this.documentFolders)
-        if (owner === folder) this.sourceOwners.delete(uri);
-      this.refreshFolders(new Set([folder]));
-      this.repaint();
-      this.eligibilityChanged.fire();
+    const acquired: vscode.Disposable[] = [];
+    const own = <T extends vscode.Disposable>(resource: T): T => {
+      acquired.push(resource);
+      return resource;
+    };
+    try {
+      this.eligibilityChanged = own(new vscode.EventEmitter<void>());
+      this.onDidChangeEligibility = this.eligibilityChanged.event;
+      this.navigation = own(
+        new Navigation((document, position, operation, token, manual) =>
+          this.query(document, position, operation, token, manual),
+        ),
+      );
+      this.collection = own(
+        vscode.languages.createDiagnosticCollection("saltbox-lint"),
+      );
+      this.statusBar = own(
+        (adapters.createStatusBarItem ?? vscode.window.createStatusBarItem)(
+          vscode.StatusBarAlignment.Left,
+          0,
+        ),
+      );
+      this.output = own(
+        (adapters.createOutputChannel ?? vscode.window.createOutputChannel)(
+          "Saltbox Lint",
+        ),
+      );
+      this.roots = own(
+        new MarkedRoots((error) => this.error(error, false), adapters.roots),
+      );
+      this.help = own(new RuleHelp(executable, adapters.runProcess));
+      this.statusBar.command = "saltboxLint.showStatus";
+      this.rootListener = own(
+        this.roots.onDidChange((folder) => {
+          for (const [uri, owner] of this.documentFolders)
+            if (owner === folder) this.sourceOwners.delete(uri);
+          this.refreshFolders(new Set([folder]));
+          this.repaint();
+          this.eligibilityChanged.fire();
+        }),
+      );
+      this.fileListener = own(
+        this.roots.onDidChangeFile((uri) => this.contextEvent(uri)),
+      );
+      if (this.activeFile?.scheme !== "file") this.activeFile = undefined;
+      const displayListeners: vscode.Disposable[] = [];
+      displayListeners.push(
+        own(
+          vscode.window.onDidChangeActiveTextEditor((editor) => {
+            this.updateStatus();
+            if (editor?.document.uri.scheme !== "file") return;
+            this.activeFile = editor.document.uri;
+            this.repaint();
+          }),
+        ),
+      );
+      displayListeners.push(
+        own(
+          vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration("saltboxLint.checkOnType"))
+              this.liveChecks?.cancelWhere(
+                (document) => !this.typingEligible(document),
+              );
+            if (!event.affectsConfiguration("saltboxLint.activeProjectOnly"))
+              return;
+            this.activeProjectOnly = this.displayActiveProjectOnly();
+            this.repaint();
+          }),
+        ),
+      );
+      this.displayListeners = combineDisposables(displayListeners);
+    } catch (error) {
+      rollbackResources(error, acquired);
+    }
+    // Return the resource owner before configuration can admit asynchronous probes.
+    this.initialization = Promise.resolve().then(() => {
+      if (!this.disposed) this.roots.configure();
     });
-    this.fileListener = this.roots.onDidChangeFile((uri) =>
-      this.contextEvent(uri),
-    );
-    if (this.activeFile?.scheme !== "file") this.activeFile = undefined;
-    this.displayListeners = vscode.Disposable.from(
-      vscode.window.onDidChangeActiveTextEditor((editor) => {
-        this.updateStatus();
-        if (editor?.document.uri.scheme !== "file") return;
-        this.activeFile = editor.document.uri;
-        this.repaint();
-      }),
-      vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration("saltboxLint.checkOnType"))
-          this.liveChecks?.cancelWhere(
-            (document) => !this.typingEligible(document),
-          );
-        if (!event.affectsConfiguration("saltboxLint.activeProjectOnly"))
-          return;
-        this.activeProjectOnly = this.displayActiveProjectOnly();
-        this.repaint();
-      }),
-    );
-    this.roots.configure();
+    this.background(this.initialization);
   }
   private async documentedRules(): Promise<ReadonlySet<string>> {
     try {
@@ -326,11 +392,12 @@ export class EditorIntegration implements vscode.Disposable {
     this.statusBar.show();
   }
   async showStatus(): Promise<CheckStatus> {
+    await this.ready();
     const document = vscode.window.activeTextEditor?.document;
     const folder =
       document && vscode.workspace.getWorkspaceFolder(document.uri);
     if (folder) await this.roots.refresh(folder.uri.toString());
-    await this.roots.ready();
+    await this.ready();
     const status = this.status(document);
     this.output.appendLine(
       `Status ${document?.uri.fsPath ?? "no source"}: ${status.state}. ${status.reason}`,
@@ -396,9 +463,14 @@ export class EditorIntegration implements vscode.Disposable {
     return this.documentRevisions.get(document)!;
   }
   configureRoots(): void {
+    if (this.disposed) return;
     this.liveChecks?.cancelWhere(() => true);
     this.roots.configure();
     this.repaint();
+  }
+  async ready(): Promise<void> {
+    await this.initialization;
+    await this.roots.ready();
   }
   providerDocuments(): vscode.TextDocument[] {
     return vscode.workspace.textDocuments.filter(
@@ -410,7 +482,7 @@ export class EditorIntegration implements vscode.Disposable {
   private async root(
     folder: vscode.WorkspaceFolder,
   ): Promise<string | undefined> {
-    await this.roots.ready();
+    await this.ready();
     const root = this.roots.get(folder.uri.toString());
     if (root) this.canonicalRoots.set(folder.uri.toString(), root);
     return root;
@@ -519,7 +591,9 @@ export class EditorIntegration implements vscode.Disposable {
       // An ordinary new YAML leaf may have a logical identity before it is
       // saved. Previously owned sources and all templates need a live file.
       try {
-        if (!(await stat(document.uri.fsPath)).isFile())
+        if (
+          !(await (this.adapters?.stat ?? stat)(document.uri.fsPath)).isFile()
+        )
           throw new SourceIdentityError("Source is not a regular file");
         identity.physical = true;
       } catch (error) {
@@ -628,7 +702,7 @@ export class EditorIntegration implements vscode.Disposable {
     document: vscode.TextDocument,
     expectedVersion?: number,
   ): Promise<Snapshot | undefined> {
-    await this.roots.ready();
+    await this.ready();
     if (expectedVersion !== undefined && document.version !== expectedVersion)
       return;
     if (!(await this.admit(document, expectedVersion))) return;
@@ -708,7 +782,7 @@ export class EditorIntegration implements vscode.Disposable {
       // spelling again rather than granting writes from its remembered owner.
       const source = snapshot.logical
         ? undefined
-        : await stat(snapshot.sourceFilename);
+        : await (this.adapters?.stat ?? stat)(snapshot.sourceFilename);
       const identity = await identify(snapshot.root, snapshot.sourceFilename);
       return (
         (snapshot.logical
@@ -791,15 +865,51 @@ export class EditorIntegration implements vscode.Disposable {
     this.output.appendLine(message);
     if (manual)
       this.background(
-        vscode.window.showErrorMessage(`Saltbox Lint: ${message}`),
+        (
+          this.adapters?.showErrorMessage ??
+          ((notice: string) => vscode.window.showErrorMessage(notice))
+        )(`Saltbox Lint: ${message}`),
+        false,
       );
   }
-  private background(operation: PromiseLike<unknown>): void {
-    Promise.resolve(operation).catch((error: unknown) =>
-      this.error(error, false),
+  private background(operation: PromiseLike<unknown>, track = true): void {
+    const handled = Promise.resolve(operation).then(
+      () => undefined,
+      (error: unknown) => this.error(error, false),
     );
+    if (!track) {
+      handled.catch(() => undefined);
+      return;
+    }
+    const work = (this.backgroundWork ??= new Set());
+    const joined = handled.finally(() => {
+      work.delete(joined);
+      this.producerChanged();
+    });
+    work.add(joined);
+    joined.catch(() => undefined);
+  }
+  private producerChanged(): void {
+    for (const resolve of this.producerWaiters ?? []) resolve();
+    this.producerWaiters?.clear();
+  }
+  private schedule(perform: () => void, milliseconds: number): () => void {
+    const schedule =
+      this.adapters?.schedule ??
+      ((callback: () => void, delay: number) => {
+        const timer = setTimeout(callback, delay);
+        return () => clearTimeout(timer);
+      });
+    return schedule(() => {
+      try {
+        perform();
+      } finally {
+        this.producerChanged();
+      }
+    }, milliseconds);
   }
   checkBackground(document: vscode.TextDocument): void {
+    if (this.disposed) return;
     this.background(this.check(document));
   }
   async check(
@@ -809,6 +919,7 @@ export class EditorIntegration implements vscode.Disposable {
     typing = false,
     signal?: AbortSignal,
   ): Promise<void> {
+    if (this.disposed) return;
     if (!typing) this.liveChecks?.cancel(document);
     const version = expectedVersion ?? document.version;
     const revision = this.documentRevision(document);
@@ -816,7 +927,7 @@ export class EditorIntegration implements vscode.Disposable {
       const folder = vscode.workspace.getWorkspaceFolder(document.uri);
       if (folder) await this.roots.refresh(folder.uri.toString());
     }
-    await this.roots.ready();
+    await this.ready();
     if (
       signal?.aborted ||
       document.version !== version ||
@@ -947,14 +1058,14 @@ export class EditorIntegration implements vscode.Disposable {
           if (!snapshot || signal.aborted || !current()) return;
           failureToken = this.statusToken(document);
           const bytes = !document.isDirty
-            ? await readFile(snapshot.filename)
+            ? await (this.adapters?.readFile ?? readFile)(snapshot.filename)
             : undefined;
           if (signal.aborted || !current()) return;
           const unsupported = bytes !== undefined && !isUtf8(bytes);
           // Ordinary invalid YAML retains the saved-file transport. A read-only
           // template keeps its admitted spelling and exact raw bytes together.
           const savedYaml = unsupported && !this.isTemplate(document);
-          const wire = await runProcess(
+          const wire = await (this.adapters?.runProcess ?? runProcess)(
             {
               executable: this.executable,
               cwd: snapshot.root,
@@ -1051,6 +1162,7 @@ export class EditorIntegration implements vscode.Disposable {
             snapshot.index,
             snapshot.root,
             documentedRules,
+            { readFile: this.adapters?.readFile },
           );
       if (!current() || !this.current(document, snapshot)) return retry();
       if (relatedRevision !== this.relatedRevision)
@@ -1125,7 +1237,7 @@ export class EditorIntegration implements vscode.Disposable {
   async checkWorkspace(): Promise<void> {
     if (!vscode.workspace.isTrusted || this.disposed) return;
     await this.roots.refresh();
-    await this.roots.ready();
+    await this.ready();
     for (const folder of vscode.workspace.workspaceFolders ?? [])
       await this.checkSaved(folder, true);
     for (const document of vscode.workspace.textDocuments)
@@ -1177,7 +1289,7 @@ export class EditorIntegration implements vscode.Disposable {
         manual ? 2 : 0,
         async (signal) => {
           if (!current() || !this.roots.get(folderKey)) return;
-          return runProcess(
+          return (this.adapters?.runProcess ?? runProcess)(
             {
               executable: this.executable,
               cwd: root,
@@ -1232,7 +1344,7 @@ export class EditorIntegration implements vscode.Disposable {
         let bytes: Buffer;
         try {
           filename = await resolveSource(root, relative);
-          bytes = await readFile(filename);
+          bytes = await (this.adapters?.readFile ?? readFile)(filename);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             this.confirmMissing(
@@ -1275,7 +1387,9 @@ export class EditorIntegration implements vscode.Disposable {
           if (fix.path === relative) index.edits(fix.edits);
         entries.set(
           uri.toString(),
-          await renderDiagnostics(findings, index, root, documentedRules),
+          await renderDiagnostics(findings, index, root, documentedRules, {
+            readFile: this.adapters?.readFile,
+          }),
         );
         accepted.add(relative);
       }
@@ -1442,7 +1556,7 @@ export class EditorIntegration implements vscode.Disposable {
     token?: vscode.CancellationToken,
     manual = false,
   ): Promise<NavigationAnswer | undefined> {
-    if (token?.isCancellationRequested) return;
+    if (this.disposed || token?.isCancellationRequested) return;
     const version = document.version;
     const abort = new AbortController();
     const listener = token?.onCancellationRequested(() => abort.abort());
@@ -1456,6 +1570,7 @@ export class EditorIntegration implements vscode.Disposable {
       revision === this.queryRevision &&
       this.current(document, capturedSnapshot);
     try {
+      await this.ready();
       if (manual) {
         const folder = vscode.workspace.getWorkspaceFolder(document.uri);
         if (folder) await this.roots.refresh(folder.uri.toString());
@@ -1470,7 +1585,9 @@ export class EditorIntegration implements vscode.Disposable {
       if (
         !document.isDirty &&
         !isUtf8(
-          await readFile(await resolveSource(snapshot.root, snapshot.path)),
+          await (this.adapters?.readFile ?? readFile)(
+            await resolveSource(snapshot.root, snapshot.path),
+          ),
         )
       )
         return;
@@ -1481,7 +1598,7 @@ export class EditorIntegration implements vscode.Disposable {
         document.uri.toString(),
         1,
         (signal) =>
-          runProcess(
+          (this.adapters?.runProcess ?? runProcess)(
             {
               executable: this.executable,
               cwd: snapshot.root,
@@ -1568,6 +1685,7 @@ export class EditorIntegration implements vscode.Disposable {
               ]
             : []),
         ]),
+        this.adapters?.navigation,
       );
       if (!answer || !current()) return;
       if (!(await sourceOriginCurrent(snapshot)) || !current()) return;
@@ -1667,7 +1785,10 @@ export class EditorIntegration implements vscode.Disposable {
         return;
       }
       writableStage(collect, "snapshot-present");
-      if (!document.isDirty && !isUtf8(await readFile(snapshot.filename))) {
+      if (
+        !document.isDirty &&
+        !isUtf8(await (this.adapters?.readFile ?? readFile)(snapshot.filename))
+      ) {
         this.output.appendLine(
           `Skipped ${snapshot.path}: invalid UTF-8; editor formatting requires UTF-8.`,
         );
@@ -1684,7 +1805,7 @@ export class EditorIntegration implements vscode.Disposable {
         document.uri.toString(),
         mode === "canonical" ? 2 : 1,
         (signal) =>
-          runProcess(
+          (this.adapters?.runProcess ?? runProcess)(
             {
               executable: this.executable,
               cwd: snapshot.root,
@@ -1754,6 +1875,7 @@ export class EditorIntegration implements vscode.Disposable {
     collect?: WritableStageCollector,
     observeFailure?: ProcessFailureObserver,
   ): Promise<void> {
+    if (this.disposed) return;
     const document = uri
       ? vscode.workspace.textDocuments.find(
           (doc) => doc.uri.toString() === uri.toString(),
@@ -1808,6 +1930,7 @@ export class EditorIntegration implements vscode.Disposable {
     await vscode.workspace.applyEdit(edit);
   }
   change(document: vscode.TextDocument): void {
+    if (this.disposed) return;
     const key = document.uri.toString();
     if (
       !this.documentFolders.has(key) &&
@@ -1853,11 +1976,13 @@ export class EditorIntegration implements vscode.Disposable {
     this.liveChecks.schedule(document);
   }
   open(document: vscode.TextDocument): void {
+    if (this.disposed) return;
     this.closedTabs.delete(document.uri.toString());
     this.eligibilityChanged.fire();
     this.checkBackground(document);
   }
   close(document: vscode.TextDocument): void {
+    if (this.disposed) return;
     const key = document.uri.toString();
     const stillOwned = vscode.window.tabGroups.all.some((group) =>
       group.tabs.some((tab) =>
@@ -1884,6 +2009,7 @@ export class EditorIntegration implements vscode.Disposable {
     }
   }
   saved(document: vscode.TextDocument): void {
+    if (this.disposed) return;
     this.liveChecks?.cancel(document);
     this.contextEvent(document.uri);
     if (this.eligible(document))
@@ -2049,8 +2175,8 @@ export class EditorIntegration implements vscode.Disposable {
     this.results.invalidateCoverage(folder.uri.toString());
     if (!this.pendingRefresh.has(folder.uri.toString())) {
       this.pendingRefresh.add(folder.uri.toString());
-      if (this.refreshTimer) clearTimeout(this.refreshTimer);
-      this.refreshTimer = setTimeout(() => {
+      this.refreshTimer?.();
+      this.refreshTimer = this.schedule(() => {
         this.refreshTimer = undefined;
         const pending = new Set(this.pendingRefresh);
         this.pendingRefresh.clear();
@@ -2096,8 +2222,8 @@ export class EditorIntegration implements vscode.Disposable {
       force: force || (this.pendingFiles.get(key)?.force ?? false),
       version: force ? version : this.pendingFiles.get(key)?.version,
     });
-    if (this.fileTimer) clearTimeout(this.fileTimer);
-    this.fileTimer = setTimeout(() => {
+    this.fileTimer?.();
+    this.fileTimer = this.schedule(() => {
       this.fileTimer = undefined;
       this.background(this.flushFiles());
     }, 100);
@@ -2151,7 +2277,9 @@ export class EditorIntegration implements vscode.Disposable {
           )
             continue;
           filename = identity.filename;
-          const bytes = await readFile(identity.filename);
+          const bytes = await (this.adapters?.readFile ?? readFile)(
+            identity.filename,
+          );
           const sourceHash = hash(bytes);
           this.missingFiles.delete(key);
           const document = vscode.workspace.textDocuments.find(
@@ -2249,7 +2377,7 @@ export class EditorIntegration implements vscode.Disposable {
     } finally {
       this.flushingFiles = false;
       if (this.pendingFiles.size && !this.fileTimer)
-        this.fileTimer = setTimeout(() => {
+        this.fileTimer = this.schedule(() => {
           this.fileTimer = undefined;
           this.background(this.flushFiles());
         }, 100);
@@ -2387,8 +2515,8 @@ export class EditorIntegration implements vscode.Disposable {
       }
     }
     if (!affected.size) return;
-    if (this.refreshTimer) clearTimeout(this.refreshTimer);
-    this.refreshTimer = setTimeout(() => {
+    this.refreshTimer?.();
+    this.refreshTimer = this.schedule(() => {
       this.refreshTimer = undefined;
       const pending = new Set(this.pendingRefresh);
       this.pendingRefresh.clear();
@@ -2412,35 +2540,58 @@ export class EditorIntegration implements vscode.Disposable {
     if (this.disposed) return;
     this.disposed = true;
     this.liveChecks?.dispose();
-    this.rootListener.dispose();
-    this.fileListener.dispose();
-    this.displayListeners.dispose();
-    this.roots.dispose();
-    this.eligibilityChanged.dispose();
-    if (this.refreshTimer) clearTimeout(this.refreshTimer);
-    if (this.fileTimer) clearTimeout(this.fileTimer);
+    this.refreshTimer?.();
+    this.fileTimer?.();
+    this.refreshTimer = undefined;
+    this.fileTimer = undefined;
+    this.producerChanged();
     this.pendingFiles.clear();
     this.results.clear();
     this.dependencies.clear();
     this.lint.dispose();
     this.formatting.dispose();
     for (const lane of this.queryLanes.values()) lane.dispose();
-    this.navigation.dispose();
-    this.collection.dispose();
-    this.output.dispose();
-    this.help.dispose();
-    this.statusBar.dispose();
     this.failures.clear();
+    disposeResources([
+      this.rootListener,
+      this.fileListener,
+      this.displayListeners,
+      this.roots,
+      this.eligibilityChanged,
+      this.navigation,
+      this.collection,
+      this.output,
+      this.help,
+      this.statusBar,
+    ]);
   }
   async join(): Promise<void> {
-    await Promise.all([
-      this.lint.join(),
-      this.formatting.join(),
-      ...[...this.queryLanes.values()].map((lane) => lane.join()),
-      ...[...this.checking.values()].map((request) => request.work),
-      this.liveChecks?.join(),
-      this.help.join(),
-    ]);
+    await this.initialization?.catch(() => undefined);
+    do {
+      const producers =
+        this.fileTimer || this.refreshTimer
+          ? new Promise<void>((resolve) =>
+              (this.producerWaiters ??= new Set()).add(resolve),
+            )
+          : undefined;
+      await Promise.all([
+        this.lint.join(),
+        this.formatting.join(),
+        ...[...this.queryLanes.values()].map((lane) => lane.join()),
+        ...[...this.checking.values()].map((request) => request.work),
+        ...(this.backgroundWork ?? []),
+        this.liveChecks?.join(),
+        this.help.join(),
+        this.roots.join?.(),
+        producers,
+      ]);
+    } while (
+      this.fileTimer ||
+      this.refreshTimer ||
+      this.backgroundWork?.size ||
+      this.checking.size
+    );
+    await this.initialization;
   }
 }
 

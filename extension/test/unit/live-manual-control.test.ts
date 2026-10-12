@@ -1,48 +1,9 @@
+import {
+  runManualLiveControl,
+  runSaveLiveControl,
+} from "../support/live-controls.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFileSync } from "node:fs";
-import { runInNewContext } from "node:vm";
-import ts from "typescript";
-
-const source = ts.createSourceFile(
-  "live-checking.ts",
-  readFileSync("test/host/live-checking.ts", "utf8"),
-  ts.ScriptTarget.Latest,
-  true,
-  ts.ScriptKind.TS,
-);
-const run = source.statements.find(
-  (statement): statement is ts.FunctionDeclaration =>
-    ts.isFunctionDeclaration(statement) &&
-    statement.name?.text === "runLiveChecking",
-);
-assert.ok(run?.body);
-const statements = run.body.statements.find(ts.isTryStatement)?.tryBlock
-  .statements;
-assert.ok(statements);
-const start = statements.findIndex(
-  (statement) =>
-    ts.isVariableStatement(statement) &&
-    statement.declarationList.declarations.some(
-      (declaration) =>
-        declaration.name.getText(source) === "manualRequestsBefore",
-    ),
-);
-const end = statements.findIndex(
-  (statement) => statement.getText(source) === 'await checkpoint("manual");',
-);
-assert.ok(start >= 2 && end > start);
-const sequence = ts.transpileModule(
-  `async function manual() {
-    ${statements
-      .slice(start - 2, end + 1)
-      .map((statement) => statement.getText(source))
-      .join("\n")}
-    return manualCloseMs;
-  }
-  manual;`,
-  { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-).outputText;
 
 for (const failure of [
   "none",
@@ -73,7 +34,7 @@ for (const failure of [
         events.push(document === small ? "focus small" : "focus heavy");
       },
     };
-    const operation = runInNewContext(sequence, {
+    const context = {
       assert,
       small,
       heavy,
@@ -139,7 +100,8 @@ for (const failure of [
         assert.equal(restored, true);
         events.push("manual checkpoint");
       },
-    }) as () => Promise<number>;
+    };
+    const operation = () => runManualLiveControl(context);
     if (failure !== "none") {
       await assert.rejects(operation());
       assert.equal(events.includes("restore heavy"), false);
@@ -157,29 +119,6 @@ for (const failure of [
     ]);
   });
 }
-
-const saveStart = statements.findIndex(
-  (statement) =>
-    ts.isVariableStatement(statement) &&
-    statement.declarationList.declarations.some(
-      (declaration) => declaration.name.getText(source) === "saveCloseMs",
-    ),
-);
-const saveEnd = statements.findIndex(
-  (statement) => statement.getText(source) === 'await checkpoint("save");',
-);
-assert.ok(saveStart >= 0 && saveEnd > saveStart);
-const saveSequence = ts.transpileModule(
-  `async function saved() {
-    ${statements
-      .slice(saveStart, saveEnd + 1)
-      .map((statement) => statement.getText(source))
-      .join("\n")}
-    return saveCloseMs;
-  }
-  saved;`,
-  { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-).outputText;
 
 for (const failure of [
   "none",
@@ -203,7 +142,7 @@ for (const failure of [
         });
       },
     };
-    const operation = runInNewContext(saveSequence, {
+    const context = {
       assert,
       small,
       heavy,
@@ -244,7 +183,8 @@ for (const failure of [
         assert.equal(restored, true);
         events.push("save checkpoint");
       },
-    }) as () => Promise<number>;
+    };
+    const operation = () => runSaveLiveControl(context);
     if (failure !== "none") {
       await assert.rejects(operation());
       assert.equal(events.includes("save checkpoint"), false);

@@ -1,255 +1,1384 @@
+// @ts-check
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import * as fs from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import * as path from "node:path";
-import { transform } from "esbuild";
+import { join } from "node:path";
 import { editorAcceptance } from "./host/editor-acceptance.ts";
+import { getHostProfile } from "./host/host-profile.ts";
+import { verifyInstalledProduct } from "./host/host-preflight.ts";
 import { hostInputs } from "../scripts/host-inputs.mjs";
+import { ownedCommand } from "../scripts/owned-command.mjs";
+import { createHostProcessSupervisor } from "../scripts/host-process-supervisor.mjs";
+import {
+  createHostProfile,
+  cleanupHostProfile,
+  populateHostFixture,
+} from "../scripts/host-fixture.mjs";
+import {
+  extensionDirectory,
+  hostOptions,
+  installedPackage,
+  inheritedCommand,
+  profileTimeoutMs,
+  runHostProfile,
+  runHostWorker,
+  verifyHostProfiles,
+  vsixIdentity,
+} from "../scripts/host-launcher.mjs";
+import {
+  hostModes,
+  hostVersions,
+  profileEnvironment,
+  runNativeHosts,
+} from "../scripts/native-hosts.mjs";
 
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-function withoutImports(source) {
-  return source.replace(/^import[\s\S]*?;\n/gm, "");
+const workspaceBase = process.env.SALTBOX_TEST_WORKSPACE_BASE ?? tmpdir();
+
+/** @param {unknown} error @param {unknown} target @returns {boolean} */
+function containsFailure(error, target) {
+  if (error === target) return true;
+  if (
+    error instanceof AggregateError &&
+    error.errors.some((item) => containsFailure(item, target))
+  )
+    return true;
+  return error instanceof Error && containsFailure(error.cause, target);
 }
-export async function controller(source, expectedVersion, actualVersion) {
-  const { code } = await transform(source, { loader: "ts", format: "esm" });
-  const events = [];
-  const vscode = {
-    version: actualVersion,
-    env: { appRoot: "/unavailable-app-root" },
-    extensions: {
-      getExtension() {
-        events.push("mode dispatched");
-        return undefined;
+
+/** @typedef {import("../scripts/host-types.js").HostProfile} HostProfile */
+/** @typedef {import("../scripts/host-types.js").CommandOptions} CommandOptions */
+/** @typedef {CommandOptions & {command: string, args: string[], env: NodeJS.ProcessEnv}} CommandCall */
+/** @typedef {import("../scripts/host-types.js").ProfileRecord} ProfileRecord */
+
+/** @param {import("node:test").TestContext} t */
+function profileFor(t) {
+  const profile = createHostProfile({ workspaceBase });
+  t.after(() => {
+    if (existsSync(profile.root)) cleanupHostProfile(profile);
+  });
+  return profile;
+}
+
+/** @param {Pick<HostProfile, "root">} profile */
+function workerEnvironment(profile, mode = "disabled", version = "1.100.0") {
+  return {
+    ...profileEnvironment(
+      {},
+      {
+        version,
+        mode,
+        executable: `/sdk/${version}`,
+        vsix: undefined,
       },
-    },
+    ),
+    SALTBOX_TEST_HOST_WORKER: "1",
+    SALTBOX_TEST_PROFILE_ROOT: profile.root,
   };
-  await new AsyncFunction(
-    "vscode",
-    "assert",
-    "editorAcceptance",
-    "process",
-    "console",
-    "__filename",
-    withoutImports(code).replace("export {\n  run\n};", "") + "\nawait run();",
-  )(
-    vscode,
-    assert,
-    editorAcceptance,
-    {
-      env: {
-        SALTBOX_TEST_EXPECTED_VSCODE_VERSION: expectedVersion,
-        SALTBOX_TEST_HOST_MODE: "disabled",
-        SALTBOX_TEST_DISABLED: "1",
-      },
-      platform: "linux",
-      arch: "x64",
-    },
-    { log: (record) => events.push(record) },
-    "/unavailable-controller",
-  );
-  return events;
 }
 
-test("actual controller rejects a wrong public version before dispatch and records accepted runtime facts", async () => {
-  const source = fs.readFileSync(
-    new URL("./host/index.ts", import.meta.url),
-    "utf8",
+/** @param {HostProfile} profile */
+function fakeProduct(
+  profile,
+  { version = "0.1.0", publisher = "saltyorg", name = "saltbox-lint" } = {},
+) {
+  const directory = join(
+    profile.extensionsDir,
+    `${publisher}.${name}-${version}`,
   );
-  await assert.rejects(
-    controller(source, "1.100.0", "1.137.0"),
+  mkdirSync(join(directory, "bin"), { recursive: true });
+  writeFileSync(
+    join(directory, "package.json"),
+    JSON.stringify({ version, publisher, name }),
+  );
+  writeFileSync(
+    join(
+      directory,
+      "bin",
+      "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+    ),
+    "fixture backend",
+  );
+  return directory;
+}
+
+/** @param {string} message */
+function releasedError(message) {
+  return Object.assign(new Error(message), { ownershipReleased: true });
+}
+
+/**
+ * @param {{version?: string, backend?: string | Buffer}} [options]
+ * @returns {Map<string, import("../scripts/host-types.js").ArchiveEntry>}
+ */
+function fakeVSIXEntries({
+  version = "0.1.0",
+  backend = "fixture backend",
+} = {}) {
+  return new Map([
+    [
+      "extension/package.json",
+      {
+        bytes: Buffer.from(
+          JSON.stringify({
+            name: "saltbox-lint",
+            publisher: "saltyorg",
+            version,
+          }),
+        ),
+      },
+    ],
+    [
+      "extension/bin/saltbox-lint" +
+        (process.platform === "win32" ? ".exe" : ""),
+      { bytes: Buffer.from(backend) },
+    ],
+  ]);
+}
+
+/** @param {CommandOptions} options @returns {NodeJS.ProcessEnv} */
+function commandEnvironment(options) {
+  assert.ok(options.env, "a command must carry its isolated environment");
+  return options.env;
+}
+
+/** @param {NodeJS.ProcessEnv} env */
+function profileRoot(env) {
+  const root = env.SALTBOX_TEST_PROFILE_ROOT;
+  assert.ok(root, "a command must carry its owned profile root");
+  return root;
+}
+
+test("acceptance rejects a wrong actual public editor version", () => {
+  assert.throws(
+    () =>
+      editorAcceptance({
+        expectedVersion: "1.100.0",
+        actualVersion: "1.137.0",
+        mode: "disabled",
+        platform: process.platform,
+        arch: process.arch,
+        appRoot: "unused before version rejection",
+        controllerPath: "unused before version rejection",
+        cliPath: undefined,
+        proxyPath: undefined,
+      }),
     /actual public vscode.version/,
   );
-  const events = await controller(source, "1.100.0", "1.100.0");
-  assert.ok(events[0].startsWith("SALTBOX_EDITOR_ACCEPTANCE "));
-  const record = JSON.parse(
-    events[0].slice("SALTBOX_EDITOR_ACCEPTANCE ".length),
+});
+
+test("acceptance reads shipped metadata and records actual runtime facts", (t) => {
+  const profile = profileFor(t);
+  writeFileSync(
+    join(profile.root, "product.json"),
+    JSON.stringify({
+      version: "1.100.0",
+      commit: "shipped-commit",
+      nameShort: "Code",
+      secret: "not emitted",
+    }),
   );
-  assert.equal(record.schemaVersion, 1);
+  const facts = {
+    expectedVersion: "1.100.0",
+    actualVersion: "1.100.0",
+    platform: "darwin",
+    arch: "x64",
+    mode: "dependencies",
+    appRoot: profile.root,
+    controllerPath: join(profile.root, "product.json"),
+    cliPath: undefined,
+    proxyPath: undefined,
+  };
+  const record = editorAcceptance(facts);
+  assert.deepEqual(record.product, {
+    state: "available",
+    metadata: {
+      version: "1.100.0",
+      commit: "shipped-commit",
+      nameShort: "Code",
+    },
+  });
+  assert.equal(record.controller.state, "available");
+  assert.equal(record.cli.state, "unavailable");
   assert.equal(record.expectedVersion, "1.100.0");
   assert.equal(record.actualVersion, "1.100.0");
-  assert.equal(record.mode, "disabled");
-  assert.equal(record.target, "linux-x64");
-  assert.equal(record.product.state, "unavailable");
-  assert.equal(events[1], "mode dispatched");
+  assert.equal(record.target, "darwin-x64");
+  assert.throws(
+    () => editorAcceptance({ ...facts, expectedVersion: undefined }),
+    /provide expected/,
+  );
 });
 
-test("acceptance reads shipped product metadata without substituting requested identity", async () => {
-  const directory = await mkdtemp(
-    path.join(tmpdir(), "saltbox-editor-version-"),
-  );
-  try {
-    await writeFile(
-      path.join(directory, "product.json"),
-      JSON.stringify({
-        version: "1.100.0",
-        commit: "shipped-commit",
-        nameShort: "Code",
-        secret: "not emitted",
-      }),
-    );
-    const facts = {
-      expectedVersion: "1.100.0",
-      actualVersion: "1.100.0",
-      platform: "darwin",
-      arch: "x64",
-      mode: "dependencies",
-      appRoot: directory,
-      controllerPath: path.join(directory, "product.json"),
-      cliPath: undefined,
-      proxyPath: undefined,
-    };
-    const record = editorAcceptance(facts);
-    assert.deepEqual(record.product, {
-      state: "available",
-      metadata: {
-        version: "1.100.0",
-        commit: "shipped-commit",
-        nameShort: "Code",
-      },
-    });
-    assert.equal(record.controller.state, "available");
-    assert.equal(record.cli.state, "unavailable");
-    assert.throws(
-      () => editorAcceptance({ ...facts, expectedVersion: undefined }),
-      /provide expected/,
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("native parent forwards both requested versions and every exact mode", async () => {
-  const source = fs.readFileSync(
-    new URL("../scripts/test-native-hosts.mjs", import.meta.url),
-    "utf8",
-  );
+test("native parent uses the owned command for both SDKs and every original mode", async () => {
+  /** @type {CommandCall[]} */
   const calls = [];
+  /** @type {string[]} */
   const downloads = [];
-  await new AsyncFunction(
-    "downloadAndUnzipVSCode",
-    "spawnSync",
-    "resolve",
-    "manifest",
-    "process",
-    withoutImports(source),
-  )(
-    async (version) => {
-      downloads.push(version);
-      return `/sdk/${version}`;
-    },
-    (_command, _args, options) => {
-      calls.push(options);
-      return { status: 0 };
-    },
-    path.resolve,
-    { version: "0.1.0" },
+  await runNativeHosts(
     {
+      env: {
+        SALTBOX_TEST_WORKSPACE_BASE: workspaceBase,
+        VSCODE_VERSION: "wrong inherited label",
+        SALTBOX_TEST_PROFILE: "1",
+        SALTBOX_TEST_QUALIFICATION: "1",
+      },
       platform: "darwin",
       arch: "x64",
-      execPath: "node",
-      env: { VSCODE_VERSION: "wrong inherited label" },
+    },
+    {
+      download: async (version) => {
+        downloads.push(version);
+        return `/sdk/${version}`;
+      },
+      command: async (command, args, options) => {
+        const env = commandEnvironment(options);
+        calls.push({ command, args, ...options, env });
+        assert.ok(existsSync(profileRoot(env)));
+        return "";
+      },
+      report() {},
     },
   );
   assert.deepEqual(downloads, ["1.100.0", "1.137.0"]);
-  assert.equal(calls.length, 20);
+  assert.deepEqual(hostModes, [
+    "normal",
+    "navigation",
+    "templates",
+    "help-status",
+    "editing",
+    "diagnostics",
+    "live-checking",
+    "live-performance",
+    "regressions",
+    "markers",
+    "save-scope",
+    "dependencies",
+    "queue",
+    "active-project",
+    "active-project-cache",
+    "untrusted",
+    "disabled",
+  ]);
+  assert.equal(calls.length, 34);
+  assert.equal(
+    new Set(calls.map((call) => call.env.SALTBOX_TEST_PROFILE_ROOT)).size,
+    34,
+    "every profile has independent resources",
+  );
   for (const [index, call] of calls.entries()) {
-    const expected = index < 10 ? "1.100.0" : "1.137.0";
+    const expected = index < 17 ? "1.100.0" : "1.137.0";
+    assert.equal(call.command, process.execPath);
+    assert.deepEqual(call.args, [
+      join(extensionDirectory, "scripts/test-host.mjs"),
+    ]);
+    assert.equal(call.timeoutMs, 180000);
     assert.equal(call.env.SALTBOX_TEST_EXPECTED_VSCODE_VERSION, expected);
     assert.equal(call.env.VSCODE_EXECUTABLE_PATH, `/sdk/${expected}`);
+    assert.equal(call.env.SALTBOX_TEST_HOST_WORKER, "1");
+    assert.equal(call.env.SALTBOX_TEST_PROFILE, "0");
+    assert.equal(call.env.SALTBOX_TEST_QUALIFICATION, "0");
     assert.equal(hostInputs(call.env).expectedVersion, expected);
-    assert.equal(hostInputs(call.env).mode, call.env.SALTBOX_TEST_HOST_MODE);
-    assert.equal(call.timeout, 180000);
+    assert.equal(
+      call.env.SALTBOX_TEST_VSIX,
+      join(extensionDirectory, "../dist/saltbox-lint-0.1.0-darwin-x64.vsix"),
+    );
+    assert.equal(
+      existsSync(profileRoot(call.env)),
+      false,
+      "profile disappears after owner joins",
+    );
   }
-  assert.equal(
-    new Set(calls.slice(0, 10).map((call) => call.env.SALTBOX_TEST_HOST_MODE))
-      .size,
-    10,
+  for (const offset of [0, 17])
+    assert.deepEqual(
+      calls
+        .slice(offset, offset + 17)
+        .map((call) => call.env.SALTBOX_TEST_HOST_MODE),
+      hostModes,
+    );
+});
+
+for (const mode of hostModes) {
+  test(`native parent propagates ${mode} failure and cleans only after owner release`, async () => {
+    const failure = releasedError(`controlled ${mode} failure`);
+    /** @type {NodeJS.ProcessEnv[]} */
+    const calls = [];
+    /** @type {string[]} */
+    const downloads = [];
+    await assert.rejects(
+      runNativeHosts(
+        { env: { SALTBOX_TEST_WORKSPACE_BASE: workspaceBase } },
+        {
+          download: async (version) => {
+            downloads.push(version);
+            return "/sdk";
+          },
+          command: async (_name, _args, options) => {
+            const env = commandEnvironment(options);
+            calls.push(env);
+            if (env.SALTBOX_TEST_HOST_MODE === mode) throw failure;
+            return "";
+          },
+          report() {},
+        },
+      ),
+      (error) => error === failure,
+    );
+    assert.deepEqual(downloads, ["1.100.0"]);
+    assert.equal(calls.at(-1)?.SALTBOX_TEST_HOST_MODE, mode);
+    assert.ok(calls.every((env) => !existsSync(profileRoot(env))));
+  });
+}
+
+test("a parent deadline joins its owned process before deleting the fresh profile", async () => {
+  /** @type {string[]} */
+  const events = [];
+  /** @type {(() => void) | undefined} */
+  let release;
+  /** @type {string | undefined} */
+  let profileRoot;
+  const failure = releasedError("controlled parent deadline");
+  const pending = runHostProfile(
+    { env: { SALTBOX_TEST_WORKSPACE_BASE: workspaceBase } },
+    {
+      command: (_name, _args, options) => {
+        profileRoot = commandEnvironment(options).SALTBOX_TEST_PROFILE_ROOT;
+        events.push("owner running");
+        return new Promise((_resolve, reject) => {
+          release = () => {
+            events.push("owner joined");
+            reject(failure);
+          };
+        });
+      },
+      cleanupProfile: (profile) => {
+        events.push("directories removed");
+        cleanupHostProfile(profile);
+      },
+      report() {},
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(profileRoot);
+  assert.ok(existsSync(profileRoot));
+  assert.deepEqual(events, ["owner running"]);
+  assert.ok(release);
+  release();
+  await assert.rejects(pending, (error) => error === failure);
+  assert.deepEqual(events, [
+    "owner running",
+    "owner joined",
+    "directories removed",
+  ]);
+  assert.equal(existsSync(profileRoot), false);
+});
+
+test("uncertain process cleanup retains the owned profile and fails qualification", async (t) => {
+  /** @type {HostProfile | undefined} */
+  let profile;
+  const failure = Object.assign(new Error("uncertain group release"), {
+    ownershipReleased: false,
+  });
+  /** @type {ProfileRecord[]} */
+  const records = [];
+  await assert.rejects(
+    runHostProfile(
+      { env: {} },
+      {
+        createProfile: () => {
+          profile = profileFor(t);
+          return profile;
+        },
+        command: async () => {
+          throw failure;
+        },
+        cleanupProfile: () =>
+          assert.fail("uncertain live directories cannot be removed"),
+        report: (record) => records.push(record),
+      },
+    ),
+    (error) =>
+      error === failure &&
+      "retainedProfile" in failure &&
+      failure.retainedProfile === profile?.root,
+  );
+  assert.ok(profile);
+  assert.ok(existsSync(profile.root));
+  assert.equal(records.at(-1)?.stage, "retained");
+  assert.equal(records.at(-1)?.profileRoot, profile.root);
+});
+
+test("profile failure and cleanup failure are both retained", async (t) => {
+  const profile = profileFor(t);
+  const primary = releasedError("editor assertion failed");
+  const cleanup = new Error("restore failed");
+  await assert.rejects(
+    runHostProfile(
+      { env: {} },
+      {
+        createProfile: () => profile,
+        command: async () => {
+          throw primary;
+        },
+        cleanupProfile: async () => {
+          throw cleanup;
+        },
+        report() {},
+      },
+    ),
+    (error) =>
+      error instanceof AggregateError &&
+      error.cause === primary &&
+      error.errors[0] === primary &&
+      error.errors[1] === cleanup,
   );
 });
 
-test("actual host runner forwards expected version and mode to controller options", async () => {
-  const source = fs.readFileSync(
-    new URL("../scripts/test-host.mjs", import.meta.url),
-    "utf8",
+test("profile setup, exercise and cleanup report separate elapsed phases", async () => {
+  /** @type {ProfileRecord[]} */
+  const records = [];
+  let elapsed = 0;
+  await runHostProfile(
+    { env: { SALTBOX_TEST_WORKSPACE_BASE: workspaceBase } },
+    {
+      command: async () => {
+        elapsed += 123;
+      },
+      clock: () => elapsed,
+      report: (record) => records.push(record),
+    },
   );
-  const directory = await mkdtemp(path.join(tmpdir(), "saltbox-host-wiring-"));
+  assert.deepEqual(
+    records
+      .filter(
+        (record) =>
+          record.stage === "completed" &&
+          ["profile setup", "profile exercise", "cleanup"].includes(
+            record.phase,
+          ),
+      )
+      .map((record) => [record.phase, record.elapsedMs]),
+    [
+      ["profile setup", 0],
+      ["profile exercise", 123],
+      ["cleanup", 0],
+    ],
+  );
+  assert.equal(profileTimeoutMs, 180000);
+});
+
+test("cleanup requires the exact owned container and preserves another profile", (t) => {
+  const first = profileFor(t);
+  const other = profileFor(t);
+  writeFileSync(join(other.root, "owned-by-other.txt"), "preserve");
+  assert.throws(() => cleanupHostProfile({ ...other }), /exact profile/);
+  cleanupHostProfile(first);
+  assert.equal(
+    readFileSync(join(other.root, "owned-by-other.txt"), "utf8"),
+    "preserve",
+  );
+});
+
+test("cleanup rejects a replaced directory without deleting its contents", (t) => {
+  const profile = profileFor(t);
+  const moved = profile.root + "-owned";
+  renameSync(profile.root, moved);
+  mkdirSync(profile.root);
+  writeFileSync(join(profile.root, "replacement.txt"), "preserve replacement");
   try {
-    for (const expectedVersion of ["1.100.0", "1.137.0"]) {
-      let options;
-      const names = [
-        "hostInputs",
-        "assert",
-        "runTests",
-        "downloadAndUnzipVSCode",
-        "resolveCliArgsFromVSCodeExecutablePath",
-        ...[
-          "cpSync",
-          "existsSync",
-          "readdirSync",
-          "readFileSync",
-          "mkdirSync",
-          "writeFileSync",
-          "mkdtempSync",
-          "rmSync",
-        ],
-        "tmpdir",
-        "resolve",
-        "join",
-        "spawnSync",
-        "process",
-      ];
-      const values = [
-        hostInputs,
-        assert,
-        async (value) => {
-          options = value;
-        },
-        () => {
-          throw new Error("explicit executable must be retained");
-        },
-        () => {
-          throw new Error("no VSIX CLI needed in wiring test");
-        },
-        ...[
-          "cpSync",
-          "existsSync",
-          "readdirSync",
-          "readFileSync",
-          "mkdirSync",
-          "writeFileSync",
-          "mkdtempSync",
-          "rmSync",
-        ].map((name) => fs[name]),
-        () => directory,
-        (...args) => path.resolve(directory, ...args),
-        path.join,
-        () => ({ status: 0 }),
-        {
-          env: {
-            VSCODE_EXECUTABLE_PATH: `/sdk/${expectedVersion}`,
-            SALTBOX_TEST_EXPECTED_VSCODE_VERSION: expectedVersion,
-            SALTBOX_TEST_HOST_MODE: "disabled",
-            SALTBOX_TEST_DISABLED: "1",
-            VSCODE_VERSION: "wrong inherited label",
-          },
-          platform: "linux",
-        },
-      ];
-      await new AsyncFunction(...names, withoutImports(source))(...values);
-      assert.equal(options.version, expectedVersion);
-      assert.equal(options.vscodeExecutablePath, `/sdk/${expectedVersion}`);
-      assert.equal(
-        options.extensionTestsEnv.SALTBOX_TEST_EXPECTED_VSCODE_VERSION,
-        expectedVersion,
-      );
-      assert.equal(
-        options.extensionTestsEnv.SALTBOX_TEST_HOST_MODE,
-        "disabled",
-      );
-    }
+    assert.throws(
+      () => cleanupHostProfile(profile),
+      /directory identity changed/,
+    );
+    assert.equal(
+      readFileSync(join(profile.root, "replacement.txt"), "utf8"),
+      "preserve replacement",
+    );
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    rmSync(profile.root, { recursive: true, force: true });
+    renameSync(moved, profile.root);
   }
+});
+
+test("real fixture Git initialization and all fixture workloads remain available", async (t) => {
+  const profile = profileFor(t);
+  const env = workerEnvironment(profile, "live-checking");
+  await populateHostFixture(profile, {
+    env,
+    extensionDirectory,
+    command: ownedCommand,
+  });
+  for (const name of ["one", "two"]) {
+    assert.ok(existsSync(join(profile.workspaceRoot, name, ".git")));
+    assert.ok(existsSync(join(profile.workspaceRoot, name, ".saltbox-lint")));
+    assert.ok(
+      readFileSync(
+        join(profile.workspaceRoot, name, "roles/navsource/tasks/main.yml"),
+        "utf8",
+      ).includes("😀é\r\n"),
+    );
+  }
+  assert.ok(
+    existsSync(
+      join(profile.workspaceRoot, "one/roles/readonly/templates/config.yaml"),
+    ),
+  );
+  assert.ok(
+    existsSync(
+      join(
+        profile.workspaceRoot,
+        "one/roles/readonly-directory/templates/config.j2",
+      ),
+    ),
+  );
+  assert.equal(
+    readFileSync(
+      join(
+        profile.workspaceRoot,
+        "one/roles/example/tasks/safe-rule-fixes.yml",
+      ),
+      "utf8",
+    ).includes("# Author(s): salty"),
+    true,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      readFileSync(join(profile.workspaceRoot, "test.code-workspace"), "utf8"),
+    ).folders,
+    [{ path: "one" }, { path: "two" }],
+  );
+});
+
+test("queue fixture retains all 46 entries in each independent repository", async (t) => {
+  const profile = profileFor(t);
+  await populateHostFixture(profile, {
+    env: workerEnvironment(profile, "queue"),
+    extensionDirectory,
+    command: async () => "",
+  });
+  for (const name of ["one", "two"])
+    assert.equal(
+      readdirSync(join(profile.workspaceRoot, name)).filter((name) =>
+        /^queue-\d+\.yml$/.test(name),
+      ).length,
+      46,
+    );
+});
+
+test("disabled live performance preserves original fixtures and registers controller configuration", async (t) => {
+  const profile = profileFor(t);
+  const env = workerEnvironment(profile, "live-performance");
+  assert.equal(env.SALTBOX_TEST_DISABLED, "1");
+  assert.equal(env.SALTBOX_TEST_SAVE_SCOPE, "0");
+  await populateHostFixture(profile, {
+    env,
+    extensionDirectory,
+    command: async () => "",
+  });
+  assert.ok(
+    existsSync(
+      join(profile.workspaceRoot, "one/roles/readonly/templates/config.yaml"),
+    ),
+  );
+  assert.ok(
+    existsSync(
+      join(profile.workspaceRoot, "one/roles/navsource/tasks/main.yml"),
+    ),
+  );
+  const controller = JSON.parse(
+    readFileSync(join(profile.controller, "package.json"), "utf8"),
+  );
+  assert.equal(
+    controller.contributes.configuration.properties["saltboxLint.checkOnType"]
+      .default,
+    false,
+  );
+});
+
+test("nested owner setup failure removes only the unused profile and cannot launch", async (t) => {
+  const profile = profileFor(t);
+  const failure = new Error("supervisor setup failed");
+  await assert.rejects(
+    runHostProfile(
+      { env: {} },
+      {
+        createProfile: () => profile,
+        createSupervisor: async () => {
+          throw failure;
+        },
+        command: () => assert.fail("failed setup cannot launch a worker"),
+        report() {},
+      },
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(existsSync(profile.root), false);
+});
+
+for (const version of hostVersions) {
+  for (const mode of ["disabled", "live-checking"]) {
+    test(`worker directly forwards ${version} ${mode} to the supported SDK`, async (t) => {
+      const profile = profileFor(t);
+      const env = workerEnvironment(profile, mode, version);
+      /** @type {import("@vscode/test-electron").TestOptions | undefined} */
+      let received;
+      const options = await runHostWorker(
+        { env },
+        {
+          command: async () => "",
+          electron: {
+            downloadAndUnzipVSCode: () =>
+              assert.fail("explicit executable must be retained"),
+            runTests: async (value) => {
+              received = value;
+            },
+          },
+          report() {},
+        },
+      );
+      assert.equal(options, received);
+      assert.equal(options.version, version);
+      assert.equal(options.vscodeExecutablePath, `/sdk/${version}`);
+      assert.equal(options.extensionTestsEnv.SALTBOX_TEST_HOST_MODE, mode);
+      assert.equal(
+        options.extensionTestsEnv.SALTBOX_TEST_WORKSPACE_PATH,
+        profile.workspaceRoot,
+      );
+      assert.ok(
+        existsSync(profile.root),
+        "worker never deletes externally owned directories",
+      );
+      verifyHostProfiles(options, profile);
+    });
+  }
+}
+
+test("worker setup failure cannot launch the editor and its outer owner cleans partial fixtures", async () => {
+  const failure = new Error("fixture initialization failed");
+  /** @type {string | undefined} */
+  let root;
+  let launches = 0;
+  await assert.rejects(
+    runHostProfile(
+      {
+        env: {
+          SALTBOX_TEST_WORKSPACE_BASE: workspaceBase,
+          ...workerEnvironment({ root: "provided by owner" }),
+        },
+      },
+      {
+        command: async (_name, _args, options) => {
+          root = profileRoot(commandEnvironment(options));
+          try {
+            await runHostWorker(
+              { env: options.env },
+              {
+                command: async () => {
+                  throw failure;
+                },
+                electron: {
+                  runTests: async () => {
+                    launches++;
+                  },
+                },
+                report() {},
+              },
+            );
+          } catch (error) {
+            assert.ok(error instanceof Error);
+            Object.assign(error, { ownershipReleased: true });
+            throw error;
+          }
+        },
+        report() {},
+      },
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(launches, 0);
+  assert.ok(root);
+  assert.equal(existsSync(root), false);
+});
+
+test("restricted launch preserves trust and receives the matched profile identity", async (t) => {
+  const profile = profileFor(t);
+  const env = workerEnvironment(profile, "untrusted");
+  /** @type {{name: string, args: string[], options: CommandOptions} | undefined} */
+  let restricted;
+  await runHostWorker(
+    { env },
+    {
+      command: async (name, args, options) => {
+        if (name !== "git") restricted = { name, args, options };
+        return "";
+      },
+      electron: {
+        runTests: () => assert.fail("standard runner would disable trust"),
+      },
+      report() {},
+    },
+  );
+  assert.ok(restricted);
+  assert.equal(restricted.name, "/sdk/1.100.0");
+  assert.equal(restricted.options.timeoutMs, 90000);
+  assert.equal(restricted.args.includes("--disable-workspace-trust"), false);
+  assert.equal(
+    commandEnvironment(restricted.options).SALTBOX_TEST_USER_DATA_DIR,
+    profile.userData,
+  );
+  assert.equal(
+    commandEnvironment(restricted.options).SALTBOX_TEST_EXTENSIONS_DIR,
+    profile.extensionsDir,
+  );
+});
+
+for (const flag of ["--user-data-dir", "--extensions-dir"]) {
+  test(`profile mismatch and repeated ${flag} are rejected before launch`, (t) => {
+    const profile = profileFor(t);
+    const options = hostOptions({
+      env: {},
+      profile,
+      executable: "/sdk",
+      realCLI: "/cli",
+    });
+    const wrong = { ...options, launchArgs: [...options.launchArgs] };
+    wrong.launchArgs[wrong.launchArgs.indexOf(flag) + 1] = "/wrong/profile";
+    assert.throws(
+      () => verifyHostProfiles(wrong, profile),
+      /match installation profile/,
+    );
+    assert.throws(
+      () =>
+        verifyHostProfiles(
+          { ...options, launchArgs: [...options.launchArgs, flag + "=/wrong"] },
+          profile,
+        ),
+      /exactly one/,
+    );
+  });
+}
+
+test("installed package preflight rejects missing, wrong and duplicate packages", (t) => {
+  const profile = profileFor(t);
+  assert.throws(
+    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    /exactly one/,
+  );
+  fakeProduct(profile, { version: "0.2.0" });
+  assert.throws(
+    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    /package version/,
+  );
+  fakeProduct(profile);
+  assert.throws(
+    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    /exactly one/,
+  );
+});
+
+test("installed package and backend identity are forwarded before editor exercise", async (t) => {
+  const profile = profileFor(t);
+  const env = {
+    ...workerEnvironment(profile),
+    SALTBOX_TEST_VSIX: "fixture.vsix",
+  };
+  /** @type {{args: string[], options: CommandOptions}[]} */
+  const commands = [];
+  /** @type {import("@vscode/test-electron").TestOptions | undefined} */
+  let editor;
+  await runHostWorker(
+    { env },
+    {
+      readArchive: async () => fakeVSIXEntries(),
+      command: async (name, args, options) => {
+        if (name === "git") return "";
+        commands.push({ args, options });
+        if (args.includes("--install-extension")) fakeProduct(profile);
+        return "saltyorg.saltbox-lint@0.1.0\n";
+      },
+      electron: {
+        resolveCliArgsFromVSCodeExecutablePath: () => ["code-cli", "prefix"],
+        runTests: async (options) => {
+          editor = options;
+        },
+      },
+      report() {},
+    },
+  );
+  assert.equal(commands.length, 2);
+  for (const call of commands) {
+    assert.equal(
+      call.args[call.args.indexOf("--user-data-dir") + 1],
+      profile.userData,
+    );
+    assert.equal(
+      call.args[call.args.indexOf("--extensions-dir") + 1],
+      profile.extensionsDir,
+    );
+    assert.equal(call.options.timeoutMs, 90000);
+  }
+  assert.ok(editor);
+  assert.ok(editor.extensionTestsEnv);
+  assert.equal(editor.extensionDevelopmentPath, profile.controller);
+  assert.equal(
+    editor.extensionTestsEnv.SALTBOX_TEST_EXPECTED_PRODUCT_VERSION,
+    "0.1.0",
+  );
+  assert.equal(
+    editor.extensionTestsEnv.SALTBOX_TEST_EXPECTED_CLI_SHA256?.length,
+    64,
+  );
+  assert.equal(
+    editor.extensionTestsEnv.SALTBOX_TEST_EXPECTED_PRODUCT_PATH,
+    join(profile.extensionsDir, "saltyorg.saltbox-lint-0.1.0"),
+  );
+});
+
+test("wrong installed version fails before any editor flow", async (t) => {
+  const profile = profileFor(t);
+  let launches = 0;
+  await assert.rejects(
+    runHostWorker(
+      {
+        env: {
+          ...workerEnvironment(profile),
+          SALTBOX_TEST_VSIX: "fixture.vsix",
+        },
+      },
+      {
+        readArchive: async () => fakeVSIXEntries(),
+        command: async (name, args) => {
+          if (name !== "git" && args.includes("--install-extension"))
+            fakeProduct(profile, { version: "9.0.0" });
+          return "saltyorg.saltbox-lint@9.0.0\n";
+        },
+        electron: {
+          resolveCliArgsFromVSCodeExecutablePath: () => ["code-cli"],
+          runTests: async () => {
+            launches++;
+          },
+        },
+        report() {},
+      },
+    ),
+    /package version/,
+  );
+  assert.equal(launches, 0);
+});
+
+test("same-version installed backend mismatch is detected against independent VSIX bytes", async (t) => {
+  const profile = profileFor(t);
+  let launches = 0;
+  await assert.rejects(
+    runHostWorker(
+      {
+        env: {
+          ...workerEnvironment(profile),
+          SALTBOX_TEST_VSIX: "fixture.vsix",
+        },
+      },
+      {
+        readArchive: async () =>
+          fakeVSIXEntries({ backend: "different tested archive backend" }),
+        command: async (name, args) => {
+          if (name !== "git" && args.includes("--install-extension"))
+            fakeProduct(profile);
+          return "saltyorg.saltbox-lint@0.1.0\n";
+        },
+        electron: {
+          resolveCliArgsFromVSCodeExecutablePath: () => ["code-cli"],
+          runTests: async () => {
+            launches++;
+          },
+        },
+        report() {},
+      },
+    ),
+    /backend bytes must match the tested VSIX/,
+  );
+  assert.equal(launches, 0);
+});
+
+test("tested archive identity rejects missing native backend before installation", async () => {
+  const entries = fakeVSIXEntries();
+  entries.delete(
+    "extension/bin/saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+  );
+  await assert.rejects(
+    vsixIdentity("fixture.vsix", { readArchive: async () => entries }),
+    /contain the native backend/,
+  );
+});
+
+test("inherited command requires the external owner and awaits real child closure", async () => {
+  assert.throws(
+    () =>
+      inheritedCommand(process.execPath, ["-e", ""], {
+        env: {},
+        phase: "missing external owner rejection",
+        timeoutMs: 1000,
+      }),
+    /external profile owner/,
+  );
+  const value = await inheritedCommand(
+    process.execPath,
+    ["-e", "process.stdout.write('ready')"],
+    {
+      env: { ...process.env, SALTBOX_TEST_HOST_WORKER: "1" },
+      phase: "adapter contract",
+      timeoutMs: 1000,
+    },
+  );
+  assert.equal(value, "ready");
+});
+
+test("actual process failure joins the owned group or Job and removes its profile", async () => {
+  /** @type {string | undefined} */
+  let profileRoot;
+  await assert.rejects(
+    runHostProfile(
+      { env: { ...process.env, SALTBOX_TEST_WORKSPACE_BASE: workspaceBase } },
+      {
+        command: (name, _args, options) => {
+          profileRoot = commandEnvironment(options).SALTBOX_TEST_PROFILE_ROOT;
+          return ownedCommand(name, ["-e", "process.exit(7)"], options);
+        },
+        report() {},
+      },
+    ),
+    (error) =>
+      error instanceof Error &&
+      "ownershipReleased" in error &&
+      error.ownershipReleased === true &&
+      /exited 7/.test(error.message),
+  );
+  assert.ok(profileRoot);
+  assert.equal(existsSync(profileRoot), false);
+});
+
+test("SDK download failure never creates or launches a profile", async () => {
+  const failure = new Error("SDK download failed");
+  await assert.rejects(
+    runNativeHosts(
+      {},
+      {
+        download: async () => {
+          throw failure;
+        },
+        profile: () => assert.fail("download failure cannot admit a profile"),
+      },
+    ),
+    (error) => error === failure,
+  );
+});
+
+test("installed backend links outside its package fail preflight", (t) => {
+  const profile = profileFor(t);
+  const directory = fakeProduct(profile);
+  const backend = join(
+    directory,
+    "bin",
+    "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
+  );
+  // Use another owned fixture as the external target; neither package can
+  // borrow the other's identity merely by pointing to its bytes.
+  const other = profileFor(t);
+  writeFileSync(join(other.root, "backend"), "other bytes");
+  unlinkSync(backend);
+  symlinkSync(join(other.root, "backend"), backend, "file");
+  assert.throws(
+    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    /backend must belong/,
+  );
+});
+
+test("failed log archival preserves the only original failure evidence", (t) => {
+  const profile = profileFor(t);
+  mkdirSync(join(profile.userData, "logs"));
+  writeFileSync(
+    join(profile.userData, "logs", "failure.log"),
+    "unique failure",
+  );
+  const blocked = join(profile.root, "blocked-archive");
+  writeFileSync(blocked, "not a directory");
+  assert.throws(
+    () => cleanupHostProfile(profile, { logsPath: blocked }),
+    (error) =>
+      error instanceof AggregateError &&
+      "retainedProfile" in error &&
+      error.retainedProfile === profile.root,
+  );
+  assert.equal(
+    readFileSync(join(profile.userData, "logs", "failure.log"), "utf8"),
+    "unique failure",
+  );
+});
+
+test("native profile names are accepted by the directly imported controller policy", () => {
+  for (const mode of hostModes)
+    assert.equal(
+      getHostProfile(
+        profileEnvironment(
+          {},
+          { mode, version: "1.100.0", executable: "/sdk" },
+        ),
+      ),
+      mode,
+    );
+  assert.throws(() => getHostProfile({}), /Unknown host profile/);
+  assert.throws(
+    () => getHostProfile({ SALTBOX_TEST_HOST_MODE: "unknown" }),
+    /Unknown host profile/,
+  );
+});
+
+test("controller preflight rejects incorrect loaded identity and profile before a flow", (t) => {
+  const profile = profileFor(t);
+  fakeProduct(profile);
+  const product = installedPackage(profile, { packageVersion: "0.1.0" });
+  const options = hostOptions({
+    env: { SALTBOX_TEST_VSIX: "fixture.vsix" },
+    profile,
+    executable: "/sdk",
+    realCLI: product.cliPath,
+    product,
+  });
+  const loaded = {
+    id: "saltyorg.saltbox-lint",
+    extensionPath: product.directory,
+    version: "0.1.0",
+  };
+  verifyInstalledProduct(options.extensionTestsEnv, loaded);
+  assert.throws(() =>
+    verifyInstalledProduct(options.extensionTestsEnv, {
+      ...loaded,
+      id: "wrong.product",
+    }),
+  );
+  assert.throws(
+    () =>
+      verifyInstalledProduct(options.extensionTestsEnv, {
+        ...loaded,
+        version: "9.0.0",
+      }),
+    /product version/,
+  );
+  const other = profileFor(t);
+  fakeProduct(other);
+  assert.throws(
+    () =>
+      verifyInstalledProduct(options.extensionTestsEnv, {
+        ...loaded,
+        extensionPath: join(other.extensionsDir, "saltyorg.saltbox-lint-0.1.0"),
+      }),
+    /isolated installation/,
+  );
+  assert.throws(
+    () =>
+      verifyInstalledProduct(
+        {
+          ...options.extensionTestsEnv,
+          SALTBOX_TEST_EXTENSIONS_DIR: other.extensionsDir,
+        },
+        loaded,
+      ),
+    /isolated installation/,
+  );
+  writeFileSync(product.cliPath, "wrong backend bytes");
+  assert.throws(
+    () => verifyInstalledProduct(options.extensionTestsEnv, loaded),
+    /backend bytes/,
+  );
+});
+
+test("retained child pipes do not replace the first inherited-command failure", async () => {
+  const script = `
+    import assert from 'node:assert/strict';
+    import { inheritedCommand } from './scripts/host-launcher.mjs';
+    const payload = "const {spawn}=require('node:child_process'); spawn(process.execPath,['-e','setTimeout(()=>{},250)'],{stdio:['ignore','inherit','ignore']}); process.stdout.write('too much output'); setTimeout(()=>{},10000);";
+    let deadline;
+    let failureObserved = false;
+    await assert.rejects(inheritedCommand(process.execPath, ['-e', payload], {
+      env: { ...process.env, SALTBOX_TEST_HOST_WORKER: '1' },
+      phase: 'overflow retained pipes', timeoutMs: 90000, maxOutputBytes: 1,
+    }, {
+      setTimer: (expired) => { deadline = expired; },
+      clearTimer() {},
+      onFirstFailure: () => { failureObserved = true; deadline(); },
+    }), /output exceeds 1 bytes/);
+    assert.equal(failureObserved, true);
+  `;
+  await ownedCommand(process.execPath, ["--input-type=module", "-e", script], {
+    phase: "inherited failure ordering with retained pipes",
+    timeoutMs: 10000,
+    cwd: extensionDirectory,
+    env: process.env,
+  });
+});
+
+for (const phase of [
+  "profile setup",
+  "nested owner setup",
+  "profile exercise",
+  "nested owner cleanup",
+  "cleanup",
+]) {
+  for (const stage of ["started", "completed"]) {
+    test(`report failure at ${phase} ${stage} cannot lose resource ownership`, async (t) => {
+      const profile = profileFor(t);
+      const observer = new Error("controlled reporting failure");
+      let commandCalls = 0;
+      let ownerFinishes = 0;
+      let cleanups = 0;
+      const supervisor = await createHostProcessSupervisor();
+      t.after(async () => {
+        await supervisor?.finish();
+      });
+      await assert.rejects(
+        runHostProfile(
+          { env: {} },
+          {
+            createProfile: () => profile,
+            createSupervisor: async () =>
+              supervisor
+                ? {
+                    environment: supervisor.environment,
+                    finish: async () => {
+                      ownerFinishes++;
+                      return await supervisor.finish();
+                    },
+                  }
+                : {
+                    environment: "owned observer fixture",
+                    finish: async () => {
+                      ownerFinishes++;
+                    },
+                  },
+            command: async () => {
+              commandCalls++;
+              return "";
+            },
+            cleanupProfile: (owned) => {
+              cleanups++;
+              cleanupHostProfile(owned);
+            },
+            report: (record) => {
+              if (record.phase === phase && record.stage === stage)
+                throw observer;
+            },
+          },
+        ),
+        (error) => containsFailure(error, observer),
+      );
+      assert.equal(commandCalls, 1);
+      assert.equal(ownerFinishes, 1);
+      assert.equal(cleanups, 1);
+      assert.equal(existsSync(profile.root), false);
+    });
+  }
+}
+
+test("direct ownership reporting failures still join the native supervisor and clean fixtures", async (t) => {
+  const profile = profileFor(t);
+  const observer = new Error("direct ownership reporting failure");
+  let joined = false;
+  const supervisor = await createHostProcessSupervisor();
+  t.after(async () => {
+    await supervisor?.finish();
+  });
+  await assert.rejects(
+    runHostProfile(
+      { env: {} },
+      {
+        createProfile: () => profile,
+        createSupervisor: async () =>
+          supervisor
+            ? {
+                environment: supervisor.environment,
+                finish: async () => {
+                  const value = await supervisor.finish();
+                  joined = true;
+                  return value;
+                },
+              }
+            : {
+                environment: "Windows enclosing Job",
+                finish: async () => {
+                  joined = true;
+                  return {
+                    reservations: 0,
+                    registrations: 0,
+                    groups: 0,
+                    released: true,
+                  };
+                },
+              },
+        command: async () => "",
+        report: (record) => {
+          if (record.stage === "ownership") throw observer;
+        },
+      },
+    ),
+    (error) => containsFailure(error, observer),
+  );
+  assert.equal(joined, true);
+  assert.equal(existsSync(profile.root), false);
+});
+
+test("retention reporting cannot replace primary failure or discard uncertain inputs", async (t) => {
+  const profile = profileFor(t);
+  const primary = Object.assign(new Error("unproven command release"), {
+    ownershipReleased: false,
+  });
+  const observer = new Error("retention reporting failure");
+  await assert.rejects(
+    runHostProfile(
+      { env: {} },
+      {
+        createProfile: () => profile,
+        createSupervisor: async () => undefined,
+        command: async () => {
+          throw primary;
+        },
+        cleanupProfile: () =>
+          assert.fail("uncertain ownership forbids removal"),
+        report: (record) => {
+          if (record.stage === "retained") throw observer;
+        },
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof Error && "retainedProfile" in error);
+      assert.equal(error.retainedProfile, profile.root);
+      assert.ok(containsFailure(error, primary));
+      assert.ok(containsFailure(error, observer));
+      return true;
+    },
+  );
+  assert.equal(existsSync(profile.root), true);
+});
+
+test("operation, restoration and reporting failures all survive final cleanup", async (t) => {
+  const profile = profileFor(t);
+  const primary = releasedError("primary command failure");
+  const cleanup = new Error("controlled restoration failure");
+  const observer = new Error("cleanup observer failure");
+  await assert.rejects(
+    runHostProfile(
+      { env: {} },
+      {
+        createProfile: () => profile,
+        createSupervisor: async () => undefined,
+        command: async () => {
+          throw primary;
+        },
+        cleanupProfile: () => {
+          throw cleanup;
+        },
+        report: (record) => {
+          if (record.phase === "cleanup") throw observer;
+        },
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof Error && "retainedProfile" in error);
+      assert.equal(error.retainedProfile, profile.root);
+      for (const failure of [primary, cleanup, observer])
+        assert.ok(containsFailure(error, failure));
+      return true;
+    },
+  );
+  assert.equal(existsSync(profile.root), true);
+});
+
+for (const mode of ["always", "during cleanup", "nonfinite"]) {
+  test(`${mode} clock failure leaves timing unknown and cannot bypass teardown`, async (t) => {
+    const profile = profileFor(t);
+    const clockFailure = new Error("controlled clock failure");
+    let cleaning = false;
+    let cleanups = 0;
+    /** @type {import('../scripts/host-types.js').ProfileRecord[]} */
+    const reports = [];
+    await assert.rejects(
+      runHostProfile(
+        { env: {} },
+        {
+          createProfile: () => profile,
+          createSupervisor: async () => undefined,
+          command: async () => "",
+          cleanupProfile: (owned) => {
+            cleaning = true;
+            cleanups++;
+            cleanupHostProfile(owned);
+          },
+          clock: () => {
+            if (mode === "nonfinite") return NaN;
+            if (mode === "always" || cleaning) throw clockFailure;
+            return 0;
+          },
+          report: (record) => reports.push(record),
+        },
+      ),
+      (error) =>
+        mode === "nonfinite"
+          ? error instanceof AggregateError
+          : containsFailure(error, clockFailure),
+    );
+    assert.equal(cleanups, 1);
+    assert.equal(existsSync(profile.root), false);
+    assert.ok(
+      reports.some(
+        (record) =>
+          record.stage === "completed" && record.elapsedMs === undefined,
+      ),
+    );
+  });
+}
+
+test("worker reporting and clock errors do not hide its SDK failure", async (t) => {
+  const profile = profileFor(t);
+  const primary = new Error("actual SDK exercise failure");
+  const observer = new Error("worker reporter failure");
+  const clockFailure = new Error("worker clock failure");
+  let exercised = false;
+  await assert.rejects(
+    runHostWorker(
+      { env: workerEnvironment(profile), directory: extensionDirectory },
+      {
+        command: async () => "",
+        electron: {
+          runTests: async () => {
+            exercised = true;
+            throw primary;
+          },
+        },
+        clock: () => {
+          throw clockFailure;
+        },
+        report: () => {
+          throw observer;
+        },
+      },
+    ),
+    (error) => {
+      for (const failure of [primary, observer, clockFailure])
+        assert.ok(containsFailure(error, failure));
+      return true;
+    },
+  );
+  assert.equal(exercised, true);
+  assert.equal(
+    existsSync(profile.root),
+    true,
+    "the external parent retains directory ownership",
+  );
 });
