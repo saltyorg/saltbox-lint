@@ -566,6 +566,8 @@ export async function runManualMarkerRefresh(
     )!;
     const originalSpawn = childProcess.spawn;
     const contextJoins: Promise<void>[] = [];
+    let contextMutation: Promise<void> | undefined;
+    let contextOpen = true;
     const phase = {
       childCount: 0,
       responseClosed: false,
@@ -605,19 +607,24 @@ export async function runManualMarkerRefresh(
       value: async (...args: Parameters<typeof originalRead>) => {
         const bytes = await Reflect.apply(originalRead, contextPromises, args);
         if (
+          contextOpen &&
           phase.responseClosed &&
           !phase.delivered &&
           args[0] === contextFilename
         ) {
           phase.delivered = true;
-          await contextPromises.writeFile(
-            contextFilename,
-            Buffer.concat([
-              contextBytes,
-              Buffer.from("# changed query context\n"),
-            ]),
-          );
-          adapter.refresh([context]);
+          contextMutation = contextPromises
+            .writeFile(
+              contextFilename,
+              Buffer.concat([
+                contextBytes,
+                Buffer.from("# changed query context\n"),
+              ]),
+            )
+            .then(() => {
+              adapter.refresh([context]);
+            });
+          await contextMutation;
         }
         return bytes;
       },
@@ -642,16 +649,23 @@ export async function runManualMarkerRefresh(
         document.uri.toString(),
       );
     } finally {
+      // A read can outlive the command that was revoked. Stop new mutations
+      // and join the owned writer before restoring the fixture's bytes.
+      contextOpen = false;
       Object.defineProperty(contextPromises, "readFile", readDescriptor);
       Object.defineProperty(childProcess, "spawn", spawnDescriptor);
       try {
-        if (phase.delivered) {
-          equality?.restorationWriteStarted();
-          await contextPromises.writeFile(contextFilename, contextBytes);
-          equality?.restorationWriteReturned();
-        }
+        await contextMutation;
       } finally {
-        await Promise.all(contextJoins);
+        try {
+          if (phase.delivered) {
+            equality?.restorationWriteStarted();
+            await contextPromises.writeFile(contextFilename, contextBytes);
+            equality?.restorationWriteReturned();
+          }
+        } finally {
+          await Promise.all(contextJoins);
+        }
       }
     }
     const promises = createRequire(__filename)(
