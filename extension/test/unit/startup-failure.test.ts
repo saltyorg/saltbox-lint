@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -13,6 +14,7 @@ import { join } from "node:path";
 import * as paths from "node:path";
 import * as filesystem from "node:fs";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
 import type * as vscode from "vscode";
@@ -385,6 +387,26 @@ test("real startup call site collects only on rejection and preserves that failu
   });
   const original = new Error("original public query rejection");
   const afterStartup = new Error("stop after successful startup");
+  const aggregateCause = (failure: unknown, message: string): unknown => {
+    assert.ok(
+      failure &&
+        typeof failure === "object" &&
+        "name" in failure &&
+        "message" in failure &&
+        "cause" in failure &&
+        "errors" in failure,
+    );
+    assert.equal(failure.name, "AggregateError");
+    assert.equal(failure.message, message);
+    assert.ok(Array.isArray(failure.errors));
+    assert.equal(
+      failure.errors.length,
+      1,
+      "startup failure must not hide a second body or cleanup failure",
+    );
+    assert.equal(failure.cause, failure.errors[0]);
+    return failure.cause;
+  };
   for (const outcome of [
     "success",
     "predicate rejection",
@@ -393,78 +415,142 @@ test("real startup call site collects only on rejection and preserves that failu
     const owner = mkdtempSync(join(tmpdir(), "saltbox-startup-owner-"));
     let reportedError: unknown;
     let clockReads = 0;
-    const context = {
-      captures: 0,
-      reportStartupFailure: (error: unknown, capture: () => unknown) => {
-        reportedError = error;
-        return reportStartupFailure(error, capture, () => {});
-      },
-      api: {
-        workspace: {
-          workspaceFolders: [{ uri: {} }, { uri: {} }],
-          getConfiguration: () => ({
-            inspect: () => {
-              throw afterStartup;
-            },
-          }),
+    let controlCleanupCount = 0;
+    try {
+      const fileUri = (path: string) => ({
+        fsPath: path,
+        scheme: "file",
+        toString: () => pathToFileURL(path).href,
+      });
+      const roots = ["one", "two"].map((name, index) => {
+        const root = join(owner, name);
+        const defaults = join(root, "roles/example/defaults");
+        mkdirSync(defaults, { recursive: true });
+        writeFileSync(join(root, ".saltbox-lint"), "");
+        for (const source of [
+          "main.yml",
+          "closed.yml",
+          "related.yml",
+          "saved.yml",
+        ])
+          writeFileSync(join(defaults, source), "---\nvalue: fixture\n");
+        return { uri: fileUri(root), name, index };
+      });
+      const nativeSources = roots.map((root) =>
+        filesystem.realpathSync.native(
+          join(root.uri.fsPath, "roles/example/defaults/main.yml"),
+        ),
+      );
+      let diagnosticQueryCount = 0;
+      const context = {
+        captures: 0,
+        reportStartupFailure: (error: unknown, capture: () => unknown) => {
+          reportedError = error;
+          return reportStartupFailure(error, capture, () => {});
         },
-        Uri: { joinPath: () => ({}) },
-        window: {},
-        extensions: { getExtension: () => ({ activate: async () => {} }) },
-        languages: {
-          createDiagnosticCollection: () => ({ dispose() {} }),
-          getDiagnostics: () => {
-            if (outcome === "predicate rejection") throw original;
-            return outcome === "success" ? [{ source: "saltbox-lint" }] : [];
+        api: {
+          workspace: {
+            workspaceFolders: roots,
+            textDocuments: [],
+            getConfiguration: () => ({
+              inspect: () => {
+                throw afterStartup;
+              },
+            }),
+          },
+          Uri: {
+            file: fileUri,
+            joinPath: (base: ReturnType<typeof fileUri>, ...parts: string[]) =>
+              fileUri(join(base.fsPath, ...parts)),
+          },
+          window: {},
+          extensions: { getExtension: () => ({ activate: async () => {} }) },
+          languages: {
+            createDiagnosticCollection: () => ({
+              dispose() {
+                controlCleanupCount++;
+              },
+            }),
+            getDiagnostics: (uri?: ReturnType<typeof fileUri>) => {
+              if (!uri) return [];
+              assert.equal(uri.scheme, "file");
+              assert.ok(nativeSources.includes(uri.fsPath));
+              assert.equal(uri.toString(), pathToFileURL(uri.fsPath).href);
+              diagnosticQueryCount++;
+              if (outcome === "predicate rejection") throw original;
+              return outcome === "success" ? [{ source: "saltbox-lint" }] : [];
+            },
           },
         },
-      },
-      module: { exports: {} as { runActiveProject: () => Promise<void> } },
-      exports: {},
-      require: createRequire(import.meta.url),
-      process: { env: { SALTBOX_TEST_WORKSPACE_PATH: owner } },
-      console: { log() {}, error() {} },
-      __filename: "actual-test-controller",
-      Date: { now: () => (clockReads++ === 0 ? 0 : 10001) },
-      setTimeout,
-      clearTimeout,
-      AbortController,
-      Buffer,
-    };
-    context.exports = context.module.exports;
-    runInNewContext(bundled.outputFiles[0].text, context);
-    try {
+        module: { exports: {} as { runActiveProject: () => Promise<void> } },
+        exports: {},
+        require: createRequire(import.meta.url),
+        process: { env: { SALTBOX_TEST_WORKSPACE_PATH: owner } },
+        console: { log() {}, error() {} },
+        __filename: "actual-test-controller",
+        Date: { now: () => (clockReads++ === 0 ? 0 : 10001) },
+        setTimeout,
+        clearTimeout,
+        AbortController,
+        Buffer,
+      };
+      context.exports = context.module.exports;
+      runInNewContext(bundled.outputFiles[0].text, context);
       await assert.rejects(
         context.module.exports.runActiveProject(),
         (failure) => {
+          const body = aggregateCause(
+            failure,
+            "Test body or owned resources failed",
+          );
+          const named = aggregateCause(body, "active-project regressions");
           assert.ok(
-            failure &&
-              typeof failure === "object" &&
-              "cause" in failure &&
-              "errors" in failure,
+            named &&
+              typeof named === "object" &&
+              "name" in named &&
+              "message" in named &&
+              "cause" in named,
           );
-          assert.ok(Array.isArray(failure.errors));
           assert.equal(
-            failure.errors.length,
-            1,
-            "startup failure must not hide a second cleanup failure",
+            named.message,
+            "Host subcase failed: active-project cohort body/setup",
           );
-          const error = failure.cause;
-          if (outcome === "success") return error === afterStartup;
+          assert.equal(named.name, "Error");
+          const error = named.cause;
+          if (outcome === "success") {
+            assert.equal(error, afterStartup);
+            assert.equal(reportedError, undefined);
+            return true;
+          }
           assert.equal(
             error,
             reportedError,
-            "the exact reported error must escape",
+            "the exact reported error must remain the named cause",
           );
-          if (outcome === "predicate rejection") return error === original;
+          if (outcome === "predicate rejection") {
+            assert.equal(error, original);
+            return true;
+          }
+          assert.ok(
+            error &&
+              typeof error === "object" &&
+              "name" in error &&
+              "code" in error &&
+              "message" in error,
+          );
+          assert.equal(error.name, "AssertionError");
+          assert.equal(error.code, "ERR_ASSERTION");
           assert.match(
-            (error as Error).message,
+            String(error.message),
             /startup without file context shows both cached projects/,
           );
           return true;
         },
       );
       assert.equal(context.captures, outcome === "success" ? 0 : 1);
+      assert.ok(diagnosticQueryCount > 0);
+      assert.equal(controlCleanupCount, 1);
+      assert.deepEqual(readdirSync(owner).sort(), ["one", "two"]);
     } finally {
       rmSync(owner, { recursive: true, force: true });
     }

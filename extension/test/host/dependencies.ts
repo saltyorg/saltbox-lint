@@ -18,6 +18,7 @@ import {
 } from "./failure-evidence.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import { observeClosedFileDeliveries } from "../support/closed-file-controls.ts";
+import { diagnosticSourceFacts } from "../support/diagnostic-source-facts.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -158,6 +159,10 @@ async function dependencies(resources: TestResources): Promise<void> {
     roots[0].uri,
     "roles/unrelated/defaults/main.yml",
   );
+  const savedDefaults = vscode.Uri.file(await realpath(defaults.fsPath));
+  const savedTask = vscode.Uri.file(await realpath(task.fsPath));
+  const savedOtherTask = vscode.Uri.file(await realpath(otherTask.fsPath));
+  const savedUnrelated = vscode.Uri.file(await realpath(unrelatedUri.fsPath));
   const temporary = await hostTemporaryDirectory("saltbox-dependencies-");
   resources.defer("dependency files", () =>
     rm(temporary, { recursive: true, force: true }),
@@ -266,14 +271,17 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.ready();
     await editor.checkWorkspace();
     await editor.join();
-    assert.equal(renderer(task), false);
-    assert.equal(renderer(otherTask), false);
-    assert.equal(findings(task).length, 0);
+    assert.equal(renderer(savedTask), false);
+    assert.equal(renderer(savedOtherTask), false);
+    assert.equal(findings(savedTask).length, 0);
     const unrelatedGood = await readFile(unrelatedUri.fsPath, "utf8");
     const invalidUri = vscode.Uri.joinPath(
       roots[0].uri,
       "roles/invalid/defaults/main.yml",
     );
+    const savedInvalid = vscode.Uri.file(await realpath(invalidUri.fsPath));
+    const invalidFilename = await realpath(invalidUri.fsPath);
+    const unrelatedFilename = await realpath(unrelatedUri.fsPath);
     const invalidBytes = await readFile(invalidUri.fsPath);
     let parseWire: string;
     try {
@@ -310,7 +318,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       hash(invalidBytes),
     );
     assert.equal(
-      findings(invalidUri).length,
+      findings(savedInvalid).length,
       0,
       "unsupported bytes have no editor coordinates",
     );
@@ -337,7 +345,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     const cancelFlush = () => releaseFlush();
     resources.signal.addEventListener("abort", cancelFlush, { once: true });
     beforeRead = async (filename) => {
-      if ([invalidUri.fsPath, unrelatedUri.fsPath].includes(String(filename)))
+      if ([invalidFilename, unrelatedFilename].includes(String(filename)))
         await flushBarrier;
     };
     try {
@@ -359,7 +367,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await waitFor(
       () =>
         invocations().length > quietCount &&
-        findings(unrelatedUri).length === 0,
+        findings(savedUnrelated).length === 0,
       "valid peer must publish beside unsupported UTF-8",
     );
     await editor.join();
@@ -387,12 +395,12 @@ async function dependencies(resources: TestResources): Promise<void> {
       "accepted parse sources must retain complete coverage",
     );
     assert.deepEqual(await readFile(invalidUri.fsPath), invalidChanged);
-    assert.equal(findings(invalidUri).length, 0);
+    assert.equal(findings(savedInvalid).length, 0);
     await writeFile(invalidUri.fsPath, unrelatedGood);
     editor.removeFile(invalidUri);
     await waitFor(
       () =>
-        findings(invalidUri).some(
+        findings(savedInvalid).some(
           (item) => diagnosticCode(item) === "jinja-layout",
         ),
       "valid UTF-8 change must recover ordinary diagnostics",
@@ -400,13 +408,13 @@ async function dependencies(resources: TestResources): Promise<void> {
     await writeFile(invalidUri.fsPath, invalidBytes);
     editor.removeFile(invalidUri);
     await waitFor(
-      () => findings(invalidUri).length === 0,
+      () => findings(savedInvalid).length === 0,
       "unsupported bytes must clear prior saved coordinates",
     );
     await writeFile(unrelatedUri.fsPath, unrelatedGood);
     await waitFor(
       () =>
-        findings(unrelatedUri).some(
+        findings(savedUnrelated).some(
           (item) => diagnosticCode(item) === "jinja-layout",
         ),
       "valid peer recovery",
@@ -449,7 +457,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       openSettled,
       "clean open invalid UTF-8 must not repeatedly retry decoded stdin",
     );
-    assert.equal(findings(invalidUri).length, 0);
+    assert.equal(findings(invalidDocument.uri).length, 0);
     assert.deepEqual(
       editor.actions(invalidDocument, new vscode.Range(0, 0, 20, 0)),
       [],
@@ -465,7 +473,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.check(invalidDocument, true);
     assert.equal(invalidDocument.isDirty, true);
     assert.ok(
-      findings(invalidUri).some(
+      findings(invalidDocument.uri).some(
         (item) => diagnosticCode(item) === "jinja-layout",
       ),
     );
@@ -482,7 +490,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.check(invalidDocument, true);
     assert.equal(invalidDocument.isDirty, false);
     assert.ok(
-      findings(invalidUri).some(
+      findings(invalidDocument.uri).some(
         (item) => diagnosticCode(item) === "jinja-layout",
       ),
     );
@@ -498,7 +506,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await writeFile(invalidUri.fsPath, invalidBytes);
     editor.removeFile(invalidUri);
     await waitFor(
-      () => findings(invalidUri).length === 0,
+      () => findings(invalidDocument.uri).length === 0,
       "clean unsupported reload must clear prior document coordinates",
     );
     assert.deepEqual(
@@ -524,7 +532,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       "roles/example/templates/late.conf",
     );
     assert.ok(
-      findings(unrelatedUri).some(
+      findings(savedUnrelated).some(
         (item) => diagnosticCode(item) === "jinja-layout",
       ),
     );
@@ -611,11 +619,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     await waitFor(
       () =>
-        findings(defaults).some(
+        findings(savedDefaults).some(
           (item) => diagnosticCode(item) === "jinja-layout",
         ) &&
-        findings(unrelatedUri).length === 0 &&
-        renderer(task),
+        findings(savedUnrelated).length === 0 &&
+        renderer(savedTask),
       "rejected mixed batch must refresh both changed primaries and context-driven peers",
     );
     assert.ok(
@@ -632,11 +640,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     ]);
     await waitFor(
       () =>
-        findings(defaults).length === 0 &&
-        findings(unrelatedUri).some(
+        findings(savedDefaults).length === 0 &&
+        findings(savedUnrelated).some(
           (item) => diagnosticCode(item) === "jinja-layout",
         ) &&
-        !renderer(task),
+        !renderer(savedTask),
       "mixed-batch recovery must restore the original diagnostics",
     );
     success(
@@ -667,11 +675,16 @@ async function dependencies(resources: TestResources): Promise<void> {
         ),
       ),
     );
+    const savedAdmissionFiles = await Promise.all(
+      admissionFiles.map(async (uri) =>
+        vscode.Uri.file(await realpath(uri.fsPath)),
+      ),
+    );
     for (const uri of admissionFiles) editor.removeFile(uri);
     await editor.join();
     await editor.checkWorkspace();
     await editor.join();
-    assert.ok(admissionFiles.every((uri) => findings(uri).length === 0));
+    assert.ok(savedAdmissionFiles.every((uri) => findings(uri).length === 0));
     const admissionGate = join(temporary, "admission-gate");
     const admissionNonce = randomBytes(32).toString("hex");
     const admissionPrefix = "roles/admission/defaults/";
@@ -779,7 +792,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       "remaining closed chunks must retain the revoked original admission",
     );
     assert.ok(
-      admissionFiles.every((uri) => findings(uri).length === 0),
+      savedAdmissionFiles.every((uri) => findings(uri).length === 0),
       "excluded closed findings must stay absent after fresh membership coverage",
     );
     await rm(vscode.Uri.joinPath(roots[0].uri, "roles/admission").fsPath, {
@@ -808,16 +821,16 @@ async function dependencies(resources: TestResources): Promise<void> {
       new vscode.Range(0, 0, unrelated.lineCount, 0),
     );
     assert.ok(unrelatedActions.length > 0);
-    const otherBefore = findings(otherTask),
-      unrelatedBefore = findings(unrelatedUri);
+    const otherBefore = findings(savedOtherTask),
+      unrelatedBefore = findings(unrelated.uri);
     count = invocations().length;
     await writeFile(template.fsPath, bad);
     await waitFor(
-      () => renderer(task),
+      () => renderer(savedTask),
       "closed clean tasks must refresh on a non-j2 template edit",
     );
-    assert.deepEqual(findings(otherTask), otherBefore);
-    assert.deepEqual(findings(unrelatedUri), unrelatedBefore);
+    assert.deepEqual(findings(savedOtherTask), otherBefore);
+    assert.deepEqual(findings(unrelated.uri), unrelatedBefore);
     assert.deepEqual(
       editor.actions(unrelated, new vscode.Range(0, 0, unrelated.lineCount, 0)),
       unrelatedActions,
@@ -835,7 +848,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     await writeFile(template.fsPath, good);
     await waitFor(
-      () => !renderer(task),
+      () => !renderer(savedTask),
       "template recovery must clear task findings",
     );
     success(
@@ -856,11 +869,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.join();
     await writeFile(yamlTemplate.fsPath, bad);
     await waitFor(
-      () => renderer(task),
+      () => renderer(savedTask),
       "YAML-named templates must refresh primaries without entering selected batches",
     );
     await writeFile(yamlTemplate.fsPath, good);
-    await waitFor(() => !renderer(task), "YAML-named template recovery");
+    await waitFor(() => !renderer(savedTask), "YAML-named template recovery");
     const templateDocument =
       await vscode.workspace.openTextDocument(yamlTemplate);
     const calls = invocations().length;
@@ -881,22 +894,22 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
 
     await writeFile(template.fsPath, bad);
-    await waitFor(() => renderer(task), "template bad state");
+    await waitFor(() => renderer(savedTask), "template bad state");
     await writeFile(
       defaults.fsPath,
       defaultsGood.replace("example_role_traefik_enabled: false\n", ""),
     );
     await waitFor(
-      () => !renderer(task),
+      () => !renderer(savedTask),
       "defaults removal must change another primary's result",
     );
     await writeFile(defaults.fsPath, defaultsGood);
     await waitFor(
-      () => renderer(task),
+      () => renderer(savedTask),
       "defaults restoration must recheck another primary",
     );
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(task), "defaults recovery");
+    await waitFor(() => !renderer(savedTask), "defaults recovery");
     success("defaults edits refresh dependent task diagnostics");
 
     const docker = vscode.Uri.joinPath(
@@ -908,8 +921,9 @@ async function dependencies(resources: TestResources): Promise<void> {
         "resources/tasks/docker/policy.yml",
       );
     const policyGood = await readFile(policy.fsPath, "utf8");
+    const savedDocker = vscode.Uri.file(await realpath(docker.fsPath));
     const dockerBad = () =>
-      findings(docker).some(
+      findings(savedDocker).some(
         (item) => diagnosticCode(item) === "docker-vars-policy",
       );
     assert.equal(dockerBad(), false);
@@ -927,26 +941,26 @@ async function dependencies(resources: TestResources): Promise<void> {
 
     await rm(template.fsPath);
     await waitFor(
-      () => renderer(task),
+      () => renderer(savedTask),
       "template deletion must refresh primaries",
     );
     await writeFile(template.fsPath, good);
     await waitFor(
-      () => !renderer(task),
+      () => !renderer(savedTask),
       "missing template creation must refresh primaries",
     );
     const moved = join(roots[0].uri.fsPath, "moved-template.txt");
     await rename(template.fsPath, moved);
-    await waitFor(() => renderer(task), "rename away must refresh");
+    await waitFor(() => renderer(savedTask), "rename away must refresh");
     await rename(moved, template.fsPath);
-    await waitFor(() => !renderer(task), "rename back must refresh");
+    await waitFor(() => !renderer(savedTask), "rename back must refresh");
     const replacement = join(roots[0].uri.fsPath, "replacement.txt");
     await writeFile(replacement, bad);
     await rename(replacement, template.fsPath);
-    await waitFor(() => renderer(task), "atomic replacement must refresh");
+    await waitFor(() => renderer(savedTask), "atomic replacement must refresh");
     await writeFile(replacement, good);
     await rename(replacement, template.fsPath);
-    await waitFor(() => !renderer(task), "atomic recovery");
+    await waitFor(() => !renderer(savedTask), "atomic recovery");
     success(
       "missing creation, deletion, rename and atomic replacement refresh dependencies",
     );
@@ -955,17 +969,17 @@ async function dependencies(resources: TestResources): Promise<void> {
     await vscode.window.showTextDocument(document, { preview: false });
     await replace(document, defaultsGood + 'example_value: "{{ value\n }}"\n');
     await editor.check(document, true);
-    const displayed = findings(defaults);
+    const displayed = findings(document.uri);
     const action = editor
       .actions(document, new vscode.Range(0, 0, document.lineCount, 0))
       .find((item) => item.command?.command === "saltboxLint.applySharedFix")!;
     assert.ok(action);
     await writeFile(template.fsPath, bad);
     await waitFor(
-      () => renderer(task),
+      () => renderer(savedTask),
       "closed dependent refresh during dirty buffer",
     );
-    assert.deepEqual(findings(defaults), displayed);
+    assert.deepEqual(findings(document.uri), displayed);
     assert.deepEqual(
       editor.actions(document, new vscode.Range(0, 0, document.lineCount, 0)),
       [],
@@ -983,7 +997,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await replace(document, defaultsGood);
     await document.save();
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(task), "dirty buffer recovery");
+    await waitFor(() => !renderer(savedTask), "dirty buffer recovery");
     success(
       "dirty dependent findings remain visible and stale actions cannot apply",
     );
@@ -1015,6 +1029,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       roots[0].uri,
       "roles/example/tasks/admitted.yml",
     );
+    const savedAdmitted = vscode.Uri.file(await realpath(newlyAdmitted.fsPath));
     const ignorePath = join(roots[0].uri.fsPath, ".gitignore");
     const ignoreText = await readFile(ignorePath, "utf8");
     await writeFile(
@@ -1023,13 +1038,13 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     editor.removeFile(vscode.Uri.file(ignorePath));
     await waitFor(
-      () => findings(newlyAdmitted).length === 0,
+      () => findings(savedAdmitted).length === 0,
       "excluded primary must leave saved coverage before admission changes",
     );
     await writeFile(ignorePath, ignoreText);
     await waitFor(
       () =>
-        findings(newlyAdmitted).some(
+        findings(savedAdmitted).some(
           (item) => diagnosticCode(item) === "jinja-layout",
         ),
       "ignore-control changes must discover previously excluded primaries",
@@ -1244,7 +1259,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       await writeFile(template.fsPath, index % 2 === 0 ? bad : good);
     await pause(600);
     await waitFor(
-      () => !renderer(task),
+      () => !renderer(savedTask),
       "event burst must retain the final template state",
     );
     const burst = invocations().slice(count);
@@ -1564,11 +1579,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     await rm(gate);
     fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
     await waitFor(
-      () => renderer(task),
+      () => renderer(savedTask),
       "late context changes must reject the initial result and restore full coverage",
     );
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(task), "late result recovery");
+    await waitFor(() => !renderer(savedTask), "late result recovery");
     success(
       "late context events reject in-flight scans and retain startup full coverage",
     );
@@ -1604,7 +1619,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     // Read the actual VS Code item without invoking showStatus/updateStatus.
     assert.equal(statusDocument.isDirty, true);
     assert.equal(statusBar.text, "Saltbox Lint: current");
-    const statusFindings = findings(statusTask);
+    const statusFindings = findings(statusDocument.uri);
     assert.ok(
       statusFindings.length > 0,
       "retain existing dirty-source findings",
@@ -1616,7 +1631,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       () => statusBar.text === "Saltbox Lint: stale",
       "dependency event must update the actual status bar for a dirty source",
     );
-    assert.deepEqual(findings(statusTask), statusFindings);
+    assert.deepEqual(findings(statusDocument.uri), statusFindings);
     await pause(600);
     assert.equal(
       invocations().length,
@@ -1635,7 +1650,9 @@ async function dependencies(resources: TestResources): Promise<void> {
 
     await rm(join(roots[0].uri.fsPath, ".saltbox-lint"));
     await waitFor(
-      () => findings(task).length === 0 && findings(unrelatedUri).length === 0,
+      () =>
+        findings(savedTask).length === 0 &&
+        findings(unrelated.uri).length === 0,
       "marker removal clears graph and diagnostics",
     );
     count = invocations().length;
@@ -1690,6 +1707,16 @@ async function dependencies(resources: TestResources): Promise<void> {
           schemaVersion: 1,
           phase: "dependency rejection before disposal",
           originalError: failureReason(error),
+          sourceFacts: diagnosticSourceFacts(vscode, roots, [
+            defaults,
+            task,
+            otherTask,
+            unrelatedUri,
+            vscode.Uri.joinPath(
+              roots[0].uri,
+              "roles/invalid/defaults/main.yml",
+            ),
+          ]),
           processFacts: await journalFailureEvidence(journal),
           cleanup: cleanupStatus.length ? cleanupStatus : "not yet observed",
         };

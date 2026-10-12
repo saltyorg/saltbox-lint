@@ -48,6 +48,11 @@ Keep TypeScript [type checking](https://www.typescriptlang.org/tsconfig/noEmit.h
 and typed [promise linting](https://typescript-eslint.io/rules/no-floating-promises/)
 separate from transpilation and execution. Type assertions cannot validate a
 fake at runtime.
+Supply the public fields and methods that the caller actually consumes, and
+back filesystem-facing URI doubles with owned real fixtures. Qualify the
+affected host callers and their existing unit fixtures alongside a changed
+helper; passing the helper's standalone tests does not establish its callers'
+contracts.
 
 ## Test layers and resource owners
 
@@ -128,6 +133,38 @@ The installed-package preflight must reject a mismatched installation/launch
 directory, loaded path, version or backend before the user flow starts. A
 controller that embeds development classes is a component editor test. It does
 not establish that those classes came from the installed VSIX.
+
+## Filesystem identity and diagnostic keys
+
+VS Code diagnostic collections use resource URI keys. The minimum editor's
+[diagnostic collection](https://github.com/microsoft/vscode/blob/1.100.0/src/vs/workbench/api/common/extHostDiagnostics.ts)
+uses the URI [comparison key](https://github.com/microsoft/vscode/blob/1.100.0/src/vs/base/common/resources.ts);
+that comparison does not resolve filesystem symlinks. Node's
+[native realpath](https://nodejs.org/download/release/v24.20.0/docs/api/fs.html#fsrealpathsyncnativepath-options)
+establishes a separate filesystem identity. A workspace URI, a returned document
+URI and a native saved-source URI can therefore name different resources.
+
+Capture the native URI of closed saved fixtures while the source exists, before
+testing rename or deletion. Query open or dirty models using the actual returned
+`document.uri`, and preserve exact tab identity. Watcher controls must observe
+the actual callback, source ownership and intended current bytes. A generic
+realpath fallback for all diagnostic lookups would hide these distinct contracts.
+The ownerless-file selection case explicitly opens a canonical file; its
+separate public workspace-alias and known unmarked-owner cases remain required.
+
+Qualify changes to filesystem/URI identity through a real parent directory
+symlink or Windows junction, verifying that public and native paths differ and
+identify the same owned directory. Run every required profile in both configured
+editors from that base, alongside ordinary-path qualification. Keep exact
+diagnostic, dirty-overlay, source-owner, deletion and restoration assertions;
+do not rewrite production URI policy to fit a fixture's path spelling.
+
+Subcase aggregation retains each original error object and its complete causes,
+including independent teardown errors. The final failure must include earlier
+subcase errors when later cohort setup, operations or cleanup reject. Console
+output or a list of failed names cannot replace that retained graph. The imported
+[`subcase owner`](../extension/test/support/subcase-failures.ts) and its
+[failure tests](../extension/test/unit/subcase-failures.test.ts) cover this boundary.
 
 ## Editor coverage inventory
 

@@ -11,6 +11,7 @@ import {
   type TestResources,
 } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
+import { SubcaseFailures } from "../support/subcase-failures.ts";
 import {
   holdProcessAdmission,
   observeDocumentChange,
@@ -113,7 +114,7 @@ async function regressions(resources: TestResources): Promise<void> {
   const extension = vscode.extensions.getExtension("saltyorg.saltbox-lint")!;
   await extension.activate();
   const roots = vscode.workspace.workspaceFolders!;
-  const failures: string[] = [];
+  const failures = new SubcaseFailures();
   const component = (
     owner: TestResources,
     adapters: Partial<EditorAdapters> = {},
@@ -146,7 +147,7 @@ async function regressions(resources: TestResources): Promise<void> {
       );
       console.log(`PASS ${name}`);
     } catch (error) {
-      failures.push(name);
+      failures.record(name, error);
       console.error(`FAIL ${name}`, error);
     }
   };
@@ -372,6 +373,10 @@ async function regressions(resources: TestResources): Promise<void> {
         vscode.Uri.file(join(aliasRoot, "roles/example/defaults/main.yml")),
         Buffer.from(jinja),
       );
+      const alias = vscode.Uri.file(
+        join(aliasRoot, "roles/example/defaults/main.yml"),
+      );
+      const canonical = vscode.Uri.file(await realpath(alias.fsPath));
       const index = vscode.workspace.workspaceFolders!.length;
       await updateFolders(index, 0, { uri: vscode.Uri.file(aliasRoot) });
       await waitFor(
@@ -379,11 +384,7 @@ async function regressions(resources: TestResources): Promise<void> {
         "alias workspace added",
       );
       try {
-        const alias = vscode.Uri.file(
-          join(aliasRoot, "roles/example/defaults/main.yml"),
-        );
         const document = await open(alias, jinja);
-        const canonical = vscode.Uri.file(await realpath(alias.fsPath));
         const saved = spawnSync(
           join(
             extension.extensionPath,
@@ -436,11 +437,38 @@ async function regressions(resources: TestResources): Promise<void> {
       );
       try {
         await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
+        const expectedOwner = await realpath(
+          join(diskRoot, "roles/example/defaults/main.yml"),
+        );
+        const observedOwner = await realpath(canonical.fsPath);
+        assert.equal(observedOwner, expectedOwner);
+        const savedDiagnostics = diagnostics(canonical);
         assert.ok(
-          diagnostics(
-            vscode.Uri.file(join(diskRoot, "roles/example/defaults/main.yml")),
-          ).length > 0,
+          savedDiagnostics.some(
+            (diagnostic) => diagnosticCode(diagnostic) === "jinja-layout",
+          ),
           "removed alias still owns a canonical scan source",
+        );
+        console.log(
+          "SALTBOX_I4_SAVED_OWNER " +
+            JSON.stringify({
+              stage: "canonical replacement saved source",
+              queryURI: canonical.toString().slice(0, 2048),
+              expectedOwner: expectedOwner.slice(0, 2048),
+              observedOwner: observedOwner.slice(0, 2048),
+              diagnostics: savedDiagnostics.slice(0, 16).map((diagnostic) => ({
+                code: diagnosticCode(diagnostic),
+                start: {
+                  line: diagnostic.range.start.line,
+                  character: diagnostic.range.start.character,
+                },
+                end: {
+                  line: diagnostic.range.end.line,
+                  character: diagnostic.range.end.character,
+                },
+              })),
+              truncated: savedDiagnostics.length > 16,
+            }),
         );
       } finally {
         await updateFolders(index, 1);
@@ -629,5 +657,5 @@ async function regressions(resources: TestResources): Promise<void> {
       }
     },
   );
-  assert.deepEqual(failures, [], "review regressions");
+  failures.throwIfAny("review regressions");
 }

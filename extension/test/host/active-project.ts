@@ -11,6 +11,8 @@ import { runProcess } from "../../src/process.ts";
 import { withTestResources } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { componentUI } from "../support/component-ui.ts";
+import { SubcaseFailures } from "../support/subcase-failures.ts";
+import { diagnosticSourceFacts } from "../support/diagnostic-source-facts.ts";
 import { verifyInstalledProduct } from "./host-preflight.ts";
 import {
   reportStartupFailure,
@@ -169,18 +171,20 @@ export async function runActiveProject(
           action.command?.command.startsWith("saltboxLint."),
         );
       };
-      const failures: string[] = [];
       const run = async (name: string, test: () => Promise<void>) => {
         try {
           await test();
           console.log(`PASS ${name}`);
         } catch (error) {
-          failures.push(name);
+          failures.record(name, error);
           console.error(`FAIL ${name}`, error);
         }
       };
       const uris = roots.map((root) =>
         vscode.Uri.joinPath(root.uri, "roles/example/defaults/main.yml"),
+      );
+      const savedUris = await Promise.all(
+        uris.map(async (uri) => vscode.Uri.file(await realpath(uri.fsPath))),
       );
       const closed = vscode.Uri.joinPath(
         roots[0].uri,
@@ -190,10 +194,18 @@ export async function runActiveProject(
         roots[0].uri,
         "roles/example/defaults/related.yml",
       );
+      const savedClosed = vscode.Uri.file(await realpath(closed.fsPath));
+      const savedOverviewSecond = vscode.Uri.file(
+        await realpath(
+          vscode.Uri.joinPath(roots[1].uri, "roles/example/defaults/saved.yml")
+            .fsPath,
+        ),
+      );
       const other = vscode.languages.createDiagnosticCollection(
         "active-project-control",
       );
       resources.defer("control diagnostics", () => other.dispose());
+      const failures = new SubcaseFailures();
       try {
         if (editor) {
           await waitFor(
@@ -205,7 +217,7 @@ export async function runActiveProject(
             "file",
           );
           assert.ok(invocations()[0].endsWith(" ."));
-          assert.equal(findings(uris[0]).length, 0);
+          assert.equal(findings(savedUris[0]).length, 0);
           delete fixtureEnv.SALTBOX_TEST_PROCESS_GATE;
           editor.refresh([
             vscode.Uri.joinPath(
@@ -217,12 +229,12 @@ export async function runActiveProject(
         }
         try {
           await waitFor(
-            () => uris.every((uri) => findings(uri).length > 0),
+            () => savedUris.every((uri) => findings(uri).length > 0),
             "startup without file context shows both cached projects",
           );
         } catch (error) {
-          reportStartupFailure(error, () =>
-            startupFailureReport(
+          reportStartupFailure(error, () => ({
+            ...startupFailureReport(
               vscode,
               roots,
               uris,
@@ -230,7 +242,8 @@ export async function runActiveProject(
               __filename,
               component ? process.env.SALTBOX_TEST_FIXTURE_PATH : undefined,
             ),
-          );
+            sourceFacts: diagnosticSourceFacts(vscode, roots, uris),
+          }));
         }
         assert.equal(
           config.inspect<boolean>("activeProjectOnly")?.defaultValue,
@@ -252,7 +265,7 @@ export async function runActiveProject(
             () => existsSync(startupGate + ".ready"),
             "refreshed full scan is held before publishing",
           );
-          assert.equal(findings(uris[0]).length, 0);
+          assert.equal(findings(savedUris[0]).length, 0);
           delete fixtureEnv.SALTBOX_TEST_PROCESS_GATE;
           // This file's fingerprint is unchanged from the first selected check.
           // Even an echo that needs no selected check must retain full coverage.
@@ -264,7 +277,7 @@ export async function runActiveProject(
           ]);
           await rm(startupGate);
           await waitFor(
-            () => uris.every((uri) => findings(uri).length > 0),
+            () => savedUris.every((uri) => findings(uri).length > 0),
             "unchanged file event cannot strand refreshed full coverage",
           );
           console.log(
@@ -301,7 +314,7 @@ export async function runActiveProject(
               count,
               "failed scan must stay idle",
             );
-            assert.equal(findings(uris[0]).length, 0);
+            assert.equal(findings(savedUris[0]).length, 0);
           } finally {
             filesystem.readFile = originalRead;
           }
@@ -312,7 +325,7 @@ export async function runActiveProject(
             ),
           ]);
           await waitFor(
-            () => uris.every((uri) => findings(uri).length > 0),
+            () => savedUris.every((uri) => findings(uri).length > 0),
             "later event restores full coverage after a failed scan",
           );
           console.log(
@@ -441,12 +454,8 @@ export async function runActiveProject(
             await workspaceCheck();
             await waitFor(
               () =>
-                findings(
-                  vscode.Uri.joinPath(
-                    roots[1].uri,
-                    "roles/example/defaults/saved.yml",
-                  ),
-                ).length > 0 && findings(closed).length === 0,
+                findings(savedOverviewSecond).length > 0 &&
+                findings(savedClosed).length === 0,
               "undefined editor retains second project after a saved scan",
             );
           },
@@ -494,17 +503,17 @@ export async function runActiveProject(
             await show(doc);
             await check(doc);
             assert.ok(
-              findings(related).some((d) => d.relatedInformation?.length),
+              findings(doc.uri).some((d) => d.relatedInformation?.length),
             );
             await show(b);
             await replace(doc, doc.getText() + "# unsaved\n");
             await show(doc);
             await waitFor(
-              () => findings(related).length > 0,
+              () => findings(doc.uri).length > 0,
               "hidden related diagnostic restored",
             );
             assert.ok(
-              findings(related).every((d) => !d.relatedInformation?.length),
+              findings(doc.uri).every((d) => !d.relatedInformation?.length),
               "hidden document cache must strip stale related locations",
             );
           },
@@ -517,14 +526,17 @@ export async function runActiveProject(
               roots[0].uri,
               "roles/example/defaults/related-closed.yml",
             );
+            const savedRelatedClosed = vscode.Uri.file(
+              await realpath(relatedClosed.fsPath),
+            );
             await replace(b, b.getText() + "# unsaved\n");
             await show(readme);
             await waitFor(
-              () => findings(relatedClosed).length > 0,
+              () => findings(savedRelatedClosed).length > 0,
               "saved related findings restored",
             );
             assert.ok(
-              findings(relatedClosed).every(
+              findings(savedRelatedClosed).every(
                 (d) => !d.relatedInformation?.length,
               ),
               "hidden saved cache must strip stale related locations",
@@ -532,19 +544,19 @@ export async function runActiveProject(
             const doc = await vscode.workspace.openTextDocument(closed);
             await show(doc);
             await check(doc);
-            assert.ok(findings(closed).length > 0);
+            assert.ok(findings(doc.uri).length > 0);
             await vscode.commands.executeCommand(
               "workbench.action.closeActiveEditor",
             );
             await waitFor(
-              () => findings(closed).length === 0,
+              () => findings(doc.uri).length === 0,
               "closed tab is cleared",
             );
             await show(b);
             await show(readme);
             await pause(100);
             assert.equal(
-              findings(closed).length,
+              findings(doc.uri).length,
               0,
               "display repaint must not restore a closed tab's saved cache",
             );
@@ -618,11 +630,12 @@ export async function runActiveProject(
                 closed,
                 Buffer.from('value: "{{ new\n }}"\n'),
               );
+              const savedNew = vscode.Uri.file(await realpath(closed.fsPath));
               await pause(600);
-              assert.equal(findings(closed).length, 0);
+              assert.equal(findings(savedNew).length, 0);
               await show(readme);
               await waitFor(
-                () => findings(closed).length > 0,
+                () => findings(savedNew).length > 0,
                 "new hidden closed-file result cached",
               );
               await show(b);
@@ -630,7 +643,7 @@ export async function runActiveProject(
               await pause(600);
               await show(readme);
               assert.equal(
-                findings(closed).length,
+                findings(savedNew).length,
                 0,
                 "hidden deletion revokes saved cache",
               );
@@ -652,6 +665,7 @@ export async function runActiveProject(
               const renderedFilename = await filesystem.realpath(
                 rendered.fsPath,
               );
+              const savedRendered = vscode.Uri.file(renderedFilename);
               const sentinelFilename = await filesystem.realpath(
                 sentinel.fsPath,
               );
@@ -694,17 +708,17 @@ export async function runActiveProject(
                 release();
                 await scan;
                 assert.equal(
-                  findings(rendered).length,
+                  findings(savedRendered).length,
                   0,
                   "late hidden scan stays hidden",
                 );
                 await show(readme);
                 await waitFor(
-                  () => findings(rendered).length > 0,
+                  () => findings(savedRendered).length > 0,
                   "rendered cached findings restored",
                 );
                 assert.ok(
-                  findings(rendered).every(
+                  findings(savedRendered).every(
                     (d) => !d.relatedInformation?.length,
                   ),
                   "in-flight saved cache must strip invalidated related locations",
@@ -747,8 +761,27 @@ export async function runActiveProject(
               "..",
               vscode.ConfigurationTarget.WorkspaceFolder,
             );
-            const externalDoc =
-              await vscode.workspace.openTextDocument(external);
+            const externalDoc = await vscode.workspace.openTextDocument(
+              vscode.Uri.file(await realpath(external.fsPath)),
+            );
+            assert.equal(
+              vscode.workspace.getWorkspaceFolder(externalDoc.uri),
+              undefined,
+              "canonical external context has no known workspace owner",
+            );
+            console.log(
+              "SALTBOX_OWNERLESS_CONTEXT " +
+                JSON.stringify({
+                  publicSourceURI: external.toString().slice(0, 2048),
+                  actualModelURI: externalDoc.uri.toString().slice(0, 2048),
+                  nativeOwner: (await realpath(externalDoc.uri.fsPath)).slice(
+                    0,
+                    2048,
+                  ),
+                  contract:
+                    "ownerless canonical file selects containing source root",
+                }),
+            );
             await show(externalDoc);
             await waitFor(
               () =>
@@ -833,15 +866,13 @@ export async function runActiveProject(
             assert.equal(findings(b.uri).length, 0);
           },
         );
+      } catch (error) {
+        failures.record("active-project cohort body/setup", error);
       } finally {
-        subscriptions.forEach((subscription) => subscription.dispose());
-        editor?.dispose();
-        await editor?.join();
-        other.dispose();
         delete fixtureEnv.SALTBOX_TEST_PROCESS_GATE;
         delete fixtureEnv.SALTBOX_TEST_PROCESS_LOG;
       }
-      assert.deepEqual(failures, []);
+      failures.throwIfAny("active-project regressions");
     },
   );
 }

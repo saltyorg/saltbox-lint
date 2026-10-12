@@ -60,6 +60,10 @@
   acceptance for their respective contracts. Preserve the guide's coverage map
   and required runtime/platform coverage. Shared global patches and execution
   of extracted source are not routine regression-test architecture.
+- Keep test doubles consistent with the public fields and methods their callers
+  use. Back filesystem-facing URI fixtures with owned real files. Include the
+  affected callers' existing tests when qualifying a helper change; standalone
+  helper tests do not establish those callers' contracts.
 - Give each case unique fixtures and explicit ownership of pending operations,
   subscriptions, timers, state changes and child processes. Register cleanup
   during setup and await it after success or failure. Cancellation must join
@@ -71,6 +75,15 @@
   exercise and teardown separately, and retain both operation and cleanup
   failures. Follow the guide's qualification checks before claiming stability;
   retries, extra sleeps, force-exit or reduced coverage cannot establish it.
+- Preserve the original errors when collecting subcase failures; names or
+  messages alone discard causes. Final aggregation must retain earlier failures
+  when later setup, operations or teardown fail.
+- Verify filesystem identity separately from editor resource identity. Use the
+  actual returned document/tab URI for open models and the documented native
+  source identity for saved-file findings. Qualify filesystem/URI identity
+  changes in both configured editors through a real directory symlink or
+  junction, with distinct public and native paths, across the required profiles.
+  Record those identities and preserve the existing assertions and workloads.
 - Freeze source and dependencies before qualification. Sequence dependency
   installs, source edits and fault injection separately from checks that read
   those inputs, or give each run an isolated verified snapshot. Record input

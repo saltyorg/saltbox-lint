@@ -11,6 +11,9 @@ import { EditorIntegration } from "../../src/editor.ts";
 import { withTestResources } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { componentUI } from "../support/component-ui.ts";
+import { SubcaseFailures } from "../support/subcase-failures.ts";
+import { diagnosticSourceFacts } from "../support/diagnostic-source-facts.ts";
+import { reportStartupFailure } from "./startup-failure.ts";
 import { holdClosedFileEvents } from "../support/closed-file-controls.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -112,7 +115,6 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
       resources.defer("save-scope subscriptions", () =>
         subscriptions.forEach((subscription) => subscription.dispose()),
       );
-      const failures: string[] = [];
       const run = async (name: string, test: () => Promise<void>) => {
         if (
           process.env.SALTBOX_REVIEW_CASE &&
@@ -123,23 +125,46 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
           await test();
           console.log(`PASS ${name}`);
         } catch (error) {
-          failures.push(name);
+          failures.record(name, error);
           console.error(`FAIL ${name}`, error);
         }
       };
+      const failures = new SubcaseFailures();
       try {
-        await waitFor(
-          () =>
-            roots.every((root) =>
-              findings(
+        const startupSources = await Promise.all(
+          roots.map(async (root) =>
+            vscode.Uri.file(
+              await realpath(
+                vscode.Uri.joinPath(root.uri, "roles/example/defaults/main.yml")
+                  .fsPath,
+              ),
+            ),
+          ),
+        );
+        try {
+          await waitFor(
+            () =>
+              startupSources.every((uri) =>
+                findings(uri).some(
+                  (finding) => diagnosticCode(finding) === "jinja-layout",
+                ),
+              ),
+            "startup should publish saved findings for each marked root",
+          );
+        } catch (error) {
+          reportStartupFailure(error, () => ({
+            sourceFacts: diagnosticSourceFacts(
+              vscode,
+              roots,
+              roots.map((root) =>
                 vscode.Uri.joinPath(
                   root.uri,
                   "roles/example/defaults/main.yml",
                 ),
-              ).some((finding) => diagnosticCode(finding) === "jinja-layout"),
+              ),
             ),
-          "startup should publish saved findings for each marked root",
-        );
+          }));
+        }
         await run("one startup saved scan per marked root", async () => {
           assert.equal(
             invocations().filter((line) => line.endsWith(" .")).length,
@@ -412,8 +437,12 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               held = undefined;
               release.release();
             }
+            const savedFirst = vscode.Uri.file(await realpath(first.fsPath));
+            const savedSecond = vscode.Uri.file(await realpath(second.fsPath));
             await waitFor(
-              () => findings(first).length > 0 && findings(second).length > 0,
+              () =>
+                findings(savedFirst).length > 0 &&
+                findings(savedSecond).length > 0,
               "closed changed files diagnosed",
             );
             assert.equal(
@@ -428,25 +457,28 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
             assert.ok(!invocations()[0].endsWith(" ."));
             assert.equal(
               vscode.workspace.textDocuments.some((doc) =>
-                [first.toString(), second.toString()].includes(
-                  doc.uri.toString(),
-                ),
+                [
+                  first.toString(),
+                  second.toString(),
+                  savedFirst.toString(),
+                  savedSecond.toString(),
+                ].includes(doc.uri.toString()),
               ),
               false,
             );
-            const retained = findings(second);
+            const retained = findings(savedSecond);
             await vscode.workspace.fs.writeFile(
               first,
               Buffer.from("value: 1\n"),
             );
             await waitFor(
-              () => findings(first).length === 0,
+              () => findings(savedFirst).length === 0,
               "closed fixed file diagnostics replaced",
             );
-            assert.deepEqual(findings(second), retained);
+            assert.deepEqual(findings(savedSecond), retained);
             await vscode.workspace.fs.delete(second);
             await waitFor(
-              () => findings(second).length === 0,
+              () => findings(savedSecond).length === 0,
               "deleted closed file clears diagnostics",
             );
           },
@@ -463,8 +495,9 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               first,
               Buffer.from('value: "{{ first\n }}"\n'),
             );
+            const savedFirst = vscode.Uri.file(await realpath(first.fsPath));
             await waitFor(
-              () => findings(first).length > 0,
+              () => findings(savedFirst).length > 0,
               "first batch fixture diagnosed",
             );
             const gate = join(temporary, "batch");
@@ -483,11 +516,15 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
                 second,
                 Buffer.from('value: "{{ second\n }}"\n'),
               );
+              const savedSecond = vscode.Uri.file(
+                await realpath(second.fsPath),
+              );
               delete fixtureEnv.SALTBOX_TEST_PROCESS_GATE;
               await rm(gate);
               await waitFor(
                 () =>
-                  findings(first).length === 0 && findings(second).length > 0,
+                  findings(savedFirst).length === 0 &&
+                  findings(savedSecond).length > 0,
                 "both selected batches eventually publish",
               );
             } finally {
@@ -537,8 +574,9 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               uri,
               Buffer.from('value: "{{ late\n }}"\n'),
             );
+            const saved = vscode.Uri.file(await realpath(uri.fsPath));
             await waitFor(
-              () => findings(uri).length > 0,
+              () => findings(saved).length > 0,
               "late-scan fixture diagnosed",
             );
             const gate = join(temporary, "late-scan");
@@ -554,12 +592,12 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               );
               await vscode.workspace.fs.delete(uri);
               await waitFor(
-                () => findings(uri).length === 0,
+                () => findings(saved).length === 0,
                 "deletion clears only deleted source",
               );
               await rm(gate);
               await scan;
-              assert.deepEqual(findings(uri), []);
+              assert.deepEqual(findings(saved), []);
               assert.ok(
                 findings(other.uri).length > 0,
                 "unaffected diagnostics survive canceled full scan",
@@ -586,9 +624,10 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
             assert.ok(unrelated.length > 0);
             try {
               await writeFile(upper.fsPath, 'value: "{{ external\n }}"\n');
+              const savedUpper = vscode.Uri.file(await realpath(upper.fsPath));
               await waitFor(
                 () =>
-                  findings(upper).some(
+                  findings(savedUpper).some(
                     (d) => diagnosticCode(d) === "jinja-layout",
                   ),
                 "external uppercase YAML creation refreshes diagnostics",
@@ -597,7 +636,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
 
               await writeFile(upper.fsPath, "value: 1\n");
               await waitFor(
-                () => findings(upper).length === 0,
+                () => findings(savedUpper).length === 0,
                 "external uppercase YAML change clears diagnostics",
               );
               assert.deepEqual(findings(other.uri), unrelated);
@@ -605,16 +644,17 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               await writeFile(upper.fsPath, 'value: "{{ external\n }}"\n');
               await waitFor(
                 () =>
-                  findings(upper).some(
+                  findings(savedUpper).some(
                     (d) => diagnosticCode(d) === "jinja-layout",
                   ),
                 "external uppercase YAML change restores diagnostics",
               );
               await rename(upper.fsPath, mixed.fsPath);
+              const savedMixed = vscode.Uri.file(await realpath(mixed.fsPath));
               await waitFor(
                 () =>
-                  findings(upper).length === 0 &&
-                  findings(mixed).some(
+                  findings(savedUpper).length === 0 &&
+                  findings(savedMixed).some(
                     (d) => diagnosticCode(d) === "jinja-layout",
                   ),
                 "external mixed-case YAML rename moves diagnostics",
@@ -623,7 +663,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
 
               await rm(mixed.fsPath);
               await waitFor(
-                () => findings(mixed).length === 0,
+                () => findings(savedMixed).length === 0,
                 "external mixed-case YAML deletion clears diagnostics",
               );
               assert.deepEqual(findings(other.uri), unrelated);
@@ -658,6 +698,9 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               sibling,
               Buffer.from('value: "{{ sibling\n }}"\n'),
             );
+            const savedSibling = vscode.Uri.file(
+              await realpath(sibling.fsPath),
+            );
             await config.update(
               "root",
               "..",
@@ -671,7 +714,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               );
 
               await waitFor(
-                () => findings(sibling).length > 0,
+                () => findings(savedSibling).length > 0,
                 "startup diagnoses a closed file outside workspace folders",
               );
               await waitFor(
@@ -692,7 +735,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               );
               await waitFor(
                 () =>
-                  !findings(sibling).some(
+                  !findings(savedSibling).some(
                     (d) => diagnosticCode(d) === "jinja-layout",
                   ),
                 "external sibling write refreshes its diagnostics",
@@ -712,14 +755,14 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               );
               await waitFor(
                 () =>
-                  findings(sibling).some(
+                  findings(savedSibling).some(
                     (d) => diagnosticCode(d) === "jinja-layout",
                   ),
                 "external sibling is diagnosed again",
               );
               await vscode.workspace.fs.delete(sibling);
               await waitFor(
-                () => findings(sibling).length === 0,
+                () => findings(savedSibling).length === 0,
                 "external sibling deletion clears diagnostics",
               );
               assert.equal(
@@ -734,8 +777,11 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
                 overlap,
                 Buffer.from('value: "{{ overlap\n }}"\n'),
               );
+              const savedOverlap = vscode.Uri.file(
+                await realpath(overlap.fsPath),
+              );
               await waitFor(
-                () => findings(overlap).length > 0,
+                () => findings(savedOverlap).length > 0,
                 "known nested marked owner receives its changed-file result",
               );
               await pause(250);
@@ -750,7 +796,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
               );
               await waitFor(
                 () =>
-                  findings(sibling).some(
+                  findings(savedSibling).some(
                     (d) => diagnosticCode(d) === "jinja-layout",
                   ),
                 "recreated sibling publishes findings before alias ownership",
@@ -809,7 +855,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
                 Buffer.from('value: "{{ disabled\n }}"\n'),
               );
               await pause(350);
-              assert.deepEqual(findings(sibling), []);
+              assert.deepEqual(findings(savedSibling), []);
               assert.equal(
                 invocations().length,
                 0,
@@ -827,14 +873,13 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
             }
           },
         );
+      } catch (error) {
+        failures.record("save-scope cohort body/setup", error);
       } finally {
         held = undefined;
-        subscriptions.forEach((subscription) => subscription.dispose());
-        editor.dispose();
-        await editor.join();
         delete fixtureEnv.SALTBOX_TEST_PROCESS_LOG;
       }
-      assert.deepEqual(failures, []);
+      failures.throwIfAny("save-scope regressions");
     },
   );
 }
