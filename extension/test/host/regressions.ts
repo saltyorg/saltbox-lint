@@ -13,6 +13,10 @@ import {
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { SubcaseFailures } from "../support/subcase-failures.ts";
 import {
+  CodeActionEvidence,
+  type ActionEvidenceStage,
+} from "../support/code-action-evidence.ts";
+import {
   holdProcessAdmission,
   observeDocumentChange,
 } from "../support/process-admission.ts";
@@ -41,22 +45,32 @@ async function replace(document: vscode.TextDocument, text: string) {
   );
   assert.equal(await vscode.workspace.applyEdit(edit), true);
 }
-async function actions(document: vscode.TextDocument) {
-  return (
-    await vscode.commands.executeCommand<vscode.CodeAction[]>(
-      "vscode.executeCodeActionProvider",
-      document.uri,
-      new vscode.Range(0, 0, document.lineCount, 0),
-    )
-  ).filter((a) => a.title.includes("this file"));
+async function actions(
+  document: vscode.TextDocument,
+  evidence?: CodeActionEvidence,
+  stage: ActionEvidenceStage = "warm",
+) {
+  const range = new vscode.Range(0, 0, document.lineCount, 0);
+  const query = evidence?.begin(stage, range);
+  const returned = await vscode.commands.executeCommand<vscode.CodeAction[]>(
+    "vscode.executeCodeActionProvider",
+    document.uri,
+    range,
+  );
+  const filtered = returned.filter((a) => a.title.includes("this file"));
+  if (evidence && query) evidence.returned(query, returned, filtered);
+  return filtered;
 }
-async function waitForInitialActions(document: vscode.TextDocument) {
+async function waitForInitialActions(
+  document: vscode.TextDocument,
+  evidence?: CodeActionEvidence,
+) {
   // Local diagnostics can precede a usable main-thread code-action response
   // during editor/provider startup. Establish the observable fixture precondition;
   // post-mutation assertions below must still succeed without polling or rechecks.
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
-    if ((await actions(document)).length > 0) return;
+    if ((await actions(document, evidence)).length > 0) return;
     await pause(25);
   }
   assert.fail(
@@ -161,15 +175,55 @@ async function regressions(resources: TestResources): Promise<void> {
       const markdownUri = vscode.Uri.joinPath(roots[1].uri, "readme.md");
       await vscode.workspace.fs.writeFile(markdownUri, Buffer.from("one\n"));
       const markdown = await vscode.workspace.openTextDocument(markdownUri);
-      await waitForInitialActions(document);
-      await replace(markdown, "two\n");
-      assert.ok(
-        (await actions(document)).length > 0,
-        "unrelated Markdown invalidated YAML actions",
+      const evidence = new CodeActionEvidence(
+        [
+          {
+            label: "yaml",
+            document,
+            diagnostics: () => vscode.languages.getDiagnostics(document.uri),
+          },
+          {
+            label: "markdown",
+            document: markdown,
+            diagnostics: () => vscode.languages.getDiagnostics(markdown.uri),
+          },
+        ],
+        {
+          changed: vscode.workspace.onDidChangeTextDocument,
+          opened: vscode.workspace.onDidOpenTextDocument,
+          closed: vscode.workspace.onDidCloseTextDocument,
+          diagnosticsChanged: vscode.languages.onDidChangeDiagnostics,
+          write: (line) => console.error(line),
+        },
       );
+      owner.defer("I1 code action evidence", () => evidence.dispose());
+      try {
+        await waitForInitialActions(document, evidence);
+      } catch (error) {
+        evidence.failure("warm", error);
+      }
+      await replace(markdown, "two\n");
+      try {
+        const afterMarkdown = await actions(
+          document,
+          evidence,
+          "after-markdown",
+        );
+        assert.ok(
+          afterMarkdown.length > 0,
+          "unrelated Markdown invalidated YAML actions",
+        );
+      } catch (error) {
+        evidence.failure("after-markdown", error);
+      }
       const otherYaml = await vscode.workspace.openTextDocument(
         vscode.Uri.joinPath(roots[1].uri, "roles/example/defaults/main.yml"),
       );
+      evidence.track({
+        label: "other-yaml",
+        document: otherYaml,
+        diagnostics: () => vscode.languages.getDiagnostics(otherYaml.uri),
+      });
       await replace(otherYaml, '---\nexample_value: "{{ other\n }}"\n');
       await otherYaml.save();
       await waitFor(
@@ -179,10 +233,19 @@ async function regressions(resources: TestResources): Promise<void> {
           ),
         "other root saved diagnostics refreshed",
       );
-      assert.ok(
-        (await actions(document)).length > 0,
-        "another root's YAML save invalidated cached actions",
-      );
+      try {
+        const afterOtherYaml = await actions(
+          document,
+          evidence,
+          "after-other-yaml",
+        );
+        assert.ok(
+          afterOtherYaml.length > 0,
+          "another root's YAML save invalidated cached actions",
+        );
+      } catch (error) {
+        evidence.failure("after-other-yaml", error);
+      }
       const formatGate = ownJoinedResource(
         owner,
         "unrelated edit format admission",

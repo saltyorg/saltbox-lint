@@ -166,6 +166,16 @@ output or a list of failed names cannot replace that retained graph. The importe
 [`subcase owner`](../extension/test/support/subcase-failures.ts) and its
 [failure tests](../extension/test/unit/subcase-failures.test.ts) cover this boundary.
 
+Provider assertions retain the original public command response and bounded
+document, diagnostic and editor-event context when they fail. The I1
+[failure observer](../extension/test/support/code-action-evidence.ts) and its
+[ownership tests](../extension/test/unit/code-action-evidence.test.ts) preserve
+the original assertion together with observation or cleanup faults, using the
+same query and budgets. A public empty action response does not expose provider
+invocations, registry changes or its cancellation token; report those fields
+as unavailable rather than infer an extension cache failure. Failure context
+adds no retries, provider polls or additional lint checks.
+
 ## Editor coverage inventory
 
 The inventory below records the existing contracts at commit
