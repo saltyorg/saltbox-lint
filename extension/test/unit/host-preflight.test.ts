@@ -152,6 +152,8 @@ test("active-project installation identity accepts a verified directory alias or
   const installation = join(extensions, "installed");
   const other = join(extensions, "other");
   const aliasedExtensions = join(root, "extensions-alias");
+  const executable =
+    "saltbox-lint" + (process.platform === "win32" ? ".exe" : "");
   const bytes = "independently tested package backend";
   const manifest = JSON.stringify({
     publisher: "saltyorg",
@@ -160,7 +162,7 @@ test("active-project installation identity accepts a verified directory alias or
   });
   for (const folder of [installation, other]) {
     await mkdir(join(folder, "bin"), { recursive: true });
-    await writeFile(join(folder, "bin", "saltbox-lint"), bytes);
+    await writeFile(join(folder, "bin", executable), bytes);
     await writeFile(join(folder, "package.json"), manifest);
   }
   await symlink(extensions, aliasedExtensions, "junction");
@@ -178,7 +180,7 @@ test("active-project installation identity accepts a verified directory alias or
       aliasedExtensions,
       "installed",
       "bin",
-      "saltbox-lint",
+      executable,
     ),
     SALTBOX_TEST_EXPECTED_CLI_SHA256: createHash("sha256")
       .update(bytes)
@@ -190,22 +192,36 @@ test("active-project installation identity accepts a verified directory alias or
     version: "1.2.3",
   };
   assert.equal(product.extensionPath.startsWith(aliasedExtensions), false);
-  assert.equal(verifyInstalledProduct(environment, product, "linux"), "loaded");
+  assert.equal(verifyInstalledProduct(environment, product), "loaded");
+  assert.equal(
+    verifyInstalledProduct(environment, {
+      ...product,
+      extensionPath: join(aliasedExtensions, "installed"),
+    }),
+    "loaded",
+  );
   assert.throws(
     () =>
       verifyInstalledProduct(
-        environment,
-        { ...product, extensionPath: other },
-        "linux",
+        {
+          ...environment,
+          SALTBOX_TEST_INSTALLED_CLI_PATH: join(other, "bin", executable),
+        },
+        product,
       ),
+    /exact packaged executable/,
+  );
+  assert.throws(
+    () =>
+      verifyInstalledProduct(environment, { ...product, extensionPath: other }),
     /exact installed package/,
   );
   await writeFile(
-    join(installation, "bin", "saltbox-lint"),
+    join(installation, "bin", executable),
     "same-version wrong backend",
   );
   assert.throws(
-    () => verifyInstalledProduct(environment, product, "linux"),
+    () => verifyInstalledProduct(environment, product),
     /backend bytes/,
   );
 });

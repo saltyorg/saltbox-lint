@@ -17,6 +17,7 @@ import {
   withFailureEvidence,
 } from "./failure-evidence.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
+import { observeClosedFileDeliveries } from "../support/closed-file-controls.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -73,21 +74,22 @@ async function replace(document: vscode.TextDocument, text: string) {
 }
 
 function observeIgnoreDelivery(resources: TestResources) {
-  let sequence = 0;
-  const delivered = new Map<string, { sequence: number; text?: string }>();
+  const delivery = observeClosedFileDeliveries((event) =>
+    readFileSync(event.fsPath, "utf8"),
+  );
+  resources.defer("dependency ignore delivery observer", () =>
+    delivery.dispose(),
+  );
   const observe =
-    (event: vscode.Event<vscode.Uri>): vscode.Event<vscode.Uri> =>
+    (
+      event: vscode.Event<vscode.Uri>,
+      kind: "create" | "change" | "delete",
+    ): vscode.Event<vscode.Uri> =>
     (listener, receiver, subscriptions) =>
       event(
         (uri) => {
           const result = Reflect.apply(listener, receiver, [uri]);
-          let text: string | undefined;
-          try {
-            text = readFileSync(uri.fsPath, "utf8");
-          } catch {
-            // A delete event has no current bytes to satisfy a write barrier.
-          }
-          delivered.set(uri.toString(), { sequence: ++sequence, text });
+          delivery.delivered(uri, kind);
           return result;
         },
         undefined,
@@ -109,9 +111,9 @@ function observeIgnoreDelivery(resources: TestResources) {
         ignoreCreateEvents: watcher.ignoreCreateEvents,
         ignoreChangeEvents: watcher.ignoreChangeEvents,
         ignoreDeleteEvents: watcher.ignoreDeleteEvents,
-        onDidCreate: observe(watcher.onDidCreate),
-        onDidChange: observe(watcher.onDidChange),
-        onDidDelete: observe(watcher.onDidDelete),
+        onDidCreate: observe(watcher.onDidCreate, "create"),
+        onDidChange: observe(watcher.onDidChange, "change"),
+        onDidDelete: observe(watcher.onDidDelete, "delete"),
         dispose: () => watcher.dispose(),
       } satisfies vscode.FileSystemWatcher;
     };
@@ -120,11 +122,7 @@ function observeIgnoreDelivery(resources: TestResources) {
     // Capture before the write. Only a later production callback handling the
     // intended bytes satisfies this barrier; all duplicate events still run.
     next(uri: vscode.Uri, text: string) {
-      const before = sequence;
-      return () => {
-        const current = delivered.get(uri.toString());
-        return !!current && current.sequence > before && current.text === text;
-      };
+      return delivery.next(uri, text);
     },
   };
 }

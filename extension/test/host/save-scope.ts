@@ -11,6 +11,7 @@ import { EditorIntegration } from "../../src/editor.ts";
 import { withTestResources } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { componentUI } from "../support/component-ui.ts";
+import { holdClosedFileEvents } from "../support/closed-file-controls.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const findings = (uri: vscode.Uri) =>
@@ -61,7 +62,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
           : [];
       const workspace = vscode.workspace;
       const createWatcher = workspace.createFileSystemWatcher;
-      let held: Map<string, (() => void)[]> | undefined;
+      let held: ReturnType<typeof holdClosedFileEvents> | undefined;
       const intercept: typeof createWatcher = (...args) => {
         const watcher = createWatcher(...args);
         return new Proxy(watcher, {
@@ -77,10 +78,8 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
                 event.call(
                   target,
                   (uri) => {
-                    const callbacks = held?.get(uri.toString());
-                    if (callbacks)
-                      callbacks.push(() => listener.call(thisArg, uri));
-                    else listener.call(thisArg, uri);
+                    const callback = () => listener.call(thisArg, uri);
+                    if (!held?.hold(uri, callback)) callback();
                   },
                   undefined,
                   disposables,
@@ -389,10 +388,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
             const first = vscode.Uri.joinPath(roots[0].uri, "closed-one.yml");
             const second = vscode.Uri.joinPath(roots[0].uri, "closed-two.yml");
             await writeFile(log, "");
-            held = new Map([
-              [first.toString(), []],
-              [second.toString(), []],
-            ]);
+            held = holdClosedFileEvents([first, second]);
             try {
               await Promise.all(
                 [first, second].map((uri) =>
@@ -403,10 +399,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
                 ),
               );
               await waitFor(
-                () =>
-                  [...held!.values()].every(
-                    (callbacks) => callbacks.length > 0,
-                  ),
+                () => held!.ready(),
                 "both actual closed-file watcher notifications captured",
               );
               assert.equal(
@@ -417,8 +410,7 @@ export async function runSaveScope(parentSignal?: AbortSignal): Promise<void> {
             } finally {
               const release = held!;
               held = undefined;
-              for (const callbacks of release.values())
-                for (const callback of callbacks) callback();
+              release.release();
             }
             await waitFor(
               () => findings(first).length > 0 && findings(second).length > 0,

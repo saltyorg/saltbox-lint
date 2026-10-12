@@ -11,9 +11,16 @@ import { diagnosticCode } from "./diagnostic-code.ts";
 import { checkPendingWritableOwnership } from "./writable-ownership.ts";
 import { observeDirtyReference } from "./dirty-reference-observer.ts";
 import { synchronizeDirtyAliases } from "./dirty-alias-buffers.ts";
-import { withTestResources } from "../support/test-resources.ts";
+import {
+  withTestResources,
+  type TestResources,
+} from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { componentUI } from "../support/component-ui.ts";
+import {
+  classifyClosedFileEvent,
+  observeClosedFileEvent,
+} from "../support/closed-file-event.ts";
 
 async function replace(document: vscode.TextDocument, text: string) {
   const edit = new vscode.WorkspaceEdit();
@@ -668,6 +675,7 @@ export async function runTemplates(parentSignal?: AbortSignal): Promise<void> {
           changes.dispose(),
         );
         await observeClosedTemplateContext(
+          resources,
           vscode.Uri.joinPath(
             root,
             "roles/readonly/templates/closed-config.yaml",
@@ -872,53 +880,61 @@ async function runExternalTemplateDeletion(
 }
 
 async function observeClosedTemplateContext(
+  resources: TestResources,
   uri: vscode.Uri,
   adapter: EditorIntegration,
   contextEvents: vscode.Event<vscode.Uri>,
   selectedSources: string[],
 ): Promise<void> {
+  const closedSource = realpathSync.native(uri.fsPath);
   assert.ok(
     !vscode.workspace.textDocuments.some(
-      (document) => document.uri.toString() === uri.toString(),
+      (document) =>
+        classifyClosedFileEvent(document.uri, uri, closedSource) !==
+        "unrelated",
     ),
     "closed template fixture has never been opened",
   );
   await adapter.ready();
   await adapter.join();
-  const original = await readFile(uri.fsPath);
-  const closedSource = await realpath(uri.fsPath);
-  const before = selectedSources.length;
-  let listener: vscode.Disposable | undefined;
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    const delivered = new Promise<void>((resolve, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(new Error("closed template context event was not delivered")),
-        10000,
+  await withTestResources(
+    { cleanupTimeoutMs: 15000, operationSignal: resources.signal },
+    async (owner) => {
+      const original = await owner.operation(
+        "closed template original bytes",
+        () => readFile(uri.fsPath),
       );
-      listener = contextEvents((changed) => {
-        if (changed.toString() === uri.toString()) resolve();
-      });
-    });
-    await writeFile(uri.fsPath, "{% if closed_template_changed %}");
-    await delivered;
-    // The adapter's public join includes timers and complete saved rendering.
-    // Observe its actual submitted selections after the real callback completes.
-    await adapter.join();
-    assert.ok(
-      !selectedSources.slice(before).includes(closedSource),
-      "narrowed physical template stays out of closed primary selections",
-    );
-    assert.deepEqual(
-      vscode.languages
-        .getDiagnostics(uri)
-        .filter((item) => item.source === "saltbox-lint"),
-      [],
-    );
-  } finally {
-    if (timer) clearTimeout(timer);
-    listener?.dispose();
-    await writeFile(uri.fsPath, original);
-  }
+      owner.defer("closed template disk restoration", () =>
+        writeFile(uri.fsPath, original),
+      );
+      const before = selectedSources.length;
+      const changedText = "{% if closed_template_changed %}";
+      const observer = ownJoinedResource(
+        owner,
+        "closed template filesystem event",
+        observeClosedFileEvent(uri, closedSource, contextEvents, {
+          expectedSha256: hash(changedText),
+        }),
+      );
+      await owner.operation("closed template external mutation", () =>
+        writeFile(uri.fsPath, changedText),
+      );
+      await owner.operation("closed template actual watcher event", () =>
+        observer.changed(),
+      );
+      // The adapter's public join includes timers and complete saved rendering.
+      // Observe its actual submitted selections after the real callback completes.
+      await adapter.join();
+      assert.ok(
+        !selectedSources.slice(before).includes(closedSource),
+        "narrowed physical template stays out of closed primary selections",
+      );
+      assert.deepEqual(
+        vscode.languages
+          .getDiagnostics(uri)
+          .filter((item) => item.source === "saltbox-lint"),
+        [],
+      );
+    },
+  );
 }

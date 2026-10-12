@@ -10,10 +10,18 @@ export interface InstalledProduct {
 }
 
 function confined(root: string, filename: string, label: string): void {
-  const path = relative(realpathSync(root), realpathSync(filename));
+  const canonicalRoot = realpathSync.native(root);
+  const canonicalFilename = realpathSync.native(filename);
+  const path = relative(canonicalRoot, canonicalFilename);
   assert.ok(
     path && !path.startsWith("..") && !isAbsolute(path),
-    `${label} must belong to its isolated installation`,
+    `${label} must belong to its isolated installation: ${JSON.stringify({
+      root,
+      filename,
+      canonicalRoot,
+      canonicalFilename,
+      relative: path,
+    }).slice(0, 4096)}`,
   );
 }
 
@@ -42,8 +50,8 @@ export function verifyInstalledProduct(
   const installation = product?.extensionPath ?? expectedPath;
   confined(extensions, installation, "Loaded product");
   assert.equal(
-    realpathSync(installation),
-    realpathSync(expectedPath),
+    realpathSync.native(installation),
+    realpathSync.native(expectedPath),
     "loaded product must be the exact installed package",
   );
   const manifest: { publisher?: unknown; name?: unknown; version?: unknown } =
@@ -71,8 +79,8 @@ export function verifyInstalledProduct(
     "verified backend path must be supplied by the launcher",
   );
   assert.equal(
-    realpathSync(environment.SALTBOX_TEST_INSTALLED_CLI_PATH),
-    realpathSync(backend),
+    realpathSync.native(environment.SALTBOX_TEST_INSTALLED_CLI_PATH),
+    realpathSync.native(backend),
     "controller backend must be the exact packaged executable",
   );
   confined(installation, backend, "Loaded backend");
