@@ -4,6 +4,7 @@ import { EditorIntegration } from "../../src/editor.ts";
 import { runProcess } from "../../src/process.ts";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { renderDiagnostics } from "../../src/diagnostics.ts";
+import { canonicalRoot } from "../../src/identity.ts";
 import { SnapshotIndex } from "../../src/protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import { join } from "node:path";
@@ -456,10 +457,11 @@ export async function runDiagnostics(resources: TestResources): Promise<void> {
       },
     ],
   };
+  const relatedRoot = await canonicalRoot(roots[0].uri.fsPath, "");
   const rendered = await renderDiagnostics(
     [finding],
     new SnapshotIndex("x"),
-    roots[0].uri.fsPath,
+    relatedRoot,
   );
   assert.equal(
     rendered[0].relatedInformation?.[0].location.range.start.character,
@@ -468,13 +470,8 @@ export async function runDiagnostics(resources: TestResources): Promise<void> {
   const relatedDocument = await vscode.workspace.openTextDocument(relatedUri);
   await replace(relatedDocument, "dirty\n");
   assert.equal(
-    (
-      await renderDiagnostics(
-        [finding],
-        new SnapshotIndex("x"),
-        roots[0].uri.fsPath,
-      )
-    )[0].relatedInformation,
+    (await renderDiagnostics([finding], new SnapshotIndex("x"), relatedRoot))[0]
+      .relatedInformation,
     undefined,
   );
   console.log(
