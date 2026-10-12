@@ -14,6 +14,8 @@ import type { TestResources } from "../support/test-resources.ts";
 import { runHostSuite } from "../support/host-suite.ts";
 import { closeEditorTabs } from "../support/editor-tabs.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
+import { joinInstalledRuntime } from "../support/installed-runtime.ts";
+import { withHostFailureEvidence } from "../support/host-failure.ts";
 
 async function joinProduct(): Promise<void> {
   const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
@@ -22,15 +24,7 @@ async function joinProduct(): Promise<void> {
   const filename = require.resolve(
     join(product.extensionPath, "dist", "extension.js"),
   );
-  const runtime: unknown = require.cache[filename]?.exports;
-  assert.ok(
-    runtime &&
-      typeof runtime === "object" &&
-      "deactivate" in runtime &&
-      typeof runtime.deactivate === "function",
-    "the loaded product exposes its standard deactivation hook",
-  );
-  await (runtime.deactivate as () => Promise<void>)();
+  await joinInstalledRuntime(filename, require.cache);
 }
 
 export async function exerciseProfile(resources: TestResources): Promise<void> {
@@ -129,78 +123,81 @@ export async function exerciseProfile(resources: TestResources): Promise<void> {
 export async function run(): Promise<void> {
   const profile = getHostProfile(process.env);
   const started = performance.now();
-  await runHostSuite(profile, async () => {
-    const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
-    const installationState = verifyInstalledProduct(
-      process.env,
-      product && {
-        id: product.id,
-        extensionPath: product.extensionPath,
-        version: (product.packageJSON as { version?: unknown }).version,
-      },
-    );
-    const require = createRequire(__filename);
-    const mochaVersion = (require("mocha/package.json") as { version: string })
-      .version;
-    const sdkVersion = (
-      require("@vscode/test-electron/package.json") as { version: string }
-    ).version;
-    console.log(
-      "SALTBOX_EDITOR_ACCEPTANCE " +
-        JSON.stringify({
-          ...editorAcceptance({
-            expectedVersion: process.env.SALTBOX_TEST_EXPECTED_VSCODE_VERSION,
-            actualVersion: vscode.version,
-            platform: process.platform,
-            arch: process.arch,
-            mode: profile,
-            appRoot: vscode.env.appRoot,
-            controllerPath: __filename,
-            cliPath: process.env.SALTBOX_TEST_INSTALLED_CLI_PATH,
-            proxyPath:
-              process.env.SALTBOX_TEST_SAVE_SCOPE === "1"
-                ? process.env.SALTBOX_TEST_FIXTURE_PATH
-                : undefined,
+  await withHostFailureEvidence(() =>
+    runHostSuite(profile, async () => {
+      const product = vscode.extensions.getExtension("saltyorg.saltbox-lint");
+      const installationState = verifyInstalledProduct(
+        process.env,
+        product && {
+          id: product.id,
+          extensionPath: product.extensionPath,
+          version: (product.packageJSON as { version?: unknown }).version,
+        },
+      );
+      const require = createRequire(__filename);
+      const mochaVersion = (
+        require("mocha/package.json") as { version: string }
+      ).version;
+      const sdkVersion = (
+        require("@vscode/test-electron/package.json") as { version: string }
+      ).version;
+      console.log(
+        "SALTBOX_EDITOR_ACCEPTANCE " +
+          JSON.stringify({
+            ...editorAcceptance({
+              expectedVersion: process.env.SALTBOX_TEST_EXPECTED_VSCODE_VERSION,
+              actualVersion: vscode.version,
+              platform: process.platform,
+              arch: process.arch,
+              mode: profile,
+              appRoot: vscode.env.appRoot,
+              controllerPath: __filename,
+              cliPath: process.env.SALTBOX_TEST_INSTALLED_CLI_PATH,
+              proxyPath:
+                process.env.SALTBOX_TEST_SAVE_SCOPE === "1"
+                  ? process.env.SALTBOX_TEST_FIXTURE_PATH
+                  : undefined,
+            }),
+            runtime: {
+              node: process.versions.node,
+              electron: process.versions.electron,
+            },
+            tools: { mocha: mochaVersion, testElectron: sdkVersion },
+            installation: {
+              state: installationState,
+              userData: process.env.SALTBOX_TEST_USER_DATA_DIR,
+              extensions: process.env.SALTBOX_TEST_EXTENSIONS_DIR,
+              workspace: process.env.SALTBOX_TEST_WORKSPACE_PATH,
+            },
           }),
-          runtime: {
-            node: process.versions.node,
-            electron: process.versions.electron,
-          },
-          tools: { mocha: mochaVersion, testElectron: sdkVersion },
-          installation: {
-            state: installationState,
-            userData: process.env.SALTBOX_TEST_USER_DATA_DIR,
-            extensions: process.env.SALTBOX_TEST_EXTENSIONS_DIR,
-            workspace: process.env.SALTBOX_TEST_WORKSPACE_PATH,
-          },
-        }),
-    );
-  }, [
-    {
-      name: profile + " behavior and owned cleanup",
-      async exercise(resources) {
-        let closing:
-          Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
-        ownJoinedResource(resources, "installed product lifecycle", {
-          dispose() {
-            closing ??= joinProduct().then(
-              (): { ok: true } => ({ ok: true }),
-              (error: unknown): { ok: false; error: unknown } => ({
-                ok: false,
-                error,
-              }),
-            );
-          },
-          async join() {
-            const outcome = await closing;
-            if (outcome && !outcome.ok) throw outcome.error;
-          },
-        });
-        resources.defer("editor tabs", closeEditorTabs);
-        await exerciseProfile(resources);
+      );
+    }, [
+      {
+        name: profile + " behavior and owned cleanup",
+        async exercise(resources) {
+          let closing:
+            Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
+          ownJoinedResource(resources, "installed product lifecycle", {
+            dispose() {
+              closing ??= joinProduct().then(
+                (): { ok: true } => ({ ok: true }),
+                (error: unknown): { ok: false; error: unknown } => ({
+                  ok: false,
+                  error,
+                }),
+              );
+            },
+            async join() {
+              const outcome = await closing;
+              if (outcome && !outcome.ok) throw outcome.error;
+            },
+          });
+          resources.defer("editor tabs", closeEditorTabs);
+          await exerciseProfile(resources);
+        },
       },
-    },
-  ]);
+    ]),
+  );
   console.log(
     "SALTBOX_EDITOR_CASE " +
       JSON.stringify({

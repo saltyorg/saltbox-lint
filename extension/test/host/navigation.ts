@@ -17,6 +17,7 @@ import {
   type TestResources,
 } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
+import { referencePathFromRoot } from "../support/navigation-reference.ts";
 export function assertReferenceCanonicalOwner(
   referenceFilename: string,
   ownerFilename: string,
@@ -284,16 +285,25 @@ async function navigation(resources: TestResources): Promise<void> {
       (location) => location.uri.toString() === document.uri.toString(),
     ),
   );
-  const referenceAlias = vscode.Uri.joinPath(
-    roots[0].uri,
-    "roles/readonly/templates/reverse.yaml",
-  );
+  const referenceAlias = "roles/readonly/templates/reverse.yaml";
   const aliasLocation = references.find(
-    (location) => location.uri.toString() === referenceAlias.toString(),
+    (location) =>
+      location.uri.scheme === "file" &&
+      referencePathFromRoot(location.uri, roots[0].uri.fsPath) ===
+        referenceAlias,
   );
   assert.ok(
     aliasLocation,
-    "actual references retain the admitted template alias URI",
+    "actual references retain the admitted template alias URI: " +
+      JSON.stringify({
+        root: roots[0].uri.toString(),
+        canonicalRoot: realpathSync.native(roots[0].uri.fsPath),
+        alias: referenceAlias,
+        actualCount: references.length,
+        actual: references
+          .slice(0, 16)
+          .map((location) => location.uri.toString().slice(0, 2048)),
+      }),
   );
   const canonicalAliasOwner = vscode.Uri.joinPath(
     roots[0].uri,
@@ -460,9 +470,13 @@ async function navigation(resources: TestResources): Promise<void> {
     }, "second root accepts its own navigation snapshot");
     assert.equal(secondLocations.length, 3);
     assert.ok(
-      secondLocations.every((location) =>
-        target(location).fsPath.startsWith(roots[1].uri.fsPath),
-      ),
+      secondLocations.every((location) => {
+        const uri = target(location);
+        return (
+          uri.scheme === "file" &&
+          referencePathFromRoot(uri, roots[1].uri.fsPath) !== undefined
+        );
+      }),
     );
     let observed = false;
     const listener = vscode.workspace.onDidChangeTextDocument((event) => {

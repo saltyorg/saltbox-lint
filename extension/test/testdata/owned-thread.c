@@ -20,6 +20,13 @@ static pthread_cond_t exited = PTHREAD_COND_INITIALIZER;
 static int exit_main;
 static pthread_t leader;
 
+static _Noreturn void stop_current_group(void) {
+  if (kill(0, SIGKILL)) _exit(2);
+  // A successful send can precede native delivery. The kernel owns SIGKILL;
+  // returning or a competing _exit must not change its observed termination.
+  for (;;) pause();
+}
+
 // The owner keeps stdin open. Its death closes the pipe even after main exits.
 static void *owner_lifetime(void *unused) {
   (void)unused;
@@ -29,8 +36,7 @@ static void *owner_lifetime(void *unused) {
     int ready = poll(&owner, 1, -1);
     if (ready < 0 && errno == EINTR) continue;
     if (ready < 0) {
-      (void)kill(0, SIGKILL);
-      _exit(2);
+      stop_current_group();
     }
     ssize_t received = read(STDIN_FILENO, input, sizeof(input));
     if (received > 0 ||
@@ -38,8 +44,7 @@ static void *owner_lifetime(void *unused) {
                          errno == EWOULDBLOCK)))
       continue;
     // The fixture is the live leader of this group. Never signal recorded IDs.
-    (void)kill(0, SIGKILL);
-    _exit(2);
+    stop_current_group();
   }
 }
 

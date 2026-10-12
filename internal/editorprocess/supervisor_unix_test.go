@@ -48,8 +48,32 @@ func TestSupervisorHelperProcess(t *testing.T) {
 		<-time.NewTimer(time.Hour).C
 		os.Exit(0)
 	}
-	if err := StartFromEnvironment(); err != nil {
-		fmt.Println("admission failed:", err)
+	var admissionError error
+	if mode == "delayed signal" || mode == "denied signal" {
+		admissionError = startFromEnvironment(func(group int, signal syscall.Signal) error {
+			if group != -os.Getpid() || signal != syscall.SIGKILL {
+				os.Exit(45)
+			}
+			if mode == "denied signal" {
+				return syscall.EPERM
+			}
+			return nil
+		}, func() {
+			fmt.Println("accepted signal awaiting delivery")
+			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+			if err != nil || line != "deliver\n" {
+				os.Exit(46)
+			}
+			if err := syscall.Kill(0, syscall.SIGKILL); err != nil {
+				os.Exit(47)
+			}
+			select {}
+		})
+	} else {
+		admissionError = StartFromEnvironment()
+	}
+	if admissionError != nil {
+		fmt.Println("admission failed:", admissionError)
 		os.Exit(42)
 	}
 	if mode == "descendant" {
@@ -59,6 +83,10 @@ func TestSupervisorHelperProcess(t *testing.T) {
 	}
 	fmt.Println("admitted")
 	if mode == "natural" {
+		os.Exit(0)
+	}
+	if mode == "delayed signal" || mode == "denied signal" {
+		<-time.NewTimer(time.Hour).C
 		os.Exit(0)
 	}
 	descendant := exec.Command(os.Args[0], "-test.run=^TestSupervisorHelperProcess$")
@@ -346,4 +374,52 @@ func TestSupervisorActualOwnerLoss(t *testing.T) {
 	}
 	expectKilled(t, owner.wait(t))
 	expectKilled(t, child.wait(t))
+}
+
+func TestSupervisorAcceptedSignalWaitsForNativeDelivery(t *testing.T) {
+	listener := registrationListener(t)
+	child := startHelper(t, "delayed signal", listener.Addr().String())
+	connection := acceptRegistration(t, listener, child)
+	writeControl(t, connection, "{\"accepted\":true}\n")
+	if line := child.nextLine(t); line != "admitted" {
+		t.Fatalf("payload admission failed: %q", line)
+	}
+	writeControl(t, connection, "{\"stop\":true}\n")
+	select {
+	case line := <-child.lines:
+		if line != "accepted signal awaiting delivery" {
+			t.Fatalf("accepted signal did not enter its terminal wait: %q", line)
+		}
+	case <-child.closed:
+		t.Fatalf("accepted signal exited before native delivery: %v", child.wait(t))
+	case <-time.After(10 * time.Second):
+		t.Fatal("accepted signal terminal wait was not observed")
+	}
+	// Delivery is controlled through this process's still-owned input pipe.
+	// The assertion retains the actual SIGKILL and inherited pipe-close proof.
+	if _, err := io.WriteString(child.input, "deliver\n"); err != nil {
+		t.Fatal(err)
+	}
+	expectKilled(t, child.wait(t))
+}
+
+func TestSupervisorFailedSignalRemainsFatal(t *testing.T) {
+	listener := registrationListener(t)
+	child := startHelper(t, "denied signal", listener.Addr().String())
+	connection := acceptRegistration(t, listener, child)
+	writeControl(t, connection, "{\"accepted\":true}\n")
+	if line := child.nextLine(t); line != "admitted" {
+		t.Fatalf("payload admission failed: %q", line)
+	}
+	writeControl(t, connection, "{\"stop\":true}\n")
+	err := child.wait(t)
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
+		t.Fatalf("failed signal lost its fatal outcome: %v", err)
+	}
+	if !slices.Contains(child.output, "terminate supervised editor group failed") {
+		t.Fatalf("failed signal lost its bounded failure observation: %v", child.output)
+	}
+	if slices.Contains(child.output, "accepted signal awaiting delivery") {
+		t.Fatal("a denied signal entered the accepted-delivery wait")
+	}
 }

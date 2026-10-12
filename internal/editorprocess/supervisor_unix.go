@@ -18,6 +18,12 @@ import (
 // loss of that owner terminates this process's own group, including descendants.
 // Descendants in an already-owned group do not acquire a second owner.
 func StartFromEnvironment() error {
+	return startFromEnvironment(syscall.Kill, func() { select {} })
+}
+
+// The native signal and terminal wait are supplied per invocation so tests can
+// hold accepted signal delivery without patching shared process state.
+func startFromEnvironment(signalGroup func(int, syscall.Signal) error, awaitTermination func()) error {
 	value := os.Getenv(supervisorEnvironment)
 	if os.Getenv(editorEnvironment) != "1" || value == "" {
 		return nil
@@ -75,8 +81,14 @@ func StartFromEnvironment() error {
 		// Signal only the group this live process still leads. Never send a
 		// signal to a numeric group ID obtained from a remote journal or PID.
 		if os.Getpid() == pid && syscall.Getpgrp() == pid {
-			if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+			if err := signalGroup(-pid, syscall.SIGKILL); err != nil {
 				fmt.Fprintln(os.Stderr, "terminate supervised editor group failed")
+			} else {
+				// Signal acceptance is not delivery. Darwin can return before
+				// SIGKILL terminates this leader; a competing Exit changes its
+				// observable status and cannot prove descendant termination.
+				awaitTermination()
+				return
 			}
 		}
 		// A moved group or failed signal is an incomplete cleanup observation

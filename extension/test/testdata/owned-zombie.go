@@ -50,8 +50,12 @@ func main() {
 		_, _ = io.Copy(io.Discard, parentLifetime)
 		// This live child stops its current group; the parent never recovers
 		// ownership by signaling a PID found in the fixture record.
-		_ = syscall.Kill(0, syscall.SIGKILL)
-		os.Exit(2)
+		if err := syscall.Kill(0, syscall.SIGKILL); err != nil {
+			os.Exit(2)
+		}
+		// Accepted SIGKILL is delivered by the kernel. Do not race it with a
+		// different process exit while the parent observes native termination.
+		select {}
 	}()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
