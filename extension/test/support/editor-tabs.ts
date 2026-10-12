@@ -2,10 +2,26 @@ import * as vscode from "vscode";
 import { tabDocumentUris } from "../../src/editor.ts";
 import { closeTabs } from "./close-tabs.ts";
 
-export async function closeEditorTabs(signal: AbortSignal): Promise<void> {
+export async function closeEditorTabs(
+  signal: AbortSignal,
+  ownedUris?: readonly vscode.Uri[],
+): Promise<void> {
+  const owned = ownedUris && new Set(ownedUris.map((uri) => uri.toString()));
+  const tabs = () =>
+    vscode.window.tabGroups.all.flatMap((group) =>
+      group.tabs.filter(
+        (tab) =>
+          owned === undefined ||
+          tabDocumentUris(tab).some((uri) => owned.has(uri.toString())),
+      ),
+    );
+  const before = tabs().map((tab) => ({
+    viewColumn: tab.group.viewColumn,
+    uris: tabDocumentUris(tab).map((uri) => uri.toString()),
+  }));
   await closeTabs<vscode.Tab, vscode.TextDocument>(
     {
-      tabs: () => vscode.window.tabGroups.all.flatMap((group) => group.tabs),
+      tabs,
       key: (tab) => {
         const input = tab.input;
         const value =
@@ -35,13 +51,20 @@ export async function closeEditorTabs(signal: AbortSignal): Promise<void> {
                         : ["other", tab.label];
         return JSON.stringify([tab.group.viewColumn, ...value]);
       },
-      dirtyDocuments: (tab) =>
-        tabDocumentUris(tab).flatMap((uri) => {
+      dirtyDocuments: (tab) => {
+        const dirty = tabDocumentUris(tab).flatMap((uri) => {
           const document = vscode.workspace.textDocuments.find(
             (source) => source.uri.toString() === uri.toString(),
           );
           return document?.isDirty ? [document] : [];
-        }),
+        });
+        if (
+          owned !== undefined &&
+          dirty.some((document) => !owned.has(document.uri.toString()))
+        )
+          throw new Error("Owned fixture tab contains another dirty resource");
+        return dirty;
+      },
       activeDocumentTab: (document) => {
         const tab = vscode.window.tabGroups.all.find(
           (group) => group.isActive,
@@ -79,4 +102,19 @@ export async function closeEditorTabs(signal: AbortSignal): Promise<void> {
     },
     signal,
   );
+  if (owned !== undefined) {
+    const after = tabs();
+    if (after.length)
+      throw new Error("Owned fixture tabs remain after closure");
+    console.log(
+      "SALTBOX_EDITOR_TABS " +
+        JSON.stringify({
+          scope: "owned-fixture",
+          uris: [...owned].slice(0, 32).map((uri) => uri.slice(0, 2048)),
+          before: before.slice(0, 32),
+          after: [],
+          joined: true,
+        }),
+    );
+  }
 }

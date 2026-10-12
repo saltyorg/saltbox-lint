@@ -20,6 +20,8 @@ import { verifyInstalledProduct } from "./host/host-preflight.ts";
 import { hostInputs } from "../scripts/host-inputs.mjs";
 import { ownedCommand } from "../scripts/owned-command.mjs";
 import { createHostProcessSupervisor } from "../scripts/host-process-supervisor.mjs";
+import { workspaceFixtureDirectory } from "./support/workspace-fixture.ts";
+import { withTestResources } from "./support/test-resources.ts";
 import {
   createHostProfile,
   cleanupHostProfile,
@@ -1381,4 +1383,220 @@ test("worker reporting and clock errors do not hide its SDK failure", async (t) 
     true,
     "the external parent retains directory ownership",
   );
+});
+
+/**
+ * @template T
+ * @param {Promise<T>} work
+ * @param {Promise<unknown>} admission
+ * @param {() => void} release
+ * @param {() => void} inspect
+ * @returns {Promise<{ok: true, value: T} | {ok: false, error: unknown}>}
+ */
+async function inspectParentAdmission(work, admission, release, inspect) {
+  const outcome = work.then(
+    /** @param {T} value @returns {{ok: true, value: T}} */
+    (value) => ({ ok: true, value }),
+    /** @param {unknown} error @returns {{ok: false, error: unknown}} */
+    (error) => ({ ok: false, error }),
+  );
+  /** @type {unknown[]} */
+  const failures = [];
+  let result;
+  try {
+    await Promise.race([
+      admission,
+      outcome.then((value) => {
+        if (!value.ok) throw value.error;
+        throw new Error("Parent command settled before admission");
+      }),
+    ]);
+    inspect();
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    try {
+      release();
+    } catch (error) {
+      failures.push(error);
+    }
+    result = await outcome;
+    if (failures.length && !result.ok && !failures.includes(result.error))
+      failures.push(result.error);
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length)
+    throw new AggregateError(failures, "Held parent test failed", {
+      cause: failures[0],
+    });
+  if (result.ok) return { ok: true, value: result.value };
+  return { ok: false, error: result.error };
+}
+
+for (const outcome of [
+  "success",
+  "released body failure",
+  "unknown release",
+  "busy cleanup",
+]) {
+  test(`SDK-visible input survives case cleanup until external owner settles: ${outcome}`, async (t) => {
+    // The command dependency starts no native process. This directly exercises
+    // the parent's ownership-result contract with real fixture directories;
+    // the separate native owner tests prove the OS join behind that contract.
+    const profile = profileFor(t);
+    const parent = join(profile.workspaceRoot, "one");
+    mkdirSync(parent);
+    /** @type {string | undefined} */
+    let fixture;
+    /** @type {(() => void) | undefined} */
+    let admit;
+    const admitted = new Promise((resolve) => {
+      admit = () => resolve(undefined);
+    });
+    /** @type {(() => void) | undefined} */
+    let release;
+    const held = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const primary = Object.assign(new Error("owned SDK body rejected"), {
+      ownershipReleased: outcome !== "unknown release",
+    });
+    const busy = Object.assign(new Error("owned profile input is busy"), {
+      code: "EBUSY",
+    });
+    /** @type {string[]} */
+    const events = [];
+    let joined = false;
+    const pending = runHostProfile(
+      { env: {} },
+      {
+        createProfile: () => profile,
+        command: async (_name, _args, options) => {
+          const env = commandEnvironment(options);
+          try {
+            fixture = await workspaceFixtureDirectory(
+              parent,
+              "saltbox-sdk-input-",
+              {
+                ...env,
+                SALTBOX_TEST_WORKSPACE_PATH: profile.workspaceRoot,
+              },
+            );
+            writeFileSync(join(fixture, "main.yml"), "owned SDK source\n");
+            await withTestResources({ cleanupTimeoutMs: 5000 }, (owner) => {
+              owner.defer("case state restoration", () => {
+                events.push("case restored");
+                assert.ok(
+                  fixture && existsSync(fixture),
+                  "case restoration cannot remove SDK-visible inputs",
+                );
+              });
+            });
+            assert.ok(admit);
+            admit();
+            await held;
+            joined = true;
+            events.push("external owner settled");
+            if (outcome !== "success") throw primary;
+            return "";
+          } catch (error) {
+            assert.ok(admit);
+            admit();
+            throw error;
+          }
+        },
+        cleanupProfile: (owned) => {
+          assert.equal(
+            joined,
+            true,
+            "native owner must settle before deleting inputs",
+          );
+          assert.ok(fixture && existsSync(fixture));
+          events.push("parent removal");
+          if (outcome === "busy cleanup") throw busy;
+          cleanupHostProfile(owned);
+        },
+        report() {},
+      },
+    );
+    const result = await inspectParentAdmission(
+      pending,
+      admitted,
+      () => {
+        assert.ok(release);
+        release();
+      },
+      () => {
+        assert.ok(fixture && existsSync(fixture));
+        assert.deepEqual(events, ["case restored"]);
+      },
+    );
+    if (outcome === "success") assert.equal(result.ok, true);
+    else if (outcome === "busy cleanup") {
+      assert.equal(result.ok, false);
+      assert.ok(result.error instanceof AggregateError);
+      assert.equal(result.error.cause, primary);
+      assert.equal(result.error.errors.length, 2);
+      assert.equal(result.error.errors[0], primary);
+      assert.equal(result.error.errors[1], busy);
+      assert.equal(busy.code, "EBUSY");
+      assert.equal(Reflect.get(result.error, "retainedProfile"), profile.root);
+    } else {
+      assert.equal(result.ok, false);
+      assert.equal(result.error, primary);
+    }
+    if (outcome === "unknown release") {
+      assert.deepEqual(events, ["case restored", "external owner settled"]);
+      assert.ok(existsSync(profile.root));
+      assert.ok(fixture && existsSync(fixture));
+      assert.equal(Reflect.get(primary, "retainedProfile"), profile.root);
+    } else if (outcome === "busy cleanup") {
+      assert.deepEqual(events, [
+        "case restored",
+        "external owner settled",
+        "parent removal",
+      ]);
+      assert.ok(existsSync(profile.root));
+      assert.ok(fixture && existsSync(fixture));
+    } else {
+      assert.deepEqual(events, [
+        "case restored",
+        "external owner settled",
+        "parent removal",
+      ]);
+      assert.equal(existsSync(profile.root), false);
+      assert.ok(fixture);
+      assert.equal(existsSync(fixture), false);
+    }
+  });
+}
+
+test("an actual parent failure before input admission is handled, released and joined", async (t) => {
+  const profile = profileFor(t);
+  const original = releasedError("parent failed before admission");
+  let released = false;
+  const pending = runHostProfile(
+    { env: {} },
+    {
+      createProfile: () => profile,
+      command: async () => {
+        throw original;
+      },
+      report() {},
+    },
+  );
+  await assert.rejects(
+    inspectParentAdmission(
+      pending,
+      new Promise(() => {}),
+      () => {
+        released = true;
+      },
+      () =>
+        assert.fail("failed command cannot reach its admission observation"),
+    ),
+    (error) => error === original,
+  );
+  assert.equal(released, true);
+  assert.equal(existsSync(profile.root), false);
 });

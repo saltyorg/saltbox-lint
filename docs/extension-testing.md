@@ -193,6 +193,39 @@ validates controller profile names. Each profile has named Mocha cases through
 an external process supervisor. The launcher checks every owned group before
 removing its workspace, user-data, extensions and controller directories.
 
+SDK-visible workspace fixture trees belong to that external profile's physical
+cleanup scope. Allocate them through the imported
+[`workspace fixture owner`](../extension/test/support/workspace-fixture.ts),
+which verifies native containment while preserving the selected public parent
+spelling. Each case still closes its owned tabs through fresh public snapshots,
+cancels and joins its work, and restores settings and original bytes. The parent
+removes the trees after actual editor-host and native process-owner closure,
+retains inputs when ownership is uncertain, and reports cleanup failures.
+
+The minimum editor's
+[watcher disposal](https://github.com/microsoft/vscode/blob/1.100.0/src/vs/workbench/api/common/extHostFileSystemEventService.ts)
+sends an unawaited unwatch request. The
+[public watcher API](https://github.com/microsoft/vscode/blob/1.100.0/src/vscode-dts/vscode.d.ts)
+has no native-close acknowledgement. Component joining therefore cannot prove
+all workbench filesystem consumers released a directory. The original Windows
+marker failure passed all behavior and then reported `EBUSY` during inner
+directory removal; its exact locking handle was unobserved. Parent removal
+subsequently succeeded after SDK closure. Native filesystem errors remain
+failures, and existing parent retry settings are unchanged.
+
+The [real allocator and escape tests](../extension/test/unit/workspace-fixture.test.ts)
+and [parent-lifetime regressions](../extension/test/editor-acceptance.test.mjs)
+verify this boundary. Keep deliberate file deletion, junction retargeting and
+per-control reset operations that establish behavior. Only terminal physical
+fixture removal transfers to the external owner.
+
+The [imported formatting caller regressions](../extension/test/unit/format-readiness.test.ts)
+verify that readiness observes an early operation rejection and that body,
+disposal, joining, settings, file and editor-restoration failures remain
+observable together. Independent restoration attempts still run after an
+earlier failure. Preserve these caller checks when changing shared cleanup
+helpers or test fixtures.
+
 | Profile or cohort | Trigger and behavior to preserve | Completion and failure controls | Owned state and replacement requirements |
 | --- | --- | --- | --- |
 | Normal activation and diagnostics | [`index.ts`](../extension/test/host/index.ts) opens marked roots, activates without a manual command and receives bundled CLI Jinja findings | Product activation and findings for the exact open URI; unmarked, disabled and untrusted profiles provide separate negatives | Own the opened documents and editor selection. Keep installed-product preflight separate from component initialization. |

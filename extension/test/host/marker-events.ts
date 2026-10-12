@@ -1,4 +1,6 @@
 import { hostTemporaryDirectory } from "../support/host-temporary.ts";
+import { workspaceFixtureDirectory } from "../support/workspace-fixture.ts";
+import { closeEditorTabs } from "../support/editor-tabs.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -6,7 +8,6 @@ import {
   link,
   lstat,
   mkdir,
-  mkdtemp,
   rename,
   realpath,
   readFile,
@@ -109,11 +110,9 @@ export async function checkMarkerEvents(
       resources.defer("marker event temporary files", () =>
         rm(temporary, { recursive: true, force: true }),
       );
-      const aliases = await mkdtemp(
-        join(folder.uri.fsPath, "marker-identity-"),
-      );
-      resources.defer("marker identity aliases", () =>
-        rm(aliases, { recursive: true, force: true }),
+      const aliases = await workspaceFixtureDirectory(
+        folder.uri.fsPath,
+        "saltbox-marker-identity-",
       );
       const markerBytes = await readFile(marker.fsPath);
       resources.defer("restore marker and root", async () => {
@@ -137,21 +136,9 @@ export async function checkMarkerEvents(
         "saltbox-lint" + (process.platform === "win32" ? ".exe" : ""),
       );
       fixtureEnv.SALTBOX_TEST_PROCESS_LOG = log;
-      resources.defer("close marker alias tabs", async () => {
-        const aliasTabs = vscode.window.tabGroups.all.flatMap((group) =>
-          group.tabs.filter(
-            (tab) =>
-              tab.input instanceof vscode.TabInputText &&
-              tab.input.uri.toString() === aliasedUri?.toString(),
-          ),
-        );
-        if (aliasTabs.length)
-          assert.equal(
-            await vscode.window.tabGroups.close(aliasTabs),
-            true,
-            "auxiliary marker alias tabs close before fixture removal",
-          );
-      });
+      resources.defer("close marker alias tabs", (signal) =>
+        closeEditorTabs(signal, aliasedUri ? [aliasedUri] : []),
+      );
       const editor = ownJoinedResource(
         resources,
         "marker event adapter",

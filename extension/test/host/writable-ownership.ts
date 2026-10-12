@@ -1,4 +1,6 @@
 import { hostTemporaryDirectory } from "../support/host-temporary.ts";
+import { workspaceFixtureDirectory } from "../support/workspace-fixture.ts";
+import { closeEditorTabs } from "../support/editor-tabs.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -37,9 +39,15 @@ export async function checkPendingWritableOwnership(
       resources.defer("writable response temporary files", () =>
         rm(temporary, { recursive: true, force: true }),
       );
-      const fixture = vscode.Uri.joinPath(root, "writable-response-control");
-      resources.defer("writable response fixture", () =>
-        rm(fixture.fsPath, { recursive: true, force: true }),
+      const fixture = vscode.Uri.file(
+        await workspaceFixtureDirectory(
+          root.fsPath,
+          "saltbox-writable-response-control-",
+        ),
+      );
+      const fixtureUris: vscode.Uri[] = [];
+      resources.defer("writable response fixture tabs", (signal) =>
+        closeEditorTabs(signal, fixtureUris),
       );
       const original = vscode.Uri.joinPath(fixture, "roles/owner/defaults");
       const template = vscode.Uri.joinPath(fixture, "roles/owner/templates");
@@ -121,6 +129,7 @@ export async function checkPendingWritableOwnership(
             await symlink(original.fsPath, alias.fsPath, "junction");
             const uri = vscode.Uri.joinPath(alias, "main.yaml");
             const document = await vscode.workspace.openTextDocument(uri);
+            fixtureUris.push(document.uri);
             await vscode.window.showTextDocument(document, { preview: false });
             const editor = ownJoinedResource(
               resources,
@@ -166,6 +175,8 @@ export async function checkPendingWritableOwnership(
                   return result;
                 }),
             );
+            let failed = false;
+            let primaryFailure: unknown;
             try {
               let controlled:
                 ReturnType<FixtureGateCohort["capture"]> | undefined;
@@ -240,6 +251,8 @@ export async function checkPendingWritableOwnership(
               );
               completed++;
             } catch (error) {
+              failed = true;
+              primaryFailure = error;
               reportFixtureFailures(failures, undefined, "format");
               reportWritableOwnershipFailure(error, {
                 control: `${mode}:${retarget ? "retarget" : "stable"}`,
@@ -251,14 +264,29 @@ export async function checkPendingWritableOwnership(
                 processFailure: processFailure.category,
               });
             } finally {
-              await rm(gate, { force: true });
-              await pending;
-              editor.dispose();
-              await editor.join();
-              await vscode.commands.executeCommand(
-                "workbench.action.revertAndCloseActiveEditor",
-              );
-              await rm(alias.fsPath, { recursive: true, force: true });
+              await withTestResources({ cleanupTimeoutMs: 5000 }, (cleanup) => {
+                cleanup.defer("reset writable iteration alias", () =>
+                  rm(alias.fsPath, { recursive: true, force: true }),
+                );
+                cleanup.defer("close writable iteration alias", (signal) =>
+                  closeEditorTabs(signal, [document.uri]),
+                );
+                cleanup.defer(
+                  "settle writable iteration response",
+                  async () => {
+                    await pending;
+                  },
+                );
+                ownJoinedResource(
+                  cleanup,
+                  "writable iteration adapter",
+                  editor,
+                );
+                cleanup.defer("release writable iteration gate", () =>
+                  rm(gate, { force: true }),
+                );
+                if (failed) throw primaryFailure;
+              });
             }
           }
         }

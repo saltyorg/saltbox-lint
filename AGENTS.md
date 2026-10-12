@@ -70,11 +70,18 @@
   admitted work, restore state and prove resource release within a separate
   cleanup budget. A passing assertion, delivered kill signal or runner exit
   does not establish cleanup.
+- Keep SDK-visible workspace fixture trees under verified external profile
+  ownership. Close case-owned tabs, cancel and join work, and restore settings
+  within the case; remove those trees after the editor host and its native
+  process owners close. Watcher disposal alone provides no public native-close
+  acknowledgement. Preserve intentional deletion and retargeting controls.
 - Verify readiness through observable events or state, with listeners installed
-  before triggers. Test failure paths and helper cleanup, measure setup,
-  exercise and teardown separately, and retain both operation and cleanup
-  failures. Follow the guide's qualification checks before claiming stability;
-  retries, extra sleeps, force-exit or reduced coverage cannot establish it.
+  before triggers. Observe operation failures while awaiting readiness, then
+  release and join admitted work on every path. Test failure paths and helper
+  cleanup, measure setup, exercise and teardown separately, and retain both
+  operation and cleanup failures. Follow the guide's qualification checks before
+  claiming stability; retries, extra sleeps, force-exit or reduced coverage cannot
+  establish it.
 - Preserve the original errors when collecting subcase failures; names or
   messages alone discard causes. Final aggregation must retain earlier failures
   when later setup, operations or teardown fail.

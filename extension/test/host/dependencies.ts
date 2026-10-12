@@ -5,6 +5,8 @@ import {
 } from "../support/test-resources.ts";
 import { runProcess } from "../../src/process.ts";
 import { hostTemporaryDirectory } from "../support/host-temporary.ts";
+import { workspaceFixtureDirectory } from "../support/workspace-fixture.ts";
+import { closeEditorTabs } from "../support/editor-tabs.ts";
 import { cleanupDependencies } from "../support/dependency-cleanup.ts";
 import { aliasFailureFacts, watchAliasTemplate } from "./alias-failure.ts";
 import { observeAliasRefresh } from "./alias-refresh-observer.ts";
@@ -229,10 +231,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     roots[0].uri,
     "roles/example/tasks/first-open/ignored.yml",
   );
-  const aliasDirectory = vscode.Uri.joinPath(
-    roots[0].uri,
-    "pending-status-alias",
+  const aliasParent = await workspaceFixtureDirectory(
+    roots[0].uri.fsPath,
+    "saltbox-pending-status-",
   );
+  const aliasDirectory = vscode.Uri.file(join(aliasParent, "alias"));
   const pendingAlias = vscode.Uri.joinPath(aliasDirectory, "ignored.yml");
   // Prepare the closed alias before this editor watches the fixture root.
   await symlink(
@@ -240,8 +243,9 @@ async function dependencies(resources: TestResources): Promise<void> {
     aliasDirectory.fsPath,
     process.platform === "win32" ? "junction" : "dir",
   );
-  resources.defer("dependency alias", () =>
-    rm(aliasDirectory.fsPath, { recursive: true, force: true }),
+  const aliasUris: vscode.Uri[] = [];
+  resources.defer("dependency alias tabs", (signal) =>
+    closeEditorTabs(signal, aliasUris),
   );
   // This primary is excluded from full coverage and has no accepted graph yet.
   let editor = ownEditor();
@@ -1489,6 +1493,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     await editor.join();
     const aliasDocument = await vscode.workspace.openTextDocument(pendingAlias);
+    aliasUris.push(aliasDocument.uri);
     await vscode.window.showTextDocument(aliasDocument, { preview: false });
     assert.equal(editor.providerDocuments().includes(aliasDocument), false);
     const aliasText = aliasDocument.getText();
@@ -1753,8 +1758,10 @@ async function dependencies(resources: TestResources): Promise<void> {
         }
       },
       subscriptions,
-      releaseAliases: () =>
-        rm(aliasDirectory.fsPath, { recursive: true, force: true }),
+      releaseAliases: async () => {
+        // This declared SDK-visible junction belongs to the external host;
+        // its exact document tabs are restored by the case resource owner.
+      },
       restoreEnvironment: () => {
         fixtureEnvironment.SALTBOX_TEST_PROCESS_LOG = undefined;
         fixtureEnvironment.SALTBOX_TEST_PROCESS_INSTANCES = undefined;
