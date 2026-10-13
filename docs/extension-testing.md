@@ -445,12 +445,12 @@ The wider editor batches use the same boundaries:
 
 The ordinary build runs strict TypeScript checks for all extension source and
 TypeScript tests, plus [`tsconfig.helpers.json`](../extension/tsconfig.helpers.json)
-for twenty-five JavaScript roots: twelve build/host/ownership scripts, six
-driver/gate tests, six executable fixtures and the shared vulnerability-test
-driver. Each selected JavaScript root
-uses `@ts-check`. Typed ESLint applies the same floating-promise,
-misused-promise and awaited-value rules to these roots. The negative gate tests
-check the actual compiler and lint selectors, including every selected root,
+for twenty-nine JavaScript roots: twelve build/host/ownership scripts, seven
+driver/gate tests, seven executable fixtures, the shared vulnerability-test
+driver, the pinned Go-tool installer and its owned output reporter. Each
+selected JavaScript root uses `@ts-check`. Typed ESLint applies the same
+floating-promise, misused-promise and awaited-value rules to these roots. The
+negative gate tests check the actual compiler and lint selectors, including every selected root,
 and reject discarded promises and invalid documented argument types.
 
 The archive reader has a declared public return type. Its implementation and
@@ -464,6 +464,20 @@ The shared vulnerability-test driver uses the same typed policy through the
 root ESLint configuration bridge. Its cleanup refusal runs through the real
 per-instance guardian control, rather than a mock of an obsolete signal path.
 Scanner classification and raw failure evidence remain separate contracts.
+
+The pinned Go-tool installer and its output reporter share that typed policy.
+Their native fixture tests run in the ordinary release-driver gate on every
+target. The copied Makefile pin/destination control runs through the owned Go
+source gate on Linux, where the canonical Make gate runs. Explicit successful stdout/stderr
+capture follows native closure and leaves existing string and exit-code
+callers unchanged.
+
+The installer joins each native command owner before another attempt, and all
+three possible attempts share one five-minute budget. Cancellation, exhausted
+budget, uncertain cleanup and mixed output stop admission. The reporter runs as
+a bounded owned child, including when its output pipe blocks. Failed installs
+retain private `GOBIN/.install-evidence-*` directories with `failure.json` and
+stdout/stderr files; successful installs remove their temporary evidence.
 
 ## Native and packaging contracts
 

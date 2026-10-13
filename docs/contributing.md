@@ -8,6 +8,21 @@ checks, actionlint, GoReleaser configuration checks, documentation links and
 generated documentation freshness. Tool caches and ignored build artifacts may
 be populated.
 
+The [pinned Go-tool installer](../tools/install-go-tool.mjs) retries a confirmed
+module-download HTTP/2 `INTERNAL_ERROR` at most twice, after the previous command
+and its descendants have joined. All attempts share a five-minute budget.
+Compiler, checksum, authentication, missing-module, mixed stdout/stderr,
+cancellation and cleanup failures remain terminal. This bootstrap policy does
+not retry tests or validation, change the proxy or alter any tool pin. The
+module-load diagnostic is qualified against the pinned Go version; recheck it
+when updating that toolchain.
+
+Failed installations retain a private `.install-evidence-*` directory under
+their tool's `GOBIN`, containing `failure.json` and separate stdout/stderr files.
+A bounded, owned [reporter](../tools/report-go-tool-output.mjs) publishes the
+diagnostic; reporting failures preserve that evidence. Successful installations
+remove their temporary evidence.
+
 The gate also runs the required, pinned [Go vulnerability scan](vulnerabilities.md)
 for the root module and locally patched Nuri. It requires the Go vulnerability
 database and retains scan/provenance evidence in ignored `bin/vulnerability`.

@@ -159,7 +159,7 @@ async function endpointAbsent(instance, request) {
 }
 
 /**
- * @typedef {{directory: string, guardian: () => Promise<FixtureInstance>, refused: () => Promise<FixtureInstance>, release: () => Promise<void>, launch: (command: string, args: string[], options: import("../scripts/owned-command.mjs").OwnedCommandOptions) => Promise<string | number | null>}} DenialFixture
+ * @typedef {{directory: string, guardian: () => Promise<FixtureInstance>, refused: () => Promise<FixtureInstance>, release: () => Promise<void>, launch: (command: string, args: string[], options: import("../scripts/owned-command.mjs").OwnedCommandOptions) => ReturnType<typeof ownedCommand>}} DenialFixture
  */
 
 /** @template T @param {(fixture: DenialFixture) => Promise<T>} body @returns {Promise<T>} */

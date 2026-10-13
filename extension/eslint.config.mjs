@@ -36,6 +36,7 @@ const helpers = [
   "test/{editor-acceptance,host-process-supervisor,release-liveness,lint-gate}.test.mjs",
   "test/owned-command-guardian.test.mjs",
   "test/native-fixture-lifetime.test.mjs",
+  "test/go-tool-install.test.mjs",
   "test/testdata/*.mjs",
 ];
 
@@ -62,7 +63,11 @@ export default [
   {
     basePath: "..",
     ...typedProject(
-      ["tools/vulnerability.test.mjs"],
+      [
+        "tools/vulnerability.test.mjs",
+        "tools/install-go-tool.mjs",
+        "tools/report-go-tool-output.mjs",
+      ],
       "./tsconfig.helpers.json",
     ),
   },

@@ -5,19 +5,21 @@ import { fileURLToPath } from "node:url";
 import { groupHasLiveMembers } from "./owned-group.mjs";
 
 /**
- * @typedef {import('node:child_process').SpawnOptions & {cwd?: string, phase: string, timeoutMs?: number, signal?: AbortSignal, returnExitCode?: boolean, retainOutputOnError?: boolean, maxOutputBytes?: number}} OwnedCommandOptions
+ * @typedef {import('node:child_process').SpawnOptions & {cwd?: string, phase: string, timeoutMs?: number, signal?: AbortSignal, returnExitCode?: boolean, captureOutput?: boolean, retainOutputOnError?: boolean, maxOutputBytes?: number}} OwnedCommandOptions
  * @typedef {Error & {exitCode?: number | null, stdout?: string, stderr?: string, ownershipReleased?: boolean}} CommandError
  * @typedef {{code: number | null, signal: NodeJS.Signals | null}} ClosedCommand
- * @typedef {{guardianPath?: string, sendMessage?: (child: import('node:child_process').ChildProcess, message: object, completed: (error: Error | null) => void) => void}} OwnedCommandDependencies
+ * @typedef {{stdout: string, stderr: string}} CommandOutput
+ * @typedef {{guardianPath?: string, sendMessage?: (child: import('node:child_process').ChildProcess, message: object, completed: (error: Error | null) => void) => void, onSpawn?: (child:import('node:child_process').ChildProcess)=>void}} OwnedCommandDependencies
  */
 
 // Build checks and release probes own their command and its descendants. Keep
 // the deadline active until captured stdio closes. Inherited output belongs to the
 // owned child, so blocked writes and consumer errors cannot strand this owner.
-/** @overload @param {string} command @param {string[]} args @param {OwnedCommandOptions & {returnExitCode: true}} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<number | null>} */
-/** @overload @param {string} command @param {string[]} args @param {OwnedCommandOptions & {returnExitCode?: false}} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<string>} */
-/** @overload @param {string} command @param {string[]} args @param {OwnedCommandOptions} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<string | number | null>} */
-/** @param {string} command @param {string[]} args @param {OwnedCommandOptions} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<string | number | null>} */
+/** @overload @param {string} command @param {string[]} args @param {OwnedCommandOptions & {returnExitCode: true, captureOutput?: false}} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<number | null>} */
+/** @overload @param {string} command @param {string[]} args @param {OwnedCommandOptions & {captureOutput: true, returnExitCode?: false}} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<CommandOutput>} */
+/** @overload @param {string} command @param {string[]} args @param {OwnedCommandOptions & {returnExitCode?: false, captureOutput?: false}} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<string>} */
+/** @overload @param {string} command @param {string[]} args @param {OwnedCommandOptions} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<string | number | null | CommandOutput>} */
+/** @param {string} command @param {string[]} args @param {OwnedCommandOptions & {captureOutput?: boolean}} options @param {OwnedCommandDependencies} [dependencies] @returns {Promise<string | number | null | CommandOutput>} */
 export function ownedCommand(
   command,
   args,
@@ -26,6 +28,7 @@ export function ownedCommand(
     timeoutMs,
     signal,
     returnExitCode = false,
+    captureOutput = false,
     retainOutputOnError = false,
     maxOutputBytes = 1024 * 1024,
     ...options
@@ -37,9 +40,18 @@ export function ownedCommand(
     sendMessage = (child, message, completed) => {
       child.send(message, completed);
     },
+    onSpawn,
   } = {},
 ) {
   return new Promise((resolveResult, reject) => {
+    if (captureOutput && (returnExitCode || options.stdio === "inherit")) {
+      reject(
+        new Error(
+          "Captured output requires captured pipes and the default exit result",
+        ),
+      );
+      return;
+    }
     const windows = process.platform === "win32";
     const specification = {
       command,
@@ -186,9 +198,11 @@ export function ownedCommand(
         if (error) reject(error);
         else if (closed)
           resolveResult(
-            returnExitCode
-              ? ((windows ? closed : payloadStatus)?.code ?? null)
-              : stdout,
+            captureOutput
+              ? { stdout, stderr }
+              : returnExitCode
+                ? ((windows ? closed : payloadStatus)?.code ?? null)
+                : stdout,
           );
         else reject(new Error(`${identity}: missing native close result`));
       };
@@ -444,6 +458,18 @@ export function ownedCommand(
       complete();
     });
     signal?.addEventListener("abort", onAbort, { once: true });
+    // Observe the actual owner only after every native lifetime fence is owned.
+    // Windows may already have admitted its payload; this is a post-spawn seam.
+    if (onSpawn) {
+      try {
+        onSpawn(child);
+      } catch (error) {
+        failure ??= new Error(`${identity}: owner observation failed`, {
+          cause: error,
+        });
+        cleanup();
+      }
+    }
     if (signal?.aborted) onAbort();
   });
 }
