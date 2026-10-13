@@ -1,7 +1,7 @@
 # Stack Context
 
 Generated: 2026-09-12
-Updated: 2026-10-13 for native process observation, fixture readiness and Go-tool bootstrap
+Updated: 2026-10-13 for shared native group observation, process cleanup and Go-tool bootstrap
 
 ## Stack
 - Go 1.27.2; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
@@ -41,6 +41,7 @@ Updated: 2026-10-13 for native process observation, fixture readiness and Go-too
 - Packaging uses exact npm 11.19.0, vsce 3.9.2 and yauzl 3.4.0 pins; build tools are development-only. Source/archive/ZIP verification remains separate from editor runtime.
 - Makefile pins golangci-lint v2.14.0, actionlint v1.7.12, GoReleaser v2.18.1 and govulncheck v1.8.0; workflow actions are commit-pinned. Tools live under ignored bin/tools.
 - Native process observation keeps bounded read-only probes. Darwin selects only the owned non-terminal group in unix2003 mode; qualified empty selection follows native closure. Errors retain status/timing/output-size metadata and never authorize retries. Held tool fixtures use existing owned stdout for readiness after native admission.
+- Production process cleanup and development owners share the strict native-group.ts implementation. Exit-phase Darwin EPERM requires an independent bounded no-live observation after child/stdio closure; other cleanup faults retain their original causes and public phase/target/error metadata. Per-instance typed adapters support native caller regressions without global patches.
 - Go-tool bootstrap permits three attempts within one five-minute budget for confirmed module-download HTTP/2 INTERNAL_ERROR. Native command owners join before retry; mixed output and compiler, checksum, authentication, cancellation or cleanup failures are terminal. A bounded owned reporter handles diagnostics. Failed installs retain private GOBIN/.install-evidence-* files; successful installs remove their temporary evidence.
 - Required vulnerability-check runs source/symbol scans including tests for root packages, five maintained/shipped Nuri roots and all nine go-yaml roots. It shares one retrieved official database, records response and source identities, fails reachable findings and operational/inconclusive errors, and retains all module/package discoveries. go-yaml adds a third explicit scanner scope and exact local-module advisory lookup, with source/license provenance exported into source archives and VSIX inventories. Unversioned main/replaced module advisories fail pending local-source evidence. Canonical Linux CI uploads vulnerability-evidence once; six native suites remain unchanged. Runtime CLI lint stays offline. Goldmark v1.7.17 and x/text v0.39.0 carry the initial reachable advisory fixes.
 - make catalog is the explicit managed-wrapper refresh. Normal gates use embedded data and require no Saltbox Ansible venv.

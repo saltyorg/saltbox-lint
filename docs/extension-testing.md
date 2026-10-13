@@ -116,6 +116,18 @@ original cause and bounded status, timing and output-size metadata. See Apple's
 [process selection implementation](https://github.com/apple-oss-distributions/adv_cmds/blob/6bed8737a34dbb54782a18f47dccf933a9967a12/ps/ps.c)
 and [compatibility contract](https://github.com/apple-oss-distributions/Libc/blob/71bbe350ab79eef58113991d817ccc6165061a64/gen/compat.5).
 
+Production process cleanup and development command owners share
+[`native-group.ts`](../extension/src/native-group.ts). The development
+[`owned-group.mjs`](../extension/scripts/owned-group.mjs) facade preserves its
+existing interface; copied-source fixtures include the shared implementation.
+A Darwin exit-phase `EPERM` is recoverable only after a fresh, independent
+bounded observation proves that the group has no live members and the child,
+stdio and observation have joined. Earlier kill faults, live or unknown groups,
+query failures and other error codes remain failures. Preserve both the original
+operation and cleanup errors, with bounded phase/target/code/errno/syscall
+metadata visible in failure reporting. See Apple's
+[group signalling implementation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_sig.c#L1608-L1617).
+
 `EditorIntegration.join()` owns complete background rendering/synchronization,
 file and refresh timer producers, and root probes as well as backend lanes.
 Disposal seals admission, cancels producers and leaves admitted work joinable.

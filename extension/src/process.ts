@@ -1,4 +1,9 @@
-import { spawn } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
+import { groupHasLiveMembers } from "./native-group.ts";
 import {
   processSupervisorEnvironment,
   reserveProcess,
@@ -22,15 +27,68 @@ export interface ProcessLifecycleObserver {
   spawned?(pid: number | undefined): void;
   closed?(code: number | null, signal: NodeJS.Signals | null): void;
 }
+export type ProcessTerminationPhase =
+  "abort" | "exit" | "stdin" | "output-limit" | "timeout" | "setup";
+export interface ProcessTerminationContext {
+  readonly phase: ProcessTerminationPhase;
+  readonly target: number;
+  readonly signal: "SIGKILL";
+}
+export interface ProcessAdapters {
+  spawn?(
+    executable: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ): ChildProcess;
+  /** Recovery policy only; native spawning still uses the actual host platform. */
+  platform?: NodeJS.Platform;
+  killGroup?(context: Readonly<ProcessTerminationContext>): void;
+  groupHasLiveMembers?(group: number, signal?: AbortSignal): Promise<boolean>;
+}
+interface TerminationObservation extends ProcessTerminationContext {
+  code: string | number | null;
+  errno: string | number | null;
+  syscall: string | null;
+}
+function terminationObservation(
+  context: Readonly<ProcessTerminationContext>,
+  error: unknown,
+): TerminationObservation {
+  const observation: TerminationObservation = {
+    ...context,
+    code: null,
+    errno: null,
+    syscall: null,
+  };
+  try {
+    const native = error as NodeJS.ErrnoException | undefined;
+    observation.code =
+      typeof native?.code === "string" ? native.code.slice(0, 64) : null;
+    observation.errno = typeof native?.errno === "number" ? native.errno : null;
+    observation.syscall =
+      typeof native?.syscall === "string" ? native.syscall.slice(0, 64) : null;
+  } catch {
+    // Diagnostic access cannot replace the original termination error.
+  }
+  return observation;
+}
 /** Own the process tree until exit, including descendants retaining output pipes. */
 export function runProcess(
   request: ProcessRequest,
   signal: AbortSignal,
   observeFailure?: ProcessFailureObserver,
   lifecycle?: ProcessLifecycleObserver,
+  adapters: ProcessAdapters = {},
 ): Promise<string> {
   if (signal.aborted)
-    return runOwnedProcess(request, signal, observeFailure, lifecycle);
+    return runOwnedProcess(
+      request,
+      signal,
+      observeFailure,
+      lifecycle,
+      undefined,
+      adapters,
+    );
   let supervisor: string | undefined;
   try {
     supervisor =
@@ -51,8 +109,16 @@ export function runProcess(
       supervisor,
       observeFailure,
       lifecycle,
+      adapters,
     );
-  return runOwnedProcess(request, signal, observeFailure, lifecycle);
+  return runOwnedProcess(
+    request,
+    signal,
+    observeFailure,
+    lifecycle,
+    undefined,
+    adapters,
+  );
 }
 
 async function runReservedProcess(
@@ -61,6 +127,7 @@ async function runReservedProcess(
   supervisor: string,
   observeFailure?: ProcessFailureObserver,
   lifecycle?: ProcessLifecycleObserver,
+  adapters: ProcessAdapters = {},
 ): Promise<string> {
   const notifyFailure = (category: ProcessFailureCategory) => {
     try {
@@ -101,6 +168,7 @@ async function runReservedProcess(
       (created) => {
         pid = created;
       },
+      adapters,
     );
     outcome = { ok: true, output };
   } catch (error) {
@@ -142,6 +210,7 @@ function runOwnedProcess(
   observeFailure?: ProcessFailureObserver,
   lifecycle?: ProcessLifecycleObserver,
   created?: (pid: number | undefined) => void,
+  adapters: ProcessAdapters = {},
 ): Promise<string> {
   const observe = (notify: () => void) => {
     try {
@@ -163,24 +232,28 @@ function runOwnedProcess(
   return new Promise((resolve, reject) => {
     let failAfterSpawn: ((error: unknown) => void) | undefined;
     try {
-      const child = spawn(request.executable, request.args, {
-        cwd: request.cwd,
-        shell: false,
-        windowsHide: true,
-        detached: process.platform !== "win32",
-        // Commands without a source snapshot need no parent-owned input pipe.
-        // A fast child may close stdin before even an empty end reaches it.
-        stdio: [
-          request.input === undefined ? "ignore" : "pipe",
-          "pipe",
-          "pipe",
-        ],
-        env: {
-          ...process.env,
-          ...request.env,
-          SALTBOX_LINT_EDITOR_PROCESS: "1",
+      const child = (adapters.spawn ?? spawn)(
+        request.executable,
+        request.args,
+        {
+          cwd: request.cwd,
+          shell: false,
+          windowsHide: true,
+          detached: process.platform !== "win32",
+          // Commands without a source snapshot need no parent-owned input pipe.
+          // A fast child may close stdin before even an empty end reaches it.
+          stdio: [
+            request.input === undefined ? "ignore" : "pipe",
+            "pipe",
+            "pipe",
+          ],
+          env: {
+            ...process.env,
+            ...request.env,
+            SALTBOX_LINT_EDITOR_PROCESS: "1",
+          },
         },
-      });
+      );
       created?.(child.pid);
       const output: Buffer[] = [];
       child.once("spawn", () => observe(() => lifecycle?.spawned?.(child.pid)));
@@ -190,16 +263,23 @@ function runOwnedProcess(
       let failureCategory: ProcessFailureCategory | undefined;
       let terminationFailed = false;
       let terminationFailure: unknown;
+      let terminationDetails: TerminationObservation | undefined;
       const firstFailure = (error: Error, category: ProcessFailureCategory) => {
         failureCategory = category;
         return error;
       };
-      const killTree = () => {
+      const killTree = (phase: ProcessTerminationPhase) => {
         if (!child.pid) return;
+        const context: Readonly<ProcessTerminationContext> = Object.freeze({
+          phase,
+          target: -child.pid,
+          signal: "SIGKILL",
+        });
         try {
           // Windows editor invocations self-assign to a kill-on-close Job before CLI work.
           if (process.platform === "win32") child.kill();
-          else process.kill(-child.pid, "SIGKILL");
+          else if (adapters.killGroup) adapters.killGroup(context);
+          else process.kill(context.target, context.signal);
         } catch (error) {
           if (
             (error as NodeJS.ErrnoException | undefined)?.code !== "ESRCH" &&
@@ -207,12 +287,13 @@ function runOwnedProcess(
           ) {
             terminationFailed = true;
             terminationFailure = error;
+            terminationDetails = terminationObservation(context, error);
           }
         }
       };
       const abort = () => {
         failure ??= firstFailure(new Error("Canceled"), "cancelled");
-        killTree();
+        killTree("abort");
       };
       let timer: ReturnType<typeof setTimeout> | undefined;
       child.on("error", (error) => {
@@ -220,7 +301,7 @@ function runOwnedProcess(
       });
       child.stdin?.on("error", (error) => {
         failure ??= firstFailure(error, "stdin");
-        killTree();
+        killTree("stdin");
       });
       const collect = (chunks: Buffer[], data: Buffer) => {
         bytes += data.length;
@@ -229,13 +310,13 @@ function runOwnedProcess(
             new Error("Saltbox Lint output exceeds limit"),
             "output-limit",
           );
-          killTree();
+          killTree("output-limit");
         } else chunks.push(data);
       };
       child.stdout!.on("data", (data) => collect(output, data));
       child.stderr!.on("data", (data) => collect(errors, data));
       // 'exit' precedes 'close': kill remaining descendants before waiting for their pipes.
-      child.once("exit", killTree);
+      child.once("exit", () => killTree("exit"));
       child.once("close", (code, exitSignal) => {
         clearTimeout(timer);
         signal.removeEventListener("abort", abort);
@@ -266,32 +347,93 @@ function runOwnedProcess(
             );
           }
         }
-        if (failure && terminationFailed)
-          reject(
-            rejected(
-              new AggregateError(
-                [failure, terminationFailure],
-                "Process and process-group cleanup failed",
-                { cause: failure },
+        let queryFailed = false;
+        let queryFailure: unknown;
+        const settle = () => {
+          if (failure && terminationFailed)
+            reject(
+              rejected(
+                new AggregateError(
+                  [
+                    failure,
+                    terminationFailure,
+                    ...(queryFailed ? [queryFailure] : []),
+                  ],
+                  `Process and process-group cleanup failed: ${JSON.stringify(terminationDetails)}`,
+                  { cause: failure },
+                ),
+                failureCategory!,
               ),
-              failureCategory!,
+            );
+          else if (failure) reject(rejected(failure, failureCategory!));
+          else if (terminationFailed)
+            reject(
+              rejected(
+                queryFailed
+                  ? new AggregateError(
+                      [terminationFailure, queryFailure],
+                      `Process-group cleanup and observation failed: ${JSON.stringify(terminationDetails)}`,
+                      { cause: terminationFailure },
+                    )
+                  : terminationFailure,
+                "termination",
+              ),
+            );
+          else resolve(outputText);
+        };
+        // Darwin can deny a redundant signal after the child has already exited.
+        // Only that exit-phase fault can be qualified by a fresh, joined query.
+        if (
+          !terminationFailed ||
+          terminationDetails?.phase !== "exit" ||
+          terminationDetails.code !== "EPERM" ||
+          (adapters.platform ?? process.platform) !== "darwin"
+        ) {
+          settle();
+          return;
+        }
+        const group = -terminationDetails.target;
+        const cleanup = new AbortController();
+        const cleanupTimer = setTimeout(
+          () =>
+            cleanup.abort(
+              new Error("Process-group cleanup observation timed out"),
             ),
-          );
-        else if (failure) reject(rejected(failure, failureCategory!));
-        else if (terminationFailed)
-          reject(rejected(terminationFailure, "termination"));
-        else resolve(outputText);
+          1000,
+        );
+        const observeClosure = async () => {
+          try {
+            const live = await (
+              adapters.groupHasLiveMembers ?? groupHasLiveMembers
+            )(group, cleanup.signal);
+            if (cleanup.signal.aborted) throw cleanup.signal.reason;
+            if (live === false) terminationFailed = false;
+            else if (live !== true)
+              throw new Error("Unqualified process-group cleanup observation");
+          } catch (error) {
+            queryFailed = true;
+            queryFailure = error;
+          } finally {
+            clearTimeout(cleanupTimer);
+          }
+          settle();
+        };
+        void observeClosure().catch((error: unknown) => {
+          queryFailed = true;
+          queryFailure = error;
+          settle();
+        });
       });
       failAfterSpawn = (error) => {
         failure ??= firstFailure(error as Error, "setup");
-        killTree();
+        killTree("setup");
       };
       timer = setTimeout(() => {
         failure ??= firstFailure(
           new Error("Saltbox Lint process timed out"),
           "timeout",
         );
-        killTree();
+        killTree("timeout");
       }, request.timeoutMs ?? 60000);
       signal.addEventListener("abort", abort, { once: true });
       child.stdin?.end(request.input ?? "", "utf8");

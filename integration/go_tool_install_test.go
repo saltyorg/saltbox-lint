@@ -38,6 +38,7 @@ func TestPinnedToolMakeRecipesForwardPinsAndDestinations(t *testing.T) {
 		"Makefile", "tools/install-go-tool.mjs", "tools/report-go-tool-output.mjs",
 		"extension/test/support/host-failure.ts", "extension/scripts/owned-command.mjs",
 		"extension/scripts/owned-command-posix.mjs", "extension/scripts/owned-group.mjs",
+		"extension/src/native-group.ts",
 	} {
 		data, err := os.ReadFile(filepath.Join(source, name))
 		if err != nil {

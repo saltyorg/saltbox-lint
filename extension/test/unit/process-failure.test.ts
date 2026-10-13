@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 import { build } from "esbuild";
@@ -9,8 +11,11 @@ import { processFailureCategories } from "../../src/process-failure.ts";
 
 // Compile the actual process owner with only its spawn boundary controlled.
 // No native process, editor host, listener campaign or wall-clock wait is added.
+const processEntry = await realpath(
+  fileURLToPath(new URL("../../src/process.ts", import.meta.url)),
+);
 const bundled = await build({
-  entryPoints: ["src/process.ts"],
+  entryPoints: [processEntry],
   bundle: true,
   write: false,
   platform: "node",
@@ -19,10 +24,15 @@ const bundled = await build({
     {
       name: "owned-process-boundary",
       setup(builder) {
-        builder.onResolve({ filter: /^node:child_process$/ }, () => ({
-          path: "spawn",
-          namespace: "owned-process-boundary",
-        }));
+        builder.onResolve({ filter: /^node:child_process$/ }, async (args) => {
+          if (
+            args.namespace !== "file" ||
+            !args.importer ||
+            (await realpath(args.importer)) !== processEntry
+          )
+            return;
+          return { path: "spawn", namespace: "owned-process-boundary" };
+        });
         builder.onLoad(
           { filter: /.*/, namespace: "owned-process-boundary" },
           () => ({
