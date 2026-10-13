@@ -131,9 +131,18 @@ if (process.argv[2] === "--cli-driver") {
   );
   if (mode === "hold") {
     const server = createServer((socket) => socket.end());
-    server.listen(0, "127.0.0.1", () =>
-      writeFileSync(state + ".ready", "ready\n"),
-    );
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve(undefined));
+    });
+    const ready = process.env.SALTBOX_TOOL_FIXTURE_READY;
+    if (ready) {
+      if (!/^[0-9a-f]{64}$/.test(ready))
+        throw new Error("Invalid readiness identity");
+      if (!server.listening)
+        throw new Error("Held payload has no native listener");
+      process.stdout.write(`SALTBOX_TOOL_READY ${ready}\n`);
+    }
   } else if (["success", "large-stdout", "large-stderr"].includes(mode)) {
     mkdirSync(output, { recursive: true });
     const packagePath = target.split("@")[0];

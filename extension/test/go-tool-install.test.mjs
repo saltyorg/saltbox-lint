@@ -1,11 +1,12 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, watch } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { randomBytes } from "node:crypto";
 import { ownedCommand } from "../scripts/owned-command.mjs";
 import { installGoTool, runGoToolCLI } from "../../tools/install-go-tool.mjs";
 import { withTestResources } from "./support/test-resources.ts";
@@ -20,7 +21,7 @@ const target = "example.test/pinned-tool@v1.2.3";
 /** @typedef {import("../scripts/owned-command.mjs").OwnedCommandDependencies} NativeAdapters */
 /** @typedef {<T>(admit:(adapters:NativeAdapters)=>Promise<T>, adapters?:NativeAdapters)=>Promise<T>} NativeOperation */
 /** @typedef {{target:string, attempt:number, args:string[], gobin:string, priorAbsent:boolean|null}} Receipt */
-/** @typedef {{root:string,state:string,gobin:string,env:NodeJS.ProcessEnv,signal:AbortSignal,cancel:(reason:Error)=>void,owner:import('./support/test-resources.ts').TestResources,errors:unknown[],native:NativeOperation,outputs:{stream:'stdout'|'stderr',text:string}[],run:(args:string[],options:InstallCommandOptions)=>Promise<CommandOutput>,records:()=>Promise<Receipt[]>,install:(options?:InstallOptions,dependencies?:import('../../tools/install-go-tool.mjs').InstallDependencies)=>Promise<{attempts:import('../../tools/install-go-tool.mjs').InstallAttempt[]}>}} Fixture */
+/** @typedef {{root:string,state:string,gobin:string,env:NodeJS.ProcessEnv,signal:AbortSignal,cancel:(reason:Error)=>void,owner:import('./support/test-resources.ts').TestResources,errors:unknown[],native:NativeOperation,outputs:{stream:'stdout'|'stderr',text:string}[],run:(args:string[],options:InstallCommandOptions,adapters?:NativeAdapters)=>Promise<CommandOutput>,records:()=>Promise<Receipt[]>,install:(options?:InstallOptions,dependencies?:import('../../tools/install-go-tool.mjs').InstallDependencies)=>Promise<{attempts:import('../../tools/install-go-tool.mjs').InstallAttempt[]}>}} Fixture */
 
 /** @param {string[]} plan @param {(fixture:Fixture)=>Promise<void>} body */
 async function withFixture(plan, body) {
@@ -78,16 +79,18 @@ async function withFixture(plan, body) {
       const errors = [];
       /** @type {{stream:'stdout'|'stderr',text:string}[]} */
       const outputs = [];
-      /** @param {string[]} args @param {InstallCommandOptions} options */
-      const run = async (args, options) => {
+      /** @param {string[]} args @param {InstallCommandOptions} options @param {NativeAdapters} [adapters] */
+      const run = async (args, options, adapters = {}) => {
         try {
-          return await native((nativeAdapters) =>
-            ownedCommand(
-              process.execPath,
-              [executable, ...args],
-              options,
-              nativeAdapters,
-            ),
+          return await native(
+            (nativeAdapters) =>
+              ownedCommand(
+                process.execPath,
+                [executable, ...args],
+                options,
+                nativeAdapters,
+              ),
+            adapters,
           );
         } catch (error) {
           errors.push(error);
@@ -171,59 +174,141 @@ async function withFixture(plan, body) {
 /** Observe actual fixture admission, with settlement joined even on early failure. */
 /** @param {Fixture} fixture @param {()=>void} trigger @param {InstallOptions} [options] */
 async function afterAdmission(fixture, trigger, options = {}) {
-  const filename = fixture.state + ".ready";
-  let admitted = false;
-  /** @type {(value:{ready:boolean})=>void} */ let settle;
-  const readiness = new Promise((resolve) => {
-    settle = resolve;
-  });
-  /** @type {unknown} */ let observationFailure;
-  const changed = () => {
-    try {
-      if (readFileSync(filename, "utf8") === "ready\n") {
-        admitted = true;
-        settle({ ready: true });
-      }
-    } catch (error) {
-      if (!(
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      )) {
-        observationFailure = error;
-        settle({ ready: false });
-      }
-    }
-  };
-  const watcher = watch(fixture.root, changed);
-  const closed = new Promise((resolve) => watcher.once("close", resolve));
-  fixture.owner.defer("tool admission observer", async () => {
-    watcher.close();
+  const token = randomBytes(32).toString("hex");
+  /** @type {(value:{ready:boolean,error?:unknown})=>void} */ let settle;
+  /** @type {Promise<{ready:boolean,error?:unknown}>} */ const readiness =
+    new Promise((resolve) => {
+      settle = resolve;
+    });
+  /** @type {(()=>void)[]} */ const remove = [];
+  /** @type {unknown[]} */ const failures = [];
+  /** @type {unknown[]} */ const observed = [];
+  /** @type {unknown} */ let consumed;
+  let sealed = false;
+  const release = () => {
+    if (sealed) return;
+    sealed = true;
     settle({ ready: false });
-    await closed;
+    for (const dispose of remove)
+      try {
+        dispose();
+      } catch (error) {
+        failures.push(error);
+      }
+    remove.length = 0;
+  };
+  fixture.owner.defer("tool readiness stdout observer", () => {
+    release();
+    const unexpected = [
+      ...observed.filter((error) => error !== consumed),
+      ...failures,
+    ];
+    if (unexpected.length)
+      throw new AggregateError(unexpected, "Readiness observer cleanup failed");
   });
-  const outcome = fixture.install(options).then(
-    (value) => ({ ok: true, value }),
-    (error) => ({ ok: false, error }),
-  );
+  /** @type {Promise<{ok:true,value:{attempts:import('../../tools/install-go-tool.mjs').InstallAttempt[]}}|{ok:false,error:unknown}>|undefined} */ let outcome;
+  /** @type {unknown} */ let bodyFailure;
+  let failed = false;
+  /** @type {Awaited<NonNullable<typeof outcome>>|undefined} */ let result;
   try {
+    outcome = fixture
+      .install(
+        {
+          ...options,
+          env: {
+            ...(options.env ?? fixture.env),
+            SALTBOX_TOOL_FIXTURE_READY: token,
+          },
+        },
+        {
+          runInstall: (args, config) =>
+            fixture.run(args, config, {
+              onSpawn(child) {
+                assert.ok(child.stdout);
+                const stdout = child.stdout;
+                let buffer = "",
+                  admitted = false;
+                const failure = (/** @type {unknown} */ error) => {
+                  if (!sealed) {
+                    if (!observed.includes(error)) observed.push(error);
+                    settle({ ready: false, error });
+                  }
+                };
+                const data = (/** @type {string} */ chunk) => {
+                  if (sealed || admitted) return;
+                  try {
+                    buffer += chunk;
+                    if (buffer.length > 512)
+                      throw new Error("Oversized fixture readiness frame");
+                    if (!buffer.endsWith("\n")) return;
+                    if (buffer !== `SALTBOX_TOOL_READY ${token}\n`)
+                      throw new Error("Invalid fixture readiness identity");
+                    admitted = true;
+                    settle({ ready: true });
+                  } catch (error) {
+                    failure(error);
+                  }
+                };
+                // The native owner installed its capture/exit/pipe fences before this hook.
+                remove.push(() => {
+                  stdout.removeListener("data", data);
+                  stdout.removeListener("error", failure);
+                });
+                stdout.on("data", data);
+                stdout.on("error", failure);
+              },
+            }),
+        },
+      )
+      .then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      );
     const first = await Promise.race([
-      readiness.then((value) => ({ kind: "ready", ...value })),
-      outcome.then(() => ({ kind: "settled", ready: false })),
+      readiness,
+      outcome.then(() => ({ ready: false, settled: true })),
     ]);
-    assert.equal(
-      first.kind,
-      "ready",
-      "the held native fixture must actually enter",
-    );
-    if (observationFailure) throw observationFailure;
-    assert.equal(admitted, true);
+    if ("settled" in first) {
+      const native = await outcome;
+      if (!native.ok) throw native.error;
+      throw new Error("Held fixture exited before its native readiness frame");
+    }
+    if (!first.ready) {
+      consumed =
+        first.error ?? new Error("Fixture readiness closed before admission");
+      throw consumed;
+    }
     trigger();
-    return await outcome;
+    result = await outcome;
+  } catch (error) {
+    failed = true;
+    bodyFailure = error;
   } finally {
     fixture.cancel(new Error("admission control released"));
-    await outcome;
+    if (outcome) {
+      const native = await outcome;
+      if (
+        failed &&
+        !native.ok &&
+        native.error !== bodyFailure &&
+        !(
+          native.error instanceof Error &&
+          native.error.cause === fixture.signal.reason &&
+          "ownershipReleased" in native.error &&
+          native.error.ownershipReleased === true
+        )
+      )
+        bodyFailure = new AggregateError(
+          [bodyFailure, native.error],
+          "Readiness and native operation failed",
+          { cause: bodyFailure },
+        );
+    }
+    release();
   }
+  if (failed) throw bodyFailure;
+  assert.ok(result);
+  return result;
 }
 
 test("owned command opt-in returns both successful streams after native ownership settles", async () => {
@@ -878,5 +963,23 @@ test("a post-spawn observer can cancel through the already owned abort fence", a
     assert.equal(calls, 1);
     assert.equal(stdoutClosed, true);
     assert.equal(stderrClosed, true);
+  });
+});
+
+test("early native failure preserves its original cause and joins the readiness listener", async () => {
+  await withFixture(["compile"], async (f) => {
+    let triggered = false;
+    await assert.rejects(
+      afterAdmission(f, () => {
+        triggered = true;
+      }),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error, f.errors[0]);
+        return true;
+      },
+    );
+    assert.equal(triggered, false);
+    assert.equal((await f.records()).length, 1);
   });
 });

@@ -105,6 +105,17 @@ establish release; a fabricated close event cannot do so. Phase observers use a
 monotonic clock. Reporting or clock failures remain final failures after owned
 acquisition, joining and restoration finish, with unavailable timing explicit.
 
+Read-only group probes keep their one-second deadline and four-MiB output bound.
+Linux checks every advertised thread. Darwin selects only the owned group with
+`ps -g PGID -x -o pgid=,pid=,state=` and a private `COMMAND_MODE=unix2003`
+environment, preserving non-terminal members and avoiding legacy selector
+semantics. Accept an empty Darwin selection only after the probe closes with
+exit 1, empty output and no kill, signal or cancellation. Diagnostics, malformed
+rows and other probe failures remain inconclusive. Failure reporting retains the
+original cause and bounded status, timing and output-size metadata. See Apple's
+[process selection implementation](https://github.com/apple-oss-distributions/adv_cmds/blob/6bed8737a34dbb54782a18f47dccf933a9967a12/ps/ps.c)
+and [compatibility contract](https://github.com/apple-oss-distributions/Libc/blob/71bbe350ab79eef58113991d817ccc6165061a64/gen/compat.5).
+
 `EditorIntegration.join()` owns complete background rendering/synchronization,
 file and refresh timer producers, and root probes as well as backend lanes.
 Disposal seals admission, cancels producers and leaves admitted work joinable.
@@ -445,8 +456,8 @@ The wider editor batches use the same boundaries:
 
 The ordinary build runs strict TypeScript checks for all extension source and
 TypeScript tests, plus [`tsconfig.helpers.json`](../extension/tsconfig.helpers.json)
-for twenty-nine JavaScript roots: twelve build/host/ownership scripts, seven
-driver/gate tests, seven executable fixtures, the shared vulnerability-test
+for thirty JavaScript roots: twelve build/host/ownership scripts, seven
+driver/gate tests, eight executable fixtures, the shared vulnerability-test
 driver, the pinned Go-tool installer and its owned output reporter. Each
 selected JavaScript root uses `@ts-check`. Typed ESLint applies the same
 floating-promise, misused-promise and awaited-value rules to these roots. The
@@ -471,6 +482,12 @@ target. The copied Makefile pin/destination control runs through the owned Go
 source gate on Linux, where the canonical Make gate runs. Explicit successful stdout/stderr
 capture follows native closure and leaves existing string and exit-code
 callers unchanged.
+
+Held installer fixtures emit a bounded nonce frame on their existing owned
+stdout after the native listener starts. The command's spawn observer registers
+readiness before data delivery. Authenticate the fixture instance and join the
+installer and its streams before removing listeners on success or failure.
+Fixture readiness does not rely on a directory watcher.
 
 The installer joins each native command owner before another attempt, and all
 three possible attempts share one five-minute budget. Cancellation, exhausted

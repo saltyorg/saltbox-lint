@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
@@ -29,6 +29,138 @@ const outputFixture = fileURLToPath(
 const denialGuardian = fileURLToPath(
   new URL("testdata/owned-denial-guardian.mjs", import.meta.url),
 );
+const groupQueryFixture = fileURLToPath(
+  new URL("testdata/owned-group-query-fixture.mjs", import.meta.url),
+);
+
+/** @typedef {import("../scripts/owned-group.mjs").QueryError} QueryError */
+/** @typedef {{error: QueryError | null, stdout: string, stderr: string}} QueryResult */
+/** @typedef {{code: number | null, signal: NodeJS.Signals | null}} QueryClose */
+/** @typedef {{file: string, args: readonly string[], options: import("node:child_process").ExecFileOptionsWithStringEncoding}} QueryRequest */
+/** @typedef {{platform: NodeJS.Platform, execFile: (file: string, args: readonly string[], options: import("node:child_process").ExecFileOptionsWithStringEncoding, callback: (error: QueryError | null, stdout: string, stderr: string) => void) => import("node:child_process").ChildProcess}} QueryDependencies */
+/** @typedef {{dependencies: QueryDependencies, requests: QueryRequest[], children: import("node:child_process").ChildProcess[], results: QueryResult[], closes: QueryClose[], entered: Promise<void>}} GroupQueryFixture */
+
+/**
+ * Run the actual observation interface against separately owned native queries.
+ * The platform adapter exercises Darwin contracts on every source-test target;
+ * the existing retained-zombie case still exercises that target's actual ps.
+ * @template T
+ * @param {string} mode
+ * @param {(fixture: GroupQueryFixture) => Promise<T>} body
+ * @param {{earlyError?: QueryError, abortOnSpawn?: AbortController, missingExecutable?: boolean}} [control]
+ */
+async function withGroupQuery(mode, body, control = {}) {
+  return withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
+    /** @type {QueryRequest[]} */
+    const requests = [];
+    /** @type {import("node:child_process").ChildProcess[]} */
+    const children = [];
+    /** @type {QueryResult[]} */
+    const results = [];
+    /** @type {QueryClose[]} */
+    const closes = [];
+    /** @type {Promise<void>[]} */
+    const joining = [];
+    /** @type {{promise: Promise<void>, resolve: () => void, reject: (reason?: unknown) => void}} */
+    const entered = Promise.withResolvers();
+    ownJoinedResource(resources, "native process query probes", {
+      dispose() {
+        for (const child of children) {
+          if (child.exitCode === null && child.signalCode === null)
+            child.kill("SIGKILL");
+          child.stdin?.end();
+        }
+      },
+      async join() {
+        await Promise.all(joining);
+      },
+    });
+    /** @type {QueryDependencies} */
+    const dependencies = {
+      platform: "darwin",
+      execFile(file, args, options, callback) {
+        requests.push({ file, args: [...args], options });
+        let delivered = false;
+        const child = execFile(
+          control.missingExecutable
+            ? `${groupQueryFixture}.missing-executable`
+            : process.execPath,
+          [groupQueryFixture, mode, args[1]],
+          options,
+          (error, stdout, stderr) => {
+            results.push({ error, stdout, stderr });
+            if (!delivered) {
+              delivered = true;
+              callback(error, stdout, stderr);
+            }
+          },
+        );
+        children.push(child);
+        joining.push(
+          new Promise((resolve) => {
+            child.once("close", (code, signal) => {
+              closes.push({ code, signal });
+              resolve();
+            });
+          }),
+        );
+        child.once("spawn", () => {
+          if (control.earlyError) {
+            delivered = true;
+            callback(control.earlyError, "", "");
+          }
+          control.abortOnSpawn?.abort();
+          entered.resolve();
+        });
+        child.once("error", () => entered.resolve());
+        return child;
+      },
+    };
+    return body({
+      dependencies,
+      requests,
+      children,
+      results,
+      closes,
+      entered: entered.promise,
+    });
+  });
+}
+
+/** @param {unknown} value */
+function queryFailure(value) {
+  assert.ok(value instanceof Error);
+  assert.ok(
+    "observation" in value &&
+      value.observation &&
+      typeof value.observation === "object",
+  );
+  const observation = value.observation;
+  assert.ok("platform" in observation && observation.platform === "darwin");
+  assert.ok("group" in observation && observation.group === 123);
+  assert.ok(
+    "elapsedMs" in observation &&
+      typeof observation.elapsedMs === "number" &&
+      observation.elapsedMs >= 0,
+  );
+  assert.ok(
+    "stdoutBytes" in observation && typeof observation.stdoutBytes === "number",
+  );
+  assert.ok(
+    "stderrBytes" in observation && typeof observation.stderrBytes === "number",
+  );
+  assert.ok("closeCode" in observation && "closeSignal" in observation);
+  assert.ok("timeoutMs" in observation && observation.timeoutMs === 1000);
+  assert.ok(
+    "maxBufferBytes" in observation &&
+      observation.maxBufferBytes === 4 * 1024 * 1024,
+  );
+  assert.ok(
+    value.message.includes("process group query") &&
+      value.message.length < 1500,
+  );
+  return { error: value, observation };
+}
 
 /** @typedef {{pid: number, port: number, token: string}} FixtureInstance */
 /** @typedef {import("../scripts/owned-command.mjs").ClosedCommand} ClosedCommand */
@@ -477,6 +609,226 @@ test("group snapshots require complete Linux threads and supported Darwin states
   assert.throws(
     () => liveGroupMembers("123 Z\n", 123, "freebsd"),
     /requires Linux or Darwin/,
+  );
+});
+
+test("Darwin process query selects only its owned group in a private Unix 2003 environment", async () => {
+  const parentMode = process.env.COMMAND_MODE;
+  const parentLocale = process.env.LC_ALL;
+  await withGroupQuery("live", async (f) => {
+    const live = await groupHasLiveMembers(123, undefined, f.dependencies);
+    assert.equal(
+      f.requests.length,
+      1,
+      "the observation uses its per-instance native query adapter",
+    );
+    const request = f.requests[0];
+    assert.equal(request.file, "/bin/ps");
+    assert.deepEqual(request.args, [
+      "-g",
+      "123",
+      "-x",
+      "-o",
+      "pgid=,pid=,state=",
+    ]);
+    assert.equal(request.options.timeout, 1000);
+    assert.equal(request.options.killSignal, "SIGKILL");
+    assert.equal(request.options.maxBuffer, 4 * 1024 * 1024);
+    assert.notEqual(request.options.env, process.env);
+    assert.equal(request.options.env?.COMMAND_MODE, "unix2003");
+    assert.equal(request.options.env?.LC_ALL, "C");
+    assert.equal(process.env.COMMAND_MODE, parentMode);
+    assert.equal(process.env.LC_ALL, parentLocale);
+    assert.equal(live, true, "the exact selected native group is live");
+    assert.deepEqual(f.closes, [{ code: 0, signal: null }]);
+  });
+  await withGroupQuery("zombie", async (f) => {
+    assert.equal(
+      await groupHasLiveMembers(123, undefined, f.dependencies),
+      false,
+    );
+    assert.deepEqual(f.closes, [{ code: 0, signal: null }]);
+  });
+});
+
+test("Darwin process query accepts only joined empty exit one as no match", async () => {
+  await withGroupQuery("absent", async (f) => {
+    assert.equal(
+      await groupHasLiveMembers(123, undefined, f.dependencies),
+      false,
+    );
+    assert.deepEqual(f.closes, [{ code: 1, signal: null }]);
+    assert.equal(f.results[0].error?.code, 1);
+    assert.equal(f.results[0].error?.killed, false);
+    assert.equal(f.results[0].stdout, "");
+    assert.equal(f.results[0].stderr, "");
+  });
+  for (const mode of [
+    "empty",
+    "other-exit",
+    "stderr",
+    "absent-stderr",
+    "failed-row",
+    "wrong-group",
+    "malformed",
+  ]) {
+    await withGroupQuery(mode, async (f) => {
+      await assert.rejects(
+        groupHasLiveMembers(123, undefined, f.dependencies),
+        (failure) => {
+          const { error, observation } = queryFailure(failure);
+          assert.equal(
+            f.closes.length,
+            1,
+            `${mode} settled after its native close`,
+          );
+          assert.equal(observation.closeCode, f.closes[0].code);
+          assert.equal(observation.closeSignal, f.closes[0].signal);
+          assert.equal(
+            observation.stdoutBytes,
+            Buffer.byteLength(f.results[0].stdout),
+          );
+          assert.equal(
+            observation.stderrBytes,
+            Buffer.byteLength(f.results[0].stderr),
+          );
+          if (f.results[0].error) assert.equal(error.cause, f.results[0].error);
+          return true;
+        },
+      );
+    });
+  }
+});
+
+test("process group validation rejects unsafe identities before native admission", async () => {
+  await withGroupQuery("live", async (f) => {
+    for (const group of [0, 1, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN])
+      await assert.rejects(
+        groupHasLiveMembers(group, undefined, f.dependencies),
+        /Invalid owned process group/,
+      );
+    await assert.rejects(
+      groupHasLiveMembers(123, undefined, {
+        ...f.dependencies,
+        platform: "freebsd",
+      }),
+      /requires Linux or Darwin/,
+    );
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.children.length, 0);
+  });
+});
+
+test("process query failure retains bounded native timeout overflow cancellation and spawn evidence", async () => {
+  for (const mode of ["hold", "overflow"]) {
+    await withGroupQuery(mode, async (f) => {
+      await assert.rejects(
+        groupHasLiveMembers(123, undefined, f.dependencies),
+        (failure) => {
+          const { error, observation } = queryFailure(failure);
+          assert.equal(error.cause, f.results[0].error);
+          assert.equal(f.closes.length, 1);
+          assert.equal(observation.closeCode, f.closes[0].code);
+          assert.equal(observation.closeSignal, f.closes[0].signal);
+          if (mode === "hold") {
+            assert.equal(f.results[0].error?.killed, true);
+            assert.equal(observation.closeSignal, "SIGKILL");
+            assert.ok("killed" in observation && observation.killed === true);
+          } else {
+            assert.equal(
+              f.results[0].error?.code,
+              "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+            );
+            assert.ok(
+              "code" in observation &&
+                observation.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+            );
+            assert.ok(typeof observation.stdoutBytes === "number");
+            assert.ok(observation.stdoutBytes <= 4 * 1024 * 1024);
+          }
+          return true;
+        },
+      );
+    });
+  }
+  const aborted = new AbortController();
+  await withGroupQuery(
+    "hold",
+    async (f) => {
+      await assert.rejects(
+        groupHasLiveMembers(123, aborted.signal, f.dependencies),
+        (failure) => {
+          const { error, observation } = queryFailure(failure);
+          assert.equal(error.cause, f.results[0].error);
+          assert.equal(f.results[0].error?.code, "ABORT_ERR");
+          assert.ok("aborted" in observation && observation.aborted === true);
+          assert.equal(f.closes.length, 1);
+          return true;
+        },
+      );
+    },
+    { abortOnSpawn: aborted },
+  );
+  await withGroupQuery(
+    "live",
+    async (f) => {
+      await assert.rejects(
+        groupHasLiveMembers(123, undefined, f.dependencies),
+        (failure) => {
+          const { error, observation } = queryFailure(failure);
+          assert.equal(error.cause, f.results[0].error);
+          assert.equal(f.results[0].error?.code, "ENOENT");
+          assert.ok("code" in observation && observation.code === "ENOENT");
+          assert.equal(f.closes.length, 1);
+          return true;
+        },
+      );
+    },
+    { missingExecutable: true },
+  );
+});
+
+test("process query joins the exact native close after an early exit-one callback", async () => {
+  /** @type {QueryError} */
+  const original = Object.assign(new Error("early native query error"), {
+    code: 1,
+    killed: false,
+    signal: null,
+  });
+  await withGroupQuery(
+    "hold",
+    async (f) => {
+      let settled = false;
+      /** @param {boolean} value @returns {{ok: true, value: boolean}} */
+      const fulfilled = (value) => ({ ok: true, value });
+      /** @param {unknown} error @returns {{ok: false, error: unknown}} */
+      const rejected = (error) => ({ ok: false, error });
+      const outcome = groupHasLiveMembers(123, undefined, f.dependencies)
+        .then(fulfilled, rejected)
+        .finally(() => {
+          settled = true;
+        });
+      try {
+        await f.entered;
+        await Promise.resolve();
+        assert.equal(settled, false, "a callback does not prove native close");
+        assert.equal(f.closes.length, 0);
+      } finally {
+        for (const child of f.children) child.stdin?.end();
+      }
+      const result = await outcome;
+      assert.equal(
+        result.ok,
+        false,
+        "exit-one callback with native exit zero is not no-match",
+      );
+      if (result.ok) throw new Error("Unqualified absence result");
+      const { error, observation } = queryFailure(result.error);
+      assert.equal(error.cause, original);
+      assert.equal(observation.closeCode, 0);
+      assert.deepEqual(f.closes, [{ code: 0, signal: null }]);
+    },
+    { earlyError: original },
   );
 });
 
