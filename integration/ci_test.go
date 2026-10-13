@@ -280,6 +280,208 @@ func TestVulnerabilityGateUsesCanonicalCheckAndRetainsEvidence(t *testing.T) {
 	}
 }
 
+func TestCIJobSummariesObserveEveryPhaseAfterFailure(t *testing.T) {
+	type step struct {
+		ID              string
+		Name            string
+		Uses            string
+		Run             string
+		If              string
+		Shell           string
+		TimeoutMinutes  int  `yaml:"timeout-minutes"`
+		ContinueOnError bool `yaml:"continue-on-error"`
+		Env             map[string]string
+	}
+	var ci struct {
+		Permissions map[string]string
+		Jobs        map[string]struct {
+			Permissions map[string]string
+			Steps       []step
+		}
+	}
+	readYAML(t, "../.github/workflows/ci.yml", &ci)
+	if !reflect.DeepEqual(ci.Permissions, map[string]string{"contents": "read"}) {
+		t.Fatalf("summaries must not expand workflow permissions: %v", ci.Permissions)
+	}
+	for _, name := range []string{"check", "native", "acceptance", "required"} {
+		t.Run(name, func(t *testing.T) {
+			job, ok := ci.Jobs[name]
+			if !ok || len(job.Steps) == 0 {
+				t.Fatal("required job has no reportable phases")
+			}
+			if len(job.Permissions) != 0 {
+				t.Fatalf("summaries must not expand job permissions: %v", job.Permissions)
+			}
+			ids := map[string]bool{}
+			summaries := 0
+			for index, phase := range job.Steps {
+				if phase.ID == "" || ids[phase.ID] {
+					t.Errorf("phase %q requires a unique ID for observed outcomes: %q", phase.Name, phase.ID)
+				}
+				ids[phase.ID] = true
+				if strings.HasPrefix(phase.Uses, "actions/checkout@") || strings.HasPrefix(phase.Uses, "actions/setup-node@") {
+					if phase.If != "" {
+						t.Errorf("source and runtime setup must retain normal failure conditions: %+v", phase)
+					}
+				}
+				if phase.ID != "summary" && phase.Name != "Write job summary" {
+					continue
+				}
+				summaries++
+				if index != len(job.Steps)-1 || phase.ID != "summary" || phase.Name != "Write job summary" {
+					t.Error("the job must have exactly one terminal summary")
+				}
+				if phase.If != "always()" || phase.Shell != "bash" || phase.TimeoutMinutes != 1 || phase.ContinueOnError {
+					t.Errorf("summary requires bounded reporting after failed or cancelled phases: %+v", phase)
+				}
+				if phase.Env["CI_SUMMARY_STEPS"] != "${{ toJSON(steps) }}" || phase.Env["CI_SUMMARY_KIND"] != name {
+					t.Errorf("summary must receive this job's actual step outcomes and kind: %v", phase.Env)
+				}
+				if phase.Env["CI_SUMMARY_JOB_STATUS"] != "${{ job.status }}" {
+					t.Error("summary must preserve the job's current failed or cancelled status")
+				}
+				if (name == "native" || name == "acceptance") && phase.Env["CI_SUMMARY_TARGET"] != "${{ matrix.target }}" {
+					t.Error("matrix summary must identify the actual target")
+				}
+				for _, required := range []string{"command -v node", "tools/ci-summary.mjs", "GITHUB_STEP_SUMMARY", "else", "unavailable"} {
+					if !strings.Contains(strings.ToLower(phase.Run), strings.ToLower(required)) {
+						t.Errorf("summary lacks a renderer prerequisite or truthful fallback: %q", required)
+					}
+				}
+				if !strings.Contains(phase.Run, "-f tools/ci-summary.mjs") {
+					t.Error("summary must handle an unavailable checkout before invoking the renderer")
+				}
+			}
+			if summaries != 1 {
+				t.Fatalf("want one terminal summary, got %d", summaries)
+			}
+		})
+	}
+}
+
+func TestCISummaryInputsMatchRequiredChecks(t *testing.T) {
+	type step struct {
+		ID              string
+		Name            string
+		Uses            string
+		Run             string
+		If              string
+		ContinueOnError bool `yaml:"continue-on-error"`
+		Env             map[string]string
+	}
+	var ci struct {
+		Jobs map[string]struct {
+			Steps []step
+		}
+	}
+	readYAML(t, "../.github/workflows/ci.yml", &ci)
+	reported := map[string]map[string]string{
+		"check": {
+			"Check, build and package local artifacts":                            "build_package",
+			"Rebuild from the matching source with dependency downloads disabled": "source_rebuild",
+			"Retain required vulnerability scan evidence":                         "vulnerability_upload",
+		},
+		"native": {
+			"Verify native runner architecture":                   "architecture",
+			"Verify Windows development process launcher":         "windows_launcher",
+			"Native Go tests":                                     "go_tests",
+			"Native patched Nuri tests":                           "nuri_tests",
+			"Native Go race tests on supported targets":           "go_race",
+			"Native patched Nuri race tests on supported targets": "nuri_race",
+			"Native vet and lint":                                 "vet_lint",
+			"Install native extension dependencies":               "dependencies",
+			"Build native extension":                              "build",
+			"Native extension unit tests":                         "unit_tests",
+			"Native extension release tests":                      "release_tests",
+			"Check native extension formatting":                   "format",
+		},
+		"acceptance": {
+			"Packaged CLI tests and editor fixtures":           "package_tests",
+			"Install editor host dependencies":                 "editor_dependencies",
+			"Installed VSIX minimum/current editor acceptance": "editor_tests",
+			"Native musl packaged binary acceptance":           "alpine",
+		},
+	}
+	for name, phases := range reported {
+		t.Run(name, func(t *testing.T) {
+			for _, phase := range ci.Jobs[name].Steps {
+				want, ok := phases[phase.Name]
+				if !ok {
+					continue
+				}
+				if phase.ID != want {
+					t.Errorf("summary input for %q requires ID %q, got %q", phase.Name, want, phase.ID)
+				}
+				delete(phases, phase.Name)
+			}
+			if len(phases) != 0 {
+				t.Fatalf("summary inputs omit required phases: %v", phases)
+			}
+		})
+	}
+	for _, name := range []string{"check", "native", "acceptance", "required"} {
+		checkout, node := false, false
+		gate := false
+		for _, phase := range ci.Jobs[name].Steps {
+			if strings.HasPrefix(phase.Uses, "actions/checkout@") {
+				checkout = phase.ID == "checkout" && phase.If == ""
+			}
+			if strings.HasPrefix(phase.Uses, "actions/setup-node@") {
+				node = phase.ID == "node_setup" && phase.If == ""
+			}
+			for prefix, id := range map[string]string{
+				"actions/setup-go@":          "go_setup",
+				"actions/download-artifact@": "download_artifacts",
+			} {
+				if strings.HasPrefix(phase.Uses, prefix) && phase.ID != id {
+					t.Errorf("%s summary input for %s requires ID %q, got %q", name, prefix, id, phase.ID)
+				}
+			}
+			if strings.HasPrefix(phase.Run, "npm install --global ") && phase.ID != "npm_setup" {
+				t.Errorf("%s summary must observe npm setup", name)
+			}
+			if name == "required" && phase.Name == "Require every build and acceptance job to succeed" {
+				gate = true
+				if !checkout || !node || phase.ContinueOnError || phase.If != "" {
+					t.Error("the required gate must retain normal failing execution after reporter prerequisites")
+				}
+				if !reflect.DeepEqual(phase.Env, map[string]string{
+					"CHECK_RESULT":      "${{ needs.check.result }}",
+					"NATIVE_RESULT":     "${{ needs.native.result }}",
+					"ACCEPTANCE_RESULT": "${{ needs.acceptance.result }}",
+				}) || strings.TrimSpace(phase.Run) != `[[ "$CHECK_RESULT" == success && "$NATIVE_RESULT" == success && "$ACCEPTANCE_RESULT" == success ]]` {
+					t.Error("reporting must preserve the exact required result check")
+				}
+			}
+			if name == "required" && phase.ID == "summary" && phase.Env["CI_SUMMARY_NEEDS"] != "${{ toJSON(needs) }}" {
+				t.Error("required summary must use actual dependency results")
+			}
+		}
+		if !checkout || !node {
+			t.Errorf("%s summary requires normal checkout and Node setup", name)
+		}
+		if name == "required" && !gate {
+			t.Error("reporting must not remove the required result check")
+		}
+	}
+	acceptance := ci.Jobs["acceptance"]
+	var results, observed string
+	for _, phase := range acceptance.Steps {
+		switch phase.ID {
+		case "editor_tests":
+			results = phase.Env["SALTBOX_TEST_HOST_RESULTS_FILE"]
+		case "summary":
+			observed = phase.Env["CI_SUMMARY_HOST_RESULTS"]
+		}
+	}
+	if !strings.HasPrefix(results, "${{ runner.temp }}/") || !strings.HasSuffix(results, ".json") {
+		t.Fatalf("host step checkpoint must have a runner temporary path: %q", results)
+	}
+	if observed != results {
+		t.Errorf("acceptance summary checkpoint %q differs from host step checkpoint %q", observed, results)
+	}
+}
+
 func readYAML(t *testing.T, path string, value any) {
 	t.Helper()
 	data, err := os.ReadFile(path)

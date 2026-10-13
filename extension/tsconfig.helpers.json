@@ -9,6 +9,7 @@
     "scripts/host-fixture.mjs",
     "scripts/host-inputs.mjs",
     "scripts/host-launcher.mjs",
+    "scripts/host-matrix.mjs",
     "scripts/host-process-supervisor.mjs",
     "scripts/native-hosts.mjs",
     "scripts/owned-command.mjs",
@@ -18,6 +19,7 @@
     "scripts/test-host.mjs",
     "scripts/test-native-hosts.mjs",
     "test/editor-acceptance.test.mjs",
+    "test/ci-summary.test.mjs",
     "test/host-process-supervisor.test.mjs",
     "test/release-liveness.test.mjs",
     "test/lint-gate.test.mjs",
@@ -26,6 +28,7 @@
     "test/go-tool-install.test.mjs",
     "test/testdata/*.mjs",
     "../tools/vulnerability.test.mjs",
+    "../tools/ci-summary.mjs",
     "../tools/install-go-tool.mjs",
     "../tools/report-go-tool-output.mjs"
   ]

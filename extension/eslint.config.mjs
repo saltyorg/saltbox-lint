@@ -25,6 +25,7 @@ const helpers = [
   "scripts/host-fixture.mjs",
   "scripts/host-inputs.mjs",
   "scripts/host-launcher.mjs",
+  "scripts/host-matrix.mjs",
   "scripts/host-process-supervisor.mjs",
   "scripts/native-hosts.mjs",
   "scripts/owned-command.mjs",
@@ -37,6 +38,7 @@ const helpers = [
   "test/owned-command-guardian.test.mjs",
   "test/native-fixture-lifetime.test.mjs",
   "test/go-tool-install.test.mjs",
+  "test/ci-summary.test.mjs",
   "test/testdata/*.mjs",
 ];
 
@@ -65,6 +67,7 @@ export default [
     ...typedProject(
       [
         "tools/vulnerability.test.mjs",
+        "tools/ci-summary.mjs",
         "tools/install-go-tool.mjs",
         "tools/report-go-tool-output.mjs",
       ],

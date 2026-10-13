@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -46,6 +47,25 @@ import {
 } from "../scripts/native-hosts.mjs";
 
 const workspaceBase = process.env.SALTBOX_TEST_WORKSPACE_BASE ?? tmpdir();
+
+const resultEnvironment = Object.freeze({
+  GITHUB_SHA: "a".repeat(40),
+  GITHUB_RUN_ID: "12345",
+  GITHUB_RUN_ATTEMPT: "2",
+  PRIVATE_INPUT: "must not appear in results",
+});
+
+const realResultsIO = Object.freeze({
+  write: writeFileSync,
+  link: linkSync,
+  rename: renameSync,
+  remove: rmSync,
+});
+
+/** @param {string} filename @returns {import('../scripts/native-hosts.mjs').HostResults} */
+function readHostResults(filename) {
+  return JSON.parse(readFileSync(filename, "utf8"));
+}
 
 /** @param {unknown} error @param {unknown} target @returns {boolean} */
 function containsFailure(error, target) {
@@ -1599,4 +1619,345 @@ test("an actual parent failure before input admission is handled, released and j
   );
   assert.equal(released, true);
   assert.equal(existsSync(profile.root), false);
+});
+
+test("editor matrix results publish actual progress and the complete configured identity", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  let completed = 0;
+  await runNativeHosts(
+    {
+      env: resultEnvironment,
+      resultsFile,
+      platform: "darwin",
+      arch: "arm64",
+      versions: hostVersions,
+      modes: ["normal", "navigation"],
+    },
+    {
+      download: async (version) => {
+        const result = readHostResults(resultsFile);
+        assert.equal(result.status, "running");
+        assert.equal(
+          result.profiles.filter((entry) => entry.status === "passed").length,
+          completed,
+        );
+        return `/sdk/${version}`;
+      },
+      profile: async () => {
+        const result = readHostResults(resultsFile);
+        assert.equal(
+          result.profiles.filter((entry) => entry.status === "running").length,
+          1,
+        );
+        assert.equal(result.profiles[completed].status, "running");
+        completed++;
+      },
+    },
+  );
+  const result = readHostResults(resultsFile);
+  assert.deepEqual(result, {
+    schemaVersion: 1,
+    target: "darwin-arm64",
+    commit: resultEnvironment.GITHUB_SHA,
+    runId: resultEnvironment.GITHUB_RUN_ID,
+    attempt: resultEnvironment.GITHUB_RUN_ATTEMPT,
+    status: "passed",
+    versions: [...hostVersions],
+    modes: ["normal", "navigation"],
+    profiles: hostVersions.flatMap((version) =>
+      ["normal", "navigation"].map((mode) => ({
+        version,
+        mode,
+        status: "passed",
+      })),
+    ),
+  });
+  assert.equal(completed, 4);
+  assert.ok(!readFileSync(resultsFile, "utf8").includes("PRIVATE_INPUT"));
+  assert.deepEqual(
+    readdirSync(evidence.root).filter((name) => name.endsWith(".tmp")),
+    [],
+  );
+});
+
+test("editor matrix cannot count a profile as passed before its real cleanup joins", async (t) => {
+  const evidence = profileFor(t);
+  const profile = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  /** @type {(() => void) | undefined} */
+  let admit;
+  const admitted = new Promise((resolve) => {
+    admit = () => resolve(undefined);
+  });
+  /** @type {(() => void) | undefined} */
+  let release;
+  const held = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const pending = runNativeHosts(
+    {
+      env: resultEnvironment,
+      resultsFile,
+      versions: ["1.100.0"],
+      modes: ["normal"],
+    },
+    {
+      download: async () => "/sdk/1.100.0",
+      createProfile: () => profile,
+      createSupervisor: async () => undefined,
+      command: async () => "",
+      cleanupProfile: async (owned) => {
+        assert.ok(admit);
+        admit();
+        await held;
+        cleanupHostProfile(owned);
+      },
+      report() {},
+    },
+  );
+  const result = await inspectParentAdmission(
+    pending,
+    admitted,
+    () => {
+      assert.ok(release);
+      release();
+    },
+    () => {
+      assert.ok(existsSync(profile.root));
+      assert.equal(readHostResults(resultsFile).profiles[0].status, "running");
+      assert.equal(readHostResults(resultsFile).status, "running");
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(existsSync(profile.root), false);
+  assert.equal(readHostResults(resultsFile).profiles[0].status, "passed");
+  assert.equal(readHostResults(resultsFile).status, "passed");
+});
+
+test("editor matrix preserves its first profile failure and leaves remaining cases unrun", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  const original = new Error("private profile failure details");
+  let calls = 0;
+  await assert.rejects(
+    runNativeHosts(
+      {
+        env: resultEnvironment,
+        resultsFile,
+        versions: hostVersions,
+        modes: ["normal", "navigation", "diagnostics"],
+      },
+      {
+        download: async () => "/sdk",
+        profile: async () => {
+          if (++calls === 2) throw original;
+        },
+      },
+    ),
+    (error) => error === original,
+  );
+  const result = readHostResults(resultsFile);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.failure, {
+    stage: "profile",
+    version: "1.100.0",
+    mode: "navigation",
+  });
+  assert.deepEqual(
+    result.profiles.map((entry) => entry.status),
+    ["passed", "failed", "not_run", "not_run", "not_run", "not_run"],
+  );
+  assert.equal(calls, 2);
+  assert.ok(!readFileSync(resultsFile, "utf8").includes(original.message));
+});
+
+test("editor matrix download failure preserves completed editor profiles and admits no later profile", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  const original = new Error("private download failure");
+  let calls = 0;
+  await assert.rejects(
+    runNativeHosts(
+      {
+        env: resultEnvironment,
+        resultsFile,
+        versions: hostVersions,
+        modes: ["normal"],
+      },
+      {
+        download: async (version) => {
+          if (version === "1.137.0") throw original;
+          return "/sdk";
+        },
+        profile: async () => {
+          calls++;
+        },
+      },
+    ),
+    (error) => error === original,
+  );
+  assert.equal(calls, 1);
+  const result = readHostResults(resultsFile);
+  assert.deepEqual(result.failure, { stage: "download", version: "1.137.0" });
+  assert.equal(result.status, "failed");
+  assert.deepEqual(
+    result.profiles.map((entry) => entry.status),
+    ["passed", "not_run"],
+  );
+});
+
+test("editor matrix reporting is opt-in and leaves the filesystem boundary unused by default", async () => {
+  let profiles = 0;
+  const unused = () =>
+    assert.fail("default execution cannot write a matrix result");
+  await runNativeHosts(
+    { versions: ["1.100.0"], modes: ["normal"] },
+    {
+      download: async () => "/sdk",
+      profile: async () => {
+        profiles++;
+      },
+      resultsIO: {
+        write: unused,
+        link: unused,
+        rename: unused,
+        remove: unused,
+      },
+    },
+  );
+  assert.equal(profiles, 1);
+});
+
+test("editor matrix initial publication preserves an existing file and removes its temporary", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  writeFileSync(resultsFile, "another owner's results\n");
+  await assert.rejects(
+    runNativeHosts(
+      { resultsFile },
+      {
+        download: async () =>
+          assert.fail("publication failure cannot admit a download"),
+        profile: async () =>
+          assert.fail("publication failure cannot admit a profile"),
+      },
+    ),
+    { code: "EEXIST" },
+  );
+  assert.equal(readFileSync(resultsFile, "utf8"), "another owner's results\n");
+  assert.deepEqual(
+    readdirSync(evidence.root).filter((name) => name.endsWith(".tmp")),
+    [],
+  );
+});
+
+test("editor matrix partial write failure removes unpublished bytes before any admission", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  const original = Object.assign(new Error("controlled partial result write"), {
+    code: "ENOSPC",
+  });
+  await assert.rejects(
+    runNativeHosts(
+      { resultsFile },
+      {
+        download: async () =>
+          assert.fail("write failure cannot admit a download"),
+        resultsIO: {
+          ...realResultsIO,
+          write: (filename, _bytes, options) => {
+            writeFileSync(filename, "partial result", options);
+            throw original;
+          },
+        },
+      },
+    ),
+    (error) => error === original,
+  );
+  assert.equal(existsSync(resultsFile), false);
+  assert.deepEqual(
+    readdirSync(evidence.root).filter((name) => name.endsWith(".tmp")),
+    [],
+  );
+});
+
+test("editor matrix failed-status publication preserves both original errors and the previous checkpoint", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  const primary = new Error("actual profile rejection");
+  const reporting = Object.assign(
+    new Error("controlled result publication failure"),
+    { code: "EACCES" },
+  );
+  await assert.rejects(
+    runNativeHosts(
+      { resultsFile, versions: ["1.100.0"], modes: ["normal", "navigation"] },
+      {
+        download: async () => "/sdk",
+        profile: async () => {
+          throw primary;
+        },
+        resultsIO: {
+          ...realResultsIO,
+          rename: (source, destination) => {
+            if (readHostResults(String(source)).status === "failed")
+              throw reporting;
+            renameSync(source, destination);
+          },
+        },
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.cause, primary);
+      assert.deepEqual(error.errors, [primary, reporting]);
+      return true;
+    },
+  );
+  const result = readHostResults(resultsFile);
+  assert.equal(result.status, "running");
+  assert.deepEqual(
+    result.profiles.map((entry) => entry.status),
+    ["running", "not_run"],
+  );
+  assert.deepEqual(
+    readdirSync(evidence.root).filter((name) => name.endsWith(".tmp")),
+    [],
+  );
+});
+
+test("editor matrix final publication failure cannot turn a successful profile into a passing invocation", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results.json");
+  const reporting = new Error("final result publication failed");
+  let completed = 0;
+  await assert.rejects(
+    runNativeHosts(
+      { resultsFile, versions: ["1.100.0"], modes: ["normal"] },
+      {
+        download: async () => "/sdk",
+        profile: async () => {
+          completed++;
+        },
+        resultsIO: {
+          ...realResultsIO,
+          rename: (source, destination) => {
+            if (readHostResults(String(source)).status === "passed")
+              throw reporting;
+            renameSync(source, destination);
+          },
+        },
+      },
+    ),
+    (error) => error === reporting,
+  );
+  assert.equal(completed, 1);
+  const result = readHostResults(resultsFile);
+  assert.equal(result.status, "running");
+  assert.equal(result.profiles[0].status, "passed");
+  assert.deepEqual(
+    readdirSync(evidence.root).filter((name) => name.endsWith(".tmp")),
+    [],
+  );
 });

@@ -48,6 +48,26 @@ Optional corpus, loader-semantic and performance qualification uses
 and reports are separate from routine CI. Historical qualification reports are
 not shipped here; do not treat missing reports as measured results.
 
+## CI job summaries
+
+Each job writes one result summary after its checks, including failed or
+cancelled runs. The final `CI required` summary reports the build, native and
+installed-package groups. Its matrix total describes configured coverage;
+each platform's acceptance summary supplies actual editor-profile results.
+
+Editor results come from atomic checkpoints outside the profile fixtures.
+A profile passes only after its work, process owners and cleanup have joined.
+Failed and unrun profiles remain visible. Missing, stale or malformed evidence
+cannot establish completed coverage. A successful editor step with invalid
+evidence fails the reporting step.
+
+The summaries link successful package and vulnerability artifact uploads and
+explain the Windows arm64 race and Alpine coverage limits. Full diagnostics,
+digests and provenance stay in logs and artifacts. If checkout or Node setup
+prevents the reporter from running, the terminal step writes an unavailable
+report instead of claiming that checks passed. Successful reporting also writes
+the same Markdown to the job log for inspection.
+
 ## Publication
 
 Agree the version and exact commit, validate that commit, and obtain explicit

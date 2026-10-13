@@ -14,20 +14,29 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out source
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - name: Set up Go
+        id: go_setup
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - name: Set up Node
+        id: node_setup
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: extension/.node-version
           cache: npm
           cache-dependency-path: extension/package-lock.json
-      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - name: Set up npm
+        id: npm_setup
+        run: npm install --global npm@11.19.0 --ignore-scripts
       - name: Check, build and package local artifacts
+        id: build_package
         env:
           STABLE: ${{ inputs.stable }}
         run: |
@@ -37,6 +46,7 @@ jobs:
             make build snapshot
           fi
       - name: Rebuild from the matching source with dependency downloads disabled
+        id: source_rebuild
         run: |
           mkdir -p "$RUNNER_TEMP/source-rebuild"
           tar -xzf dist/*_source.tar.gz -C "$RUNNER_TEMP/source-rebuild"
@@ -45,13 +55,16 @@ jobs:
           CGO_ENABLED=0 GOPROXY=off GOSUMDB=off go build -mod=vendor -buildvcs=false -trimpath -ldflags "-s -w -X main.version=$version" -o saltbox-lint .
           ./saltbox-lint --version
       - name: Retain required vulnerability scan evidence
+        id: vulnerability_upload
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vulnerability-evidence
           path: bin/vulnerability/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Upload release artifacts
+        id: release_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-artifacts
           path: |
@@ -62,6 +75,25 @@ jobs:
             dist/SOURCE.json
             dist/vsix-artifacts.json
           if-no-files-found: error
+      - name: Write job summary
+        id: summary
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          CI_SUMMARY_KIND: check
+          CI_SUMMARY_STEPS: ${{ toJSON(steps) }}
+          CI_SUMMARY_JOB_STATUS: ${{ job.status }}
+        run: &write-job-summary |
+          if command -v node >/dev/null && [[ -f tools/ci-summary.mjs ]]; then
+            node tools/ci-summary.mjs "$CI_SUMMARY_KIND"
+            printf '%s\n' '::group::Job summary'
+            cat "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '::endgroup::'
+          else
+            printf '%s\n\n%s\n' '## Job summary unavailable' \
+              'The reporting script or Node is unavailable. See the checkout and setup steps in this job.' >> "$GITHUB_STEP_SUMMARY"
+          fi
   native:
     name: Native checks (${{ matrix.target }})
     strategy:
@@ -90,63 +122,94 @@ jobs:
             race: true
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - name: Check out source
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        id: go_setup
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - name: Set up Node
+        id: node_setup
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: extension/.node-version
           cache: npm
           cache-dependency-path: extension/package-lock.json
-      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - name: Set up npm
+        id: npm_setup
+        run: npm install --global npm@11.19.0 --ignore-scripts
       - name: Verify native runner architecture
+        id: architecture
         env:
           PACKAGE_TARGET: ${{ matrix.target }}
         run: node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.PACKAGE_TARGET)"
       - name: Verify Windows development process launcher
+        id: windows_launcher
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Native Go checks require PowerShell 7 for the owned process launcher" }
       - name: Native Go tests
+        id: go_tests
         env:
           CGO_ENABLED: "0"
         run: node tools/go-check.mjs go test
       - name: Native patched Nuri tests
+        id: nuri_tests
         run: go -C third_party/nuri test . ./internal/grammar ./internal/tokenizer
       - name: Native Go race tests on supported targets
+        id: go_race
         if: matrix.race
         run: node tools/go-check.mjs go test -race
       - name: Native patched Nuri race tests on supported targets
+        id: nuri_race
         if: matrix.race
         run: go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
       - name: Native vet and lint
+        id: vet_lint
         shell: bash
         run: |
           node tools/go-check.mjs go vet
           node tools/go-check.mjs go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run
       - name: Install native extension dependencies
+        id: dependencies
         timeout-minutes: 5
         shell: bash
         run: npm --prefix extension ci --ignore-scripts
       - name: Build native extension
+        id: build
         timeout-minutes: 5
         shell: bash
         run: npm --prefix extension run build
       - name: Native extension unit tests
+        id: unit_tests
         timeout-minutes: 5
         shell: bash
         run: npm --prefix extension test
       - name: Native extension release tests
+        id: release_tests
         timeout-minutes: 10
         shell: bash
         run: npm --prefix extension run test:release
       - name: Check native extension formatting
+        id: format
         timeout-minutes: 5
         shell: bash
         run: npm --prefix extension run format:check
+      - name: Write job summary
+        id: summary
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          CI_SUMMARY_KIND: native
+          CI_SUMMARY_TARGET: ${{ matrix.target }}
+          CI_SUMMARY_STEPS: ${{ toJSON(steps) }}
+          CI_SUMMARY_JOB_STATUS: ${{ job.status }}
+        run: *write-job-summary
   acceptance:
     name: Packaged acceptance (${{ matrix.target }})
     needs: check
@@ -155,22 +218,33 @@ jobs:
       matrix: *native-targets
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - name: Check out source
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        id: go_setup
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - name: Set up Node
+        id: node_setup
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: extension/.node-version
           cache: npm
           cache-dependency-path: extension/package-lock.json
-      - run: npm install --global npm@11.19.0 --ignore-scripts
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - name: Set up npm
+        id: npm_setup
+        run: npm install --global npm@11.19.0 --ignore-scripts
+      - name: Download release artifacts
+        id: download_artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: release-artifacts
           path: dist
       - name: Packaged CLI tests and editor fixtures
+        id: package_tests
         env:
           PACKAGE_TARGET: ${{ matrix.target }}
         shell: bash
@@ -180,9 +254,13 @@ jobs:
           node extension/scripts/test-package.mjs "$PACKAGE_TARGET"
           npm --prefix extension run stage:test-fixture
       - name: Install editor host dependencies
+        id: editor_dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
       - name: Installed VSIX minimum/current editor acceptance
+        id: editor_tests
+        env:
+          SALTBOX_TEST_HOST_RESULTS_FILE: ${{ runner.temp }}/saltbox-editor-results.json
         working-directory: extension
         shell: bash
         run: |
@@ -192,6 +270,7 @@ jobs:
             node scripts/test-native-hosts.mjs
           fi
       - name: Native musl packaged binary acceptance
+        id: alpine
         if: runner.os == 'Linux'
         env:
           ALPINE_TARGET: ${{ matrix.alpine }}
@@ -202,16 +281,48 @@ jobs:
             node:24.20.0-alpine3.23@sha256:0388af2af070cd4736a1567cfed02469ba117848845b4165d87a333edb53d2ca \
             node /work/extension/scripts/test-binary.mjs \
             "/work/dist/package-test/$ALPINE_TARGET/saltbox-lint" "$version" "$ALPINE_TARGET"
+      - name: Write job summary
+        id: summary
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          CI_SUMMARY_KIND: acceptance
+          CI_SUMMARY_TARGET: ${{ matrix.target }}
+          CI_SUMMARY_STEPS: ${{ toJSON(steps) }}
+          CI_SUMMARY_JOB_STATUS: ${{ job.status }}
+          CI_SUMMARY_HOST_RESULTS: ${{ runner.temp }}/saltbox-editor-results.json
+        run: *write-job-summary
   required:
     name: CI required
     if: always()
     needs: [check, native, acceptance]
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out source
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Node
+        id: node_setup
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: extension/.node-version
       - name: Require every build and acceptance job to succeed
+        id: gate
         env:
           CHECK_RESULT: ${{ needs.check.result }}
           NATIVE_RESULT: ${{ needs.native.result }}
           ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
         run: |
           [[ "$CHECK_RESULT" == success && "$NATIVE_RESULT" == success && "$ACCEPTANCE_RESULT" == success ]]
+      - name: Write job summary
+        id: summary
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          CI_SUMMARY_KIND: required
+          CI_SUMMARY_STEPS: ${{ toJSON(steps) }}
+          CI_SUMMARY_NEEDS: ${{ toJSON(needs) }}
+          CI_SUMMARY_JOB_STATUS: ${{ job.status }}
+        run: *write-job-summary

@@ -219,8 +219,9 @@ They do not replace a required CI profile.
 The current driver separates normal activation, navigation, templates, help,
 editing and diagnostics into fresh profiles. It also separates installed
 `live-checking` functional behavior from `live-performance` native component
-qualification. [`native-hosts.mjs`](../extension/scripts/native-hosts.mjs) owns
-the required version/profile matrix. [`host-profile.ts`](../extension/test/host/host-profile.ts)
+qualification. [`host-matrix.mjs`](../extension/scripts/host-matrix.mjs) owns
+the required version/profile matrix, shared by the driver and CI summaries.
+[`host-profile.ts`](../extension/test/host/host-profile.ts)
 validates controller profile names. Each profile has named Mocha cases through
 [`host-suite.ts`](../extension/test/support/host-suite.ts), awaited ownership and
 an external process supervisor. The launcher checks every owned group before
@@ -468,9 +469,10 @@ The wider editor batches use the same boundaries:
 
 The ordinary build runs strict TypeScript checks for all extension source and
 TypeScript tests, plus [`tsconfig.helpers.json`](../extension/tsconfig.helpers.json)
-for thirty JavaScript roots: twelve build/host/ownership scripts, seven
+for thirty-three JavaScript roots: thirteen build/host/ownership scripts, eight
 driver/gate tests, eight executable fixtures, the shared vulnerability-test
-driver, the pinned Go-tool installer and its owned output reporter. Each
+driver, the pinned Go-tool installer, its owned output reporter and the CI
+summary renderer. Each
 selected JavaScript root uses `@ts-check`. Typed ESLint applies the same
 floating-promise, misused-promise and awaited-value rules to these roots. The
 negative gate tests check the actual compiler and lint selectors, including every selected root,
