@@ -64,6 +64,13 @@ contracts.
 | Editor integration | [`test/host`](../extension/test/host), [`test-host.mjs`](../extension/scripts/test-host.mjs) | Current-generation diagnostics, returned provider result, saved/edit event or exact fixture readiness acknowledgement | The case owns documents, settings, providers and operations. The external launcher owns the editor and run directories, including crash cleanup. |
 | Installed package acceptance | [`test-native-hosts.mjs`](../extension/scripts/test-native-hosts.mjs), [`test-package.mjs`](../extension/scripts/test-package.mjs), [`test-binary.mjs`](../extension/scripts/test-binary.mjs) | Verified installed product path/version/backend, successful user flow and cleanup result | The launcher owns isolated installation profiles and processes. The package verifier owns extracted archives. |
 
+Command tests clear inherited `GITHUB_STEP_SUMMARY` in their `TestMain` so
+synthetic GitHub-format findings cannot append to the runner's real summary.
+Tests of summary behavior set private destinations with `t.Setenv`. A subprocess
+regression exercises the rendering tests and summary controls with an outer
+sentinel file and verifies that its bytes remain unchanged. Keep production
+GitHub summary output enabled for actual CLI invocations.
+
 Every owner registers cleanup immediately after acquiring a resource. Cleanup
 stops new work, cancels producers, joins admitted operations, restores state and
 checks that its resources are gone. Use a separate bounded cleanup scope. An
