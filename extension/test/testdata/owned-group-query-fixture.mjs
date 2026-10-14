@@ -1,6 +1,30 @@
 // @ts-check
 const [mode, group] = process.argv.slice(2);
 switch (mode) {
+  case "linux-partial":
+    process.stdout.write(`${group} ${process.pid} ${process.pid} 2 Z\n`);
+    break;
+  case "linux-zombie":
+    process.stdout.write(`${group} ${process.pid} ${process.pid} 1 Z\n`);
+    break;
+  case "linux-absent":
+    process.stdout.write(
+      `${Number(group) + 1} ${process.pid} ${process.pid} 1 S\n`,
+    );
+    break;
+  case "linux-malformed":
+    process.stdout.write(
+      `${group} ${process.pid} ${process.pid} 2 Z\ninvalid\n`,
+    );
+    break;
+  case "linux-duplicate":
+    process.stdout.write(
+      `${group} ${process.pid} ${process.pid} 2 Z\n${group} ${process.pid} ${process.pid} 2 Z\n`,
+    );
+    break;
+  case "linux-no-newline":
+    process.stdout.write(`${group} ${process.pid} ${process.pid} 2 Z`);
+    break;
   case "live":
   case "zombie":
     process.stdout.write(

@@ -119,7 +119,18 @@ monotonic clock. Reporting or clock failures remain final failures after owned
 acquisition, joining and restoration finish, with unavailable timing explicit.
 
 Read-only group probes keep their one-second deadline and four-MiB output bound.
-Linux checks every advertised thread. Darwin selects only the owned group with
+Linux checks every advertised thread. Its `ps` output reads task files
+separately while threads can exit. A valid owned snapshot with incomplete thread
+coverage, a missing leader or changing thread counts returns `true`: the group
+has live members or their absence is not yet proved. Existing bounded owner
+polling continues. `false` requires complete all-zombie owned coverage or a
+completed, valid global query with no owned members. Malformed rows, duplicate
+threads, invalid identities, missing final newlines and native query failures
+remain errors; owners do not retry those errors. See the
+[procps task enumeration](https://gitlab.com/procps-ng/procps/-/blob/v4.0.4/library/readproc.c)
+and [Linux per-task stat reads](https://github.com/torvalds/linux/blob/v6.8/fs/proc/array.c).
+
+Darwin selects only the owned group with
 `ps -g PGID -x -o pgid=,pid=,state=` and a private `COMMAND_MODE=unix2003`
 environment, preserving non-terminal members and avoiding legacy selector
 semantics. Accept an empty Darwin selection only after the probe closes with
@@ -133,12 +144,18 @@ Production process cleanup and development command owners share
 [`native-group.ts`](../extension/src/native-group.ts). The development
 [`owned-group.mjs`](../extension/scripts/owned-group.mjs) facade preserves its
 existing interface; copied-source fixtures include the shared implementation.
-A Darwin exit-phase `EPERM` is recoverable only after a fresh, independent
-bounded observation proves that the group has no live members and the child,
-stdio and observation have joined. Earlier kill faults, live or unknown groups,
-query failures and other error codes remain failures. Preserve both the original
-operation and cleanup errors, with bounded phase/target/code/errno/syscall
-metadata visible in failure reporting. See Apple's
+A Darwin `EPERM` during exit cleanup, or cancellation after native exit was
+already observed at the failed signal, is recoverable only after a fresh,
+independent bounded observation proves no live group members and the child,
+stdio and observation have joined. Record native exit state at the first failed
+signal and preserve its trigger phase; a later exit cannot qualify an earlier
+fault. All other trigger phases, cancellation without that recorded exit proof,
+live or unknown groups, query failures and other error codes remain failures.
+Preserve both original operation and cleanup errors. Bounded metadata includes
+trigger phase, recorded native exit state, target, code, errno and syscall. Node sets
+[`exitCode`](https://nodejs.org/download/release/v24.18.1/docs/api/child_process.html#subprocessexitcode)
+and [`signalCode`](https://nodejs.org/download/release/v24.18.1/docs/api/child_process.html#subprocesssignalcode)
+before exit listeners run; stream closure is joined separately. See Apple's
 [group signalling implementation](https://github.com/apple-oss-distributions/xnu/blob/43a90889846e00bfb5cf1d255cdc0a701a1e05a4/bsd/kern/kern_sig.c#L1608-L1617).
 
 `EditorIntegration.join()` owns complete background rendering/synchronization,

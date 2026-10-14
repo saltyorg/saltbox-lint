@@ -46,6 +46,7 @@ export interface ProcessAdapters {
   groupHasLiveMembers?(group: number, signal?: AbortSignal): Promise<boolean>;
 }
 interface TerminationObservation extends ProcessTerminationContext {
+  nativeExitObserved: boolean;
   code: string | number | null;
   errno: string | number | null;
   syscall: string | null;
@@ -53,9 +54,11 @@ interface TerminationObservation extends ProcessTerminationContext {
 function terminationObservation(
   context: Readonly<ProcessTerminationContext>,
   error: unknown,
+  nativeExitObserved: boolean,
 ): TerminationObservation {
   const observation: TerminationObservation = {
     ...context,
+    nativeExitObserved,
     code: null,
     errno: null,
     syscall: null,
@@ -270,6 +273,14 @@ function runOwnedProcess(
       };
       const killTree = (phase: ProcessTerminationPhase) => {
         if (!child.pid) return;
+        // Exit fields are set before Node emits exit. Keep the state from this
+        // attempt: a later exit cannot qualify an earlier denied live abort.
+        const nativeExitObserved =
+          (typeof child.exitCode === "number" &&
+            Number.isFinite(child.exitCode) &&
+            Number.isInteger(child.exitCode) &&
+            child.exitCode >= 0) ||
+          (typeof child.signalCode === "string" && child.signalCode.length > 0);
         const context: Readonly<ProcessTerminationContext> = Object.freeze({
           phase,
           target: -child.pid,
@@ -287,7 +298,11 @@ function runOwnedProcess(
           ) {
             terminationFailed = true;
             terminationFailure = error;
-            terminationDetails = terminationObservation(context, error);
+            terminationDetails = terminationObservation(
+              context,
+              error,
+              nativeExitObserved,
+            );
           }
         }
       };
@@ -382,10 +397,15 @@ function runOwnedProcess(
           else resolve(outputText);
         };
         // Darwin can deny a redundant signal after the child has already exited.
-        // Only that exit-phase fault can be qualified by a fresh, joined query.
+        // A cancellation after native exit can precede our exit listener too.
+        // Require the fact at the failed attempt, closure and a fresh query.
         if (
           !terminationFailed ||
-          terminationDetails?.phase !== "exit" ||
+          !(
+            terminationDetails?.phase === "exit" ||
+            (terminationDetails?.phase === "abort" &&
+              terminationDetails.nativeExitObserved)
+          ) ||
           terminationDetails.code !== "EPERM" ||
           (adapters.platform ?? process.platform) !== "darwin"
         ) {

@@ -297,18 +297,22 @@ async function awaitTermination(
   pid: number,
   timeoutMs = terminationTimeoutMs,
   observe: (pid: number, remainingMs: number) => Promise<string> = processState,
+  timing: {
+    now: () => number;
+    wait: (milliseconds: number) => Promise<void>;
+  } = { now: () => performance.now(), wait: delay },
 ): Promise<void> {
-  const deadline = performance.now() + timeoutMs;
+  const deadline = timing.now() + timeoutMs;
   let state = "unobserved";
   for (;;) {
-    const remaining = deadline - performance.now();
+    const remaining = deadline - timing.now();
     assert.ok(
       remaining > 0,
       `Process ${pid} survived ${timeoutMs}ms termination deadline; last state: ${state}`,
     );
     state = await observe(pid, remaining);
     if (state === "absent" || state === "Z") return;
-    await delay(Math.min(10, Math.max(0, deadline - performance.now())));
+    await timing.wait(Math.min(10, Math.max(0, deadline - timing.now())));
   }
 }
 interface FixtureIds {
@@ -980,6 +984,8 @@ test(
           assert.ok(error.message.includes(`"code":"${f.fault.code}"`));
           assert.match(error.message, /"errno":-1/);
           assert.match(error.message, /"syscall":"kill"/);
+          if (options.phase === "abort")
+            assert.match(error.message, /"nativeExitObserved":false/);
           return true;
         });
         assert.equal(f.querySignals.length, 0);
@@ -1053,25 +1059,339 @@ test(
   },
 );
 test(
+  "Darwin cancellation after observed native exit qualifies only joined group absence",
+  { skip: process.platform === "win32" },
+  async () => {
+    const fault = Object.assign(new Error("denied post-exit cancellation"), {
+      code: "EPERM",
+      errno: -1,
+      syscall: "kill",
+    });
+    let fixture: Awaited<ReturnType<typeof startFixture>> | undefined;
+    let nativeExit:
+      { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    let nativeClosed = false;
+    let stdoutClosed = false;
+    let stderrClosed = false;
+    let queried = 0;
+    const kills: Readonly<ProcessTerminationContext>[] = [];
+    await withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
+      const owned = await startFixture(
+        "exit",
+        {
+          platform: "darwin",
+          spawn(file, args, options) {
+            const child = spawn(file, args, options);
+            child.stdout?.once("close", () => {
+              stdoutClosed = true;
+            });
+            child.stderr?.once("close", () => {
+              stderrClosed = true;
+            });
+            // Node sets the public exit fields before emitting this event.
+            // This listener precedes the producer's own exit sweep.
+            child.once("exit", () => {
+              nativeExit = { code: child.exitCode, signal: child.signalCode };
+              fixture?.abort.abort();
+            });
+            return child;
+          },
+          killGroup(context) {
+            kills.push(context);
+            if (context.phase === "abort") throw fault;
+            process.kill(context.target, context.signal);
+          },
+          async groupHasLiveMembers(group, signal) {
+            queried++;
+            assert.equal(nativeClosed && stdoutClosed && stderrClosed, true);
+            assert.ok(signal && !signal.aborted);
+            assert.ok(fixture);
+            const ids = await fixture.ids();
+            assert.equal(group, ids.parent);
+            await fixture.awaitTermination(ids.descendant);
+            return groupHasLiveMembers(group, signal);
+          },
+        },
+        {
+          closed() {
+            nativeClosed = true;
+          },
+        },
+      );
+      fixture = owned;
+      resources.defer("post-exit cancellation native fixture", () =>
+        owned.cleanup(),
+      );
+      const ids = await owned.ids();
+      await assert.rejects(owned.pending, (error: unknown) => {
+        assert.deepEqual(nativeExit, { code: 0, signal: null });
+        assert.equal(nativeClosed && stdoutClosed && stderrClosed, true);
+        assert.equal(canceledWithoutCleanupFailure(error), true);
+        assert.equal(queried, 1, "native absence is observed after closure");
+        return true;
+      });
+      assert.equal(owned.abort.signal.aborted, true);
+      assert.deepEqual(
+        kills.map(({ phase }) => phase),
+        ["abort", "exit"],
+      );
+      assert.ok(kills.every(({ target }) => target === -ids.parent));
+      await owned.awaitTermination(ids.parent);
+      await owned.awaitTermination(ids.descendant);
+    });
+  },
+);
+
+test(
+  "Darwin cancellation after observed native exit retains live or failed observations",
+  { skip: process.platform === "win32" },
+  async () => {
+    for (const mode of ["live", "query-error", "unknown", "aborted"] as const) {
+      const fault = Object.assign(
+        new Error(`denied post-exit ${mode} cleanup`),
+        {
+          code: "EPERM",
+          errno: -1,
+          syscall: "kill",
+        },
+      );
+      const queryFault = Object.assign(
+        new Error("independent group query failed"),
+        { code: "EIO" },
+      );
+      let fixture: Awaited<ReturnType<typeof startFixture>> | undefined;
+      let nativeClosed = false;
+      let nativeExit:
+        { code: number | null; signal: NodeJS.Signals | null } | undefined;
+      let observed = 0;
+      let queryJoined = false;
+      let queryAbortReason: unknown;
+      const kills: Readonly<ProcessTerminationContext>[] = [];
+      await withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
+        const owned = await startFixture(
+          "exit",
+          {
+            platform: "darwin",
+            spawn(file, args, options) {
+              const child = spawn(file, args, options);
+              child.once("exit", () => {
+                nativeExit = { code: child.exitCode, signal: child.signalCode };
+                fixture?.abort.abort();
+              });
+              return child;
+            },
+            killGroup(context) {
+              kills.push(context);
+              if (
+                context.phase === "abort" ||
+                (mode === "live" && context.phase === "exit")
+              )
+                throw fault;
+              process.kill(context.target, context.signal);
+            },
+            async groupHasLiveMembers(group, signal) {
+              observed++;
+              assert.equal(
+                nativeClosed,
+                true,
+                "native close precedes observation",
+              );
+              assert.ok(signal && !signal.aborted);
+              assert.ok(fixture);
+              assert.equal(group, (await fixture.ids()).parent);
+              try {
+                if (mode === "live")
+                  return await groupHasLiveMembers(group, signal);
+                if (mode === "query-error") throw queryFault;
+                if (mode === "unknown") {
+                  // Deliberately violate the typed boundary to exercise its
+                  // runtime guard; an unqualified result cannot prove absence.
+                  return undefined as unknown as boolean;
+                }
+                await new Promise<void>((resolve) => {
+                  signal.addEventListener("abort", () => resolve(), {
+                    once: true,
+                  });
+                });
+                queryAbortReason = signal.reason;
+                signal.throwIfAborted();
+                throw new Error("Cleanup query resumed without cancellation");
+              } finally {
+                queryJoined = true;
+              }
+            },
+          },
+          {
+            closed() {
+              nativeClosed = true;
+            },
+          },
+        );
+        fixture = owned;
+        resources.defer("post-exit denied native fixture", () =>
+          owned.cleanup(),
+        );
+        // A deliberately denied exit sweep leaves a real descendant alive.
+        // Register its independent release before checking the failed result.
+        resources.defer("surviving denied native group", async () => {
+          if (mode !== "live") return;
+          const ids = await owned.ids();
+          const state = await owned.state(ids.descendant);
+          if (state === "absent" || state === "Z") return;
+          if (process.platform === "linux") {
+            const argv = await readFile(
+              `/proc/${ids.descendant}/cmdline`,
+              "utf8",
+            );
+            assert.ok(
+              argv.split("\0").includes(owned.filename),
+              "live descendant retains its private identity",
+            );
+          }
+          process.kill(-ids.parent, "SIGKILL");
+          await owned.awaitTermination(ids.descendant);
+        });
+        const ids = await owned.ids();
+        await assert.rejects(owned.pending, (error: unknown) => {
+          assert.ok(error instanceof AggregateError);
+          assert.ok(error.cause instanceof Error);
+          assert.equal(error.cause.message, "Canceled");
+          assert.equal(error.errors[1], fault);
+          assert.match(error.message, /"phase":"abort"/);
+          assert.match(error.message, /"nativeExitObserved":true/);
+          assert.equal(
+            observed,
+            1,
+            `${mode} receives its independent observation`,
+          );
+          assert.equal(
+            queryJoined,
+            true,
+            `${mode} query settles before the caller`,
+          );
+          assert.deepEqual(nativeExit, { code: 0, signal: null });
+          assert.equal(nativeClosed, true);
+          if (mode === "live") assert.equal(error.errors.length, 2);
+          else {
+            assert.equal(error.errors.length, 3);
+            if (mode === "query-error")
+              assert.equal(error.errors[2], queryFault);
+            else {
+              assert.ok(error.errors[2] instanceof Error);
+              assert.match(
+                error.errors[2].message,
+                mode === "unknown" ? /Unqualified/ : /timed out/,
+              );
+              if (mode === "aborted")
+                assert.equal(error.errors[2], queryAbortReason);
+            }
+          }
+          return true;
+        });
+        assert.deepEqual(
+          kills.map(({ phase }) => phase),
+          ["abort", "exit"],
+        );
+        assert.ok(kills.every(({ target }) => target === -ids.parent));
+        if (mode === "live")
+          assert.equal(await groupHasLiveMembers(ids.parent), true);
+      });
+    }
+  },
+);
+
+test(
   "POSIX termination observer rejects a surviving fixture and cleans up after failure",
   { skip: process.platform === "win32" },
   async () => {
-    const fixture = await startFixture("live");
+    let fixture: Awaited<ReturnType<typeof startFixture>> | undefined;
     let ids: FixtureIds | undefined;
-    await assert.rejects(async () => {
-      try {
-        ids = await fixture.ids();
-        await fixture.awaitTermination(ids.descendant, 30);
-      } finally {
-        await fixture.cleanup();
-      }
-    }, /survived 30ms termination deadline; last state:/);
-    // Check both identities after the deliberate observation failure and cleanup.
+    let elapsed = 0;
+    const samples: { pid: number; remainingMs: number; state: string }[] = [];
+    await assert.rejects(
+      withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
+        const owned = await startFixture("live");
+        fixture = owned;
+        resources.defer("surviving native fixture cleanup", () =>
+          owned.cleanup(),
+        );
+        ids = await owned.ids();
+        await awaitTermination(
+          ids.descendant,
+          30,
+          async (pid, remainingMs) => {
+            // The deliberate logical deadline must not time out native ps.
+            // Each state still uses the fixture's independent query budget.
+            const state = await owned.state(pid);
+            samples.push({ pid, remainingMs, state });
+            return state;
+          },
+          {
+            now: () => elapsed,
+            wait: async (milliseconds) => {
+              elapsed += milliseconds;
+            },
+          },
+        );
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.errors.length, 1, "native cleanup must also pass");
+        assert.equal(error.cause, error.errors[0]);
+        assert.ok(error.cause instanceof Error);
+        assert.match(
+          error.cause.message,
+          /survived 30ms termination deadline; last state:/,
+        );
+        return true;
+      },
+    );
+    assert.equal(elapsed, 30, "logical time reaches the survivor deadline");
     assert.ok(ids);
+    const ownedIds = ids;
+    assert.deepEqual(
+      samples.map(({ pid, remainingMs }) => ({ pid, remainingMs })),
+      [30, 20, 10].map((remainingMs) => ({
+        pid: ownedIds.descendant,
+        remainingMs,
+      })),
+    );
+    assert.ok(samples.every(({ state }) => !["absent", "Z"].includes(state)));
+    // Check both identities after the deliberate observation failure and cleanup.
+    assert.ok(fixture);
     await fixture.awaitTermination(ids.parent);
     await fixture.awaitTermination(ids.descendant);
   },
 );
+
+test("termination observer retains independent query and identity errors", async () => {
+  for (const failure of [
+    new Error("native identity query failed"),
+    new Error("native fixture identity changed"),
+  ]) {
+    let observed = 0;
+    let waited = false;
+    await assert.rejects(
+      awaitTermination(
+        1200,
+        30,
+        async () => {
+          observed++;
+          throw failure;
+        },
+        {
+          now: () => 0,
+          wait: async () => {
+            waited = true;
+          },
+        },
+      ),
+      (error: unknown) => error === failure,
+    );
+    assert.equal(observed, 1, "query failure stops observation admission");
+    assert.equal(waited, false, "query failure cannot become a survival poll");
+  }
+});
 
 test(
   "native stderr, nonzero exit and setup errors survive denied group cleanup",

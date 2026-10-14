@@ -36,6 +36,7 @@ export interface GroupQueryObservation {
   stderrBytes: number;
 }
 
+/** False proves no live members; true also covers incomplete Linux observations. */
 export function liveGroupMembers(
   snapshot: string,
   group: number,
@@ -76,8 +77,10 @@ export function liveGroupMembers(
         member = { count, threads: new Set() };
         members.set(pid, member);
       }
-      if (member.count !== count || member.threads.has(tid))
+      if (member.threads.has(tid))
         throw new Error("Inconsistent process group thread snapshot");
+      // ps enumerates tasks and reads each stat separately while threads exit.
+      if (member.count !== count) live = true;
       member.threads.add(tid);
       if (match[5] !== "Z") live = true;
     } else {
@@ -93,7 +96,7 @@ export function liveGroupMembers(
   if (platform === "linux") {
     for (const [pid, member] of members) {
       if (member.threads.size !== member.count || !member.threads.has(pid))
-        throw new Error("Incomplete process group thread snapshot");
+        live = true;
     }
   }
   return live;

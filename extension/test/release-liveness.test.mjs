@@ -15,6 +15,8 @@ import { probeFixtureLifetime as probe } from "./support/fixture-lifetime.ts";
 import { withTestResources } from "./support/test-resources.ts";
 import { ownJoinedResource } from "./support/host-resources.ts";
 import { stageBinary } from "../scripts/stage-binary.mjs";
+import { createHostProcessSupervisor } from "../scripts/host-process-supervisor.mjs";
+import { reserveProcess } from "../src/process-reservation.ts";
 import {
   groupHasLiveMembers,
   liveGroupMembers,
@@ -45,12 +47,14 @@ const groupQueryFixture = fileURLToPath(
  * The platform adapter exercises Darwin contracts on every source-test target;
  * the existing retained-zombie case still exercises that target's actual ps.
  * @template T
- * @param {string} mode
+ * @param {string | readonly string[]} mode
  * @param {(fixture: GroupQueryFixture) => Promise<T>} body
- * @param {{earlyError?: QueryError, abortOnSpawn?: AbortController, missingExecutable?: boolean}} [control]
+ * @param {{earlyError?: QueryError, abortOnSpawn?: AbortController, missingExecutable?: boolean, platform?: NodeJS.Platform}} [control]
  */
 async function withGroupQuery(mode, body, control = {}) {
   return withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
+    const modes = typeof mode === "string" ? [mode] : mode;
+    assert.ok(modes.length > 0);
     /** @type {QueryRequest[]} */
     const requests = [];
     /** @type {import("node:child_process").ChildProcess[]} */
@@ -77,15 +81,20 @@ async function withGroupQuery(mode, body, control = {}) {
     });
     /** @type {QueryDependencies} */
     const dependencies = {
-      platform: "darwin",
+      platform: control.platform ?? "darwin",
       execFile(file, args, options, callback) {
+        const mode = modes[Math.min(requests.length, modes.length - 1)];
         requests.push({ file, args: [...args], options });
         let delivered = false;
         const child = execFile(
           control.missingExecutable
             ? `${groupQueryFixture}.missing-executable`
             : process.execPath,
-          [groupQueryFixture, mode, args[1]],
+          [
+            groupQueryFixture,
+            mode,
+            control.platform === "linux" ? "123" : args[1],
+          ],
           options,
           (error, stdout, stderr) => {
             results.push({ error, stdout, stderr });
@@ -516,7 +525,7 @@ test("POSIX observer retains a live worker after its main thread exits", async (
   }
 });
 
-test("group snapshots require complete Linux threads and supported Darwin states", () => {
+test("group snapshots prove complete Linux zombie coverage and support Darwin states", () => {
   assert.equal(
     liveGroupMembers("123 123 123 1 Z\n456 456 456 1 S\n", 123, "linux"),
     false,
@@ -536,7 +545,25 @@ test("group snapshots require complete Linux threads and supported Darwin states
     "123 123 123 2 Z\n",
     "123 123 124 1 Z\n",
     "123 123 123 2 Z\n123 123 124 1 Z\n",
+    "123 123 123 1 Z\n123 123 124 1 Z\n",
+    "123 123 123 2 Z\n456 456 456 1 S\n",
+    "123 123 123 1 Z\n123 124 125 1 Z\n",
+  ])
+    assert.equal(
+      liveGroupMembers(snapshot, 123, "linux"),
+      true,
+      "valid incomplete owned thread coverage cannot prove disappearance",
+    );
+  assert.equal(
+    liveGroupMembers("123 123 123 2 Z\n123 123 124 2 Z\n", 123, "linux"),
+    false,
+    "every advertised owned thread is present and defunct",
+  );
+  for (const snapshot of [
     "123 123 123 2 Z\n123 123 123 2 Z\n",
+    "123 123 123 1 S\n123 123 123 2 Z\n",
+    "123 123 123 2 Z\nmalformed\n",
+    "123 123 123 1 S\nmalformed\n",
     "123 123 123 0 Z\n",
     "123 0 0 1 Z\n",
     "123 9007199254740992 123 1 Z\n",
@@ -610,6 +637,176 @@ test("group snapshots require complete Linux threads and supported Darwin states
     () => liveGroupMembers("123 Z\n", 123, "freebsd"),
     /requires Linux or Darwin/,
   );
+});
+
+for (const final of ["linux-zombie", "linux-absent"]) {
+  test(`Linux supervisor waits for ${final} proof after partial zombie coverage`, async () => {
+    await withGroupQuery(
+      ["linux-partial", final],
+      async (f) => {
+        /** @type {boolean[]} */
+        const observations = [];
+        const supervisor = await createHostProcessSupervisor({
+          platform: "linux",
+          async observeGroup(group, signal) {
+            assert.equal(group, 123);
+            const value = await groupHasLiveMembers(
+              group,
+              signal,
+              f.dependencies,
+            );
+            assert.equal(f.closes.length, f.requests.length);
+            observations.push(value);
+            return value;
+          },
+        });
+        assert.ok(supervisor);
+        try {
+          const owner = await reserveProcess(
+            supervisor.environment,
+            new AbortController().signal,
+          );
+          await owner.completeJoinedChild(123);
+          const result = await supervisor.finish();
+          assert.equal(result.released, true);
+          assert.deepEqual(observations, [true, false]);
+          assert.equal(f.requests.length, 2);
+          assert.deepEqual(f.closes, [
+            { code: 0, signal: null },
+            { code: 0, signal: null },
+          ]);
+          for (const request of f.requests) {
+            assert.equal(request.file, "/bin/ps");
+            assert.deepEqual(request.args, [
+              "-A",
+              "-L",
+              "-o",
+              "pgid=,pid=,lwp=,nlwp=,s=",
+            ]);
+            assert.equal(request.options.timeout, 1000);
+            assert.equal(request.options.maxBuffer, 4 * 1024 * 1024);
+          }
+        } finally {
+          await supervisor.finish().catch(() => {});
+        }
+      },
+      { platform: "linux" },
+    );
+  });
+}
+
+test("Linux supervisor retains permanently partial groups until its cleanup deadline", async () => {
+  await withGroupQuery(
+    "linux-partial",
+    async (f) => {
+      let partial = 0;
+      /** @type {AbortSignal | undefined} */
+      let cleanupSignal;
+      const supervisor = await createHostProcessSupervisor({
+        platform: "linux",
+        cleanupTimeoutMs: 3000,
+        async observeGroup(group, signal) {
+          cleanupSignal = signal;
+          const value = await groupHasLiveMembers(
+            group,
+            signal,
+            f.dependencies,
+          );
+          assert.equal(value, true, "partial coverage never proves release");
+          partial++;
+          return value;
+        },
+      });
+      assert.ok(supervisor);
+      try {
+        const owner = await reserveProcess(
+          supervisor.environment,
+          new AbortController().signal,
+        );
+        await owner.completeJoinedChild(123);
+        await assert.rejects(supervisor.finish());
+        assert.ok(
+          partial > 0,
+          "the real query observed partial zombie coverage",
+        );
+        assert.ok(cleanupSignal);
+        assert.equal(cleanupSignal.aborted, true);
+        assert.ok(
+          cleanupSignal.reason instanceof Error &&
+            cleanupSignal.reason.message.includes("cleanup exceeded 3000ms"),
+        );
+        assert.equal(f.closes.length, f.requests.length);
+        assert.ok(
+          f.children.every(
+            (child) => child.exitCode !== null || child.signalCode !== null,
+          ),
+          "all admitted native queries joined before failure",
+        );
+      } finally {
+        await supervisor.finish().catch(() => {});
+      }
+    },
+    { platform: "linux" },
+  );
+});
+
+test("Linux supervisor keeps query errors terminal after an incomplete observation", async () => {
+  for (const mode of [
+    "linux-malformed",
+    "linux-duplicate",
+    "linux-no-newline",
+    "stderr",
+    "other-exit",
+    "empty",
+  ]) {
+    await withGroupQuery(
+      ["linux-partial", mode],
+      async (f) => {
+        /** @type {boolean[]} */
+        const observations = [];
+        /** @type {unknown} */
+        let original;
+        const supervisor = await createHostProcessSupervisor({
+          platform: "linux",
+          async observeGroup(group, signal) {
+            try {
+              const value = await groupHasLiveMembers(
+                group,
+                signal,
+                f.dependencies,
+              );
+              observations.push(value);
+              return value;
+            } catch (error) {
+              original = error;
+              throw error;
+            }
+          },
+        });
+        assert.ok(supervisor);
+        try {
+          const owner = await reserveProcess(
+            supervisor.environment,
+            new AbortController().signal,
+          );
+          await owner.completeJoinedChild(123);
+          await assert.rejects(supervisor.finish(), (error) => {
+            assert.equal(error, original, "retain the exact failed query");
+            assert.ok(error instanceof Error);
+            assert.match(error.message, /Owned process group query failed/);
+            return true;
+          });
+          assert.deepEqual(observations, [true]);
+          assert.equal(f.requests.length, 2, `${mode} is not retried`);
+          assert.equal(f.closes.length, 2);
+          assert.equal(f.results.length, 2);
+        } finally {
+          await supervisor.finish().catch(() => {});
+        }
+      },
+      { platform: "linux" },
+    );
+  }
 });
 
 test("Darwin process query selects only its owned group in a private Unix 2003 environment", async () => {

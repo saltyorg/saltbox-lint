@@ -60,9 +60,10 @@ control = await runPosixGuardian({
   stopCurrentGroup(reason) {
     if (refusing && reason === "stop") {
       writeFileSync(
-        filename + ".refused",
+        filename + ".refused.tmp",
         JSON.stringify({ pid: process.pid, token, refusals: ++refusals }),
       );
+      renameSync(filename + ".refused.tmp", filename + ".refused");
       throw Object.assign(new Error("kill EPERM control"), {
         code: "EPERM",
         syscall: "kill",
