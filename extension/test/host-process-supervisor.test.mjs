@@ -36,13 +36,53 @@ async function supervisorFor(t, options = {}) {
   return supervisor;
 }
 
-/** @param {import('node:test').TestContext} t @param {import('../scripts/host-process-supervisor.mjs').HostProcessSupervisor} supervisor */
-async function socketFor(t, supervisor) {
+/** @param {import('node:net').Socket} socket */
+function socketLifetime(socket) {
+  /** @type {Error[]} */
+  const errors = [];
+  /** @param {Error} error */
+  const observeError = (error) => errors.push(error);
+  socket.on("error", observeError);
+  // events.once rejects on error; that is not proof of socket closure.
+  const closed = /** @type {Promise<void>} */ (
+    new Promise((resolve) => {
+      socket.once("close", () => {
+        socket.removeListener("error", observeError);
+        resolve();
+      });
+    })
+  );
+  return {
+    closed,
+    errors,
+    /** @param {boolean} [allowReset] */
+    async join(allowReset = false) {
+      await closed;
+      const unexpected = errors.filter(
+        (error) =>
+          !allowReset || !("code" in error) || error.code !== "ECONNRESET",
+      );
+      if (unexpected.length === 1) throw unexpected[0];
+      if (unexpected.length > 1)
+        throw new AggregateError(unexpected, "ownership socket failed");
+    },
+  };
+}
+
+/**
+ * @param {import('node:test').TestContext} t
+ * @param {Pick<import('../scripts/host-process-supervisor.mjs').HostProcessSupervisor, 'environment'>} supervisor
+ * @param {boolean} [allowReset]
+ */
+async function socketFor(t, supervisor, allowReset = false) {
   const configuration = JSON.parse(supervisor.environment);
   const [host, port] = configuration.address.split(":");
   const socket = connect({ host, port: Number(port) });
-  const closed = once(socket, "close");
-  await once(socket, "connect");
+  const lifetime = socketLifetime(socket);
+  t.after(async () => {
+    socket.destroy();
+    await lifetime.join(allowReset);
+  });
   let control = "";
   socket.on("data", (data) => {
     control += data;
@@ -53,11 +93,81 @@ async function socketFor(t, supervisor) {
       if (JSON.parse(line).stop === true) socket.end();
     }
   });
-  t.after(async () => {
-    socket.destroy();
-    await closed;
+  await once(socket, "connect");
+  return { socket, configuration, ...lifetime };
+}
+
+for (const [
+  code,
+  allowReset,
+  accepted,
+] of /** @type {[string, boolean, boolean][]} */ ([
+  ["ECONNRESET", false, false],
+  ["ECONNRESET", true, true],
+  ["EPIPE", true, false],
+])) {
+  test(`socket error ${code} joins actual close with reset allowance ${allowReset}`, async (t) => {
+    /** @type {import('node:net').Socket | undefined} */
+    let socket;
+    /** @type {ReturnType<typeof socketLifetime> | undefined} */
+    let lifetime;
+    /** @type {import('node:net').Socket | undefined} */
+    let remote;
+    /** @type {ReturnType<typeof socketLifetime> | undefined} */
+    let remoteLifetime;
+    const server = createServer((peer) => {
+      remote = peer;
+      remoteLifetime = socketLifetime(peer);
+    });
+    t.after(async () => {
+      socket?.destroy();
+      remote?.destroy();
+      const cleanup = await Promise.allSettled([
+        lifetime?.closed,
+        remoteLifetime?.join(),
+        server[Symbol.asyncDispose](),
+      ]);
+      const failures = cleanup.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (failures.length)
+        throw new AggregateError(failures, "socket fixture cleanup failed");
+    });
+    const listening = once(server, "listening");
+    server.listen(0, "127.0.0.1");
+    await listening;
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const connected = once(server, "connection");
+    socket = connect({ host: "127.0.0.1", port: address.port });
+    lifetime = socketLifetime(socket);
+    await once(socket, "connect");
+    await connected;
+    let closeObserved = false;
+    socket.once("close", () => {
+      closeObserved = true;
+    });
+    const failure = Object.assign(new Error(`owned socket ${code}`), { code });
+    socket.once("error", () => {
+      assert.equal(closeObserved, false, "error is not a socket-close receipt");
+    });
+    const joined = lifetime.join(allowReset);
+    const outcome = accepted
+      ? assert.doesNotReject(joined)
+      : assert.rejects(joined, (error) => {
+          assert.equal(
+            closeObserved,
+            true,
+            "report failure after actual close",
+          );
+          return error === failure;
+        });
+    socket.destroy(failure);
+    await outcome;
+    assert.equal(closeObserved, true);
+    assert.deepEqual(lifetime.errors, [failure]);
+    assert.equal(socket.listenerCount("error"), 0);
   });
-  return { socket, configuration, closed };
 }
 
 /** @param {import('node:net').Socket} socket @returns {Promise<Record<string, unknown>>} */
@@ -201,7 +311,7 @@ test("an unacknowledged partial request cannot create a reservation or payload",
 
 test("sealing joins a pending unacknowledged socket without fabricating a reservation", async (t) => {
   const supervisor = await supervisorFor(t);
-  const peer = await socketFor(t, supervisor);
+  const peer = await socketFor(t, supervisor, true);
   const release = supervisor.finish();
   await peer.closed;
   assert.equal((await release).reservations, 0);

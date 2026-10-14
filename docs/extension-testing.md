@@ -76,6 +76,12 @@ stops new work, cancels producers, joins admitted operations, restores state and
 checks that its resources are gone. Use a separate bounded cleanup scope. An
 already-aborted operation signal must not cancel the wait for child closure or
 state restoration. Report both the original error and cleanup errors.
+Socket fixtures track transport errors separately from the actual
+[`close` event](https://nodejs.org/download/release/v24.20.0/docs/api/net.html#event-close_1).
+[`events.once`](https://nodejs.org/download/release/v24.20.0/docs/api/events.html#eventsonceemitter-name-options)
+rejects on `error`, so it cannot acknowledge cleanup when a fixture deliberately
+resets a connection. Join closure before checking errors, permit a reset only
+in its specific abort control, and keep protocol acknowledgement errors failing.
 The resource owner applies an independent deadline to admitted-operation
 joining before restoration begins. Expiration records a cleanup failure and
 still awaits the actual promises; it cannot establish resource release. A
