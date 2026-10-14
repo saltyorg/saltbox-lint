@@ -439,6 +439,7 @@ async function startFixture(
   mode: "exit" | "live",
   adapters?: ProcessAdapters,
   lifecycle?: ProcessLifecycleObserver,
+  descendantStdio: "ignore" | "inherit" = "ignore",
 ) {
   const directory = await mkdtemp(join(tmpdir(), "saltbox-process-"));
   const filename = join(directory, "pids");
@@ -451,7 +452,7 @@ async function startFixture(
       ...base,
       args: [
         "-e",
-        `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)',process.argv[1]],{stdio:'ignore'}); const fs=require('node:fs'); fs.writeFileSync(process.argv[1]+'.tmp',JSON.stringify({parent:process.pid,descendant:child.pid})); fs.renameSync(process.argv[1]+'.tmp',process.argv[1]); console.log(child.pid); if(process.argv[2]==='exit') child.unref(); else setInterval(()=>{},1000);`,
+        `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)',process.argv[1]],{stdio:${JSON.stringify(descendantStdio)}}); const fs=require('node:fs'); fs.writeFileSync(process.argv[1]+'.tmp',JSON.stringify({parent:process.pid,descendant:child.pid})); fs.renameSync(process.argv[1]+'.tmp',process.argv[1]); console.log(child.pid); if(process.argv[2]==='exit') child.unref(); else setInterval(()=>{},1000);`,
         filename,
         mode,
       ],
@@ -1073,6 +1074,8 @@ test(
     let nativeClosed = false;
     let stdoutClosed = false;
     let stderrClosed = false;
+    let nativeChild: ChildProcess | undefined;
+    let lateStreamObservers = false;
     let queried = 0;
     const kills: Readonly<ProcessTerminationContext>[] = [];
     await withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
@@ -1082,6 +1085,7 @@ test(
           platform: "darwin",
           spawn(file, args, options) {
             const child = spawn(file, args, options);
+            nativeChild = child;
             child.stdout?.once("close", () => {
               stdoutClosed = true;
             });
@@ -1103,7 +1107,18 @@ test(
           },
           async groupHasLiveMembers(group, signal) {
             queried++;
-            assert.equal(nativeClosed && stdoutClosed && stderrClosed, true);
+            assert.equal(nativeClosed, true);
+            assert.ok(nativeChild);
+            assert.equal(nativeChild.stdout?.closed, true);
+            assert.equal(nativeChild.stderr?.closed, true);
+            // Node may emit child.close inside its last pipe-close listener,
+            // before our later stream observer receives that same event.
+            lateStreamObservers = !stdoutClosed || !stderrClosed;
+            assert.equal(
+              lateStreamObservers,
+              true,
+              "real inherited pipes exercise the nested close ordering",
+            );
             assert.ok(signal && !signal.aborted);
             assert.ok(fixture);
             const ids = await fixture.ids();
@@ -1117,6 +1132,7 @@ test(
             nativeClosed = true;
           },
         },
+        "inherit",
       );
       fixture = owned;
       resources.defer("post-exit cancellation native fixture", () =>
@@ -1128,6 +1144,7 @@ test(
         assert.equal(nativeClosed && stdoutClosed && stderrClosed, true);
         assert.equal(canceledWithoutCleanupFailure(error), true);
         assert.equal(queried, 1, "native absence is observed after closure");
+        assert.equal(lateStreamObservers, true);
         return true;
       });
       assert.equal(owned.abort.signal.aborted, true);
