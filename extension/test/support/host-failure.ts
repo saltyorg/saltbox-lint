@@ -30,9 +30,8 @@ export function hostFailureEvidence(error: unknown): {
     value: unknown,
     relation: FailureNode["relation"],
     parent: number | undefined,
-    depth: number,
   ) => {
-    if (nodes.length >= 32 || depth > 8) {
+    if (nodes.length >= 32) {
       truncated = true;
       return;
     }
@@ -66,14 +65,14 @@ export function hostFailureEvidence(error: unknown): {
     if ("phase" in value) node.phase = text(value.phase, 32);
     if ("resource" in value) node.resource = text(value.resource, 96);
     if ("cause" in value && value.cause !== undefined)
-      visit(value.cause, "cause", node.index, depth + 1);
+      visit(value.cause, "cause", node.index);
     if ("errors" in value && Array.isArray(value.errors)) {
       if (value.errors.length > 8) truncated = true;
       for (const part of value.errors.slice(0, 8) as unknown[])
-        visit(part, "errors", node.index, depth + 1);
+        visit(part, "errors", node.index);
     }
   };
-  visit(error, "root", undefined, 0);
+  visit(error, "root", undefined);
   return { nodes, truncated };
 }
 
