@@ -336,7 +336,24 @@ export class MarkedRoots implements vscode.Disposable {
     return this.roots.get(folder)?.canonical;
   }
   async ready(): Promise<void> {
-    await Promise.all([...this.roots.values()].map((root) => root.ready));
+    // A probe or workspace owner can be replaced while the captured work yields.
+    // Readiness belongs to the current owner and its current probe together.
+    while (!this.disposed) {
+      const pending = [...this.roots].map(([key, root]) => ({
+        key,
+        root,
+        work: root.ready,
+      }));
+      await Promise.all(pending.map(({ work }) => work));
+      if (
+        pending.length === this.roots.size &&
+        pending.every(
+          ({ key, root, work }) =>
+            this.roots.get(key) === root && root.ready === work,
+        )
+      )
+        return;
+    }
   }
   async join(): Promise<void> {
     while (this.probes.size) await Promise.allSettled(this.probes);

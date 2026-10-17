@@ -1,0 +1,152 @@
+import assert from "node:assert/strict";
+import { lstat } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { test } from "node:test";
+import type * as vscode from "vscode";
+import { hash } from "../../src/protocol.ts";
+import {
+  deferred,
+  fixtureUri,
+  withNavigationFixture,
+} from "../support/navigation-fixture.ts";
+
+for (const changed of [false, true]) {
+  test(`formatter joins superseded initial root probes with ${changed ? "an edited" : "the original"} model`, async () => {
+    const entered = [deferred<void>(), deferred<void>()];
+    const released = [deferred<void>(), deferred<void>()];
+    let probes = 0;
+    let submitted = 0;
+    let markerDeleted: (() => void) | undefined;
+    const disposable = { dispose() {} };
+    await withNavigationFixture(
+      {
+        roots: {
+          lstat: (async (...args: Parameters<typeof lstat>) => {
+            const index = probes++;
+            const stat = await lstat(...args);
+            if (index < entered.length) {
+              entered[index].resolve();
+              await released[index].promise;
+            }
+            return stat;
+          }) as typeof lstat,
+          createFileSystemWatcher: (pattern) => ({
+            ignoreCreateEvents: false,
+            ignoreChangeEvents: false,
+            ignoreDeleteEvents: false,
+            onDidCreate: () => disposable,
+            onDidChange: () => disposable,
+            onDidDelete: (listener) => {
+              if (
+                typeof pattern === "object" &&
+                pattern.pattern === ".saltbox-lint"
+              )
+                markerDeleted = () =>
+                  listener(
+                    fixtureUri(join(pattern.baseUri.fsPath, ".saltbox-lint")),
+                  );
+              return disposable;
+            },
+            dispose() {},
+          }),
+        },
+        runProcess: async (request) => {
+          submitted++;
+          const text = String(request.input);
+          return JSON.stringify({
+            schema_version: 1,
+            path: relative(
+              request.cwd,
+              request.args[request.args.indexOf("--stdin-filename") + 1],
+            ).replaceAll("\\", "/"),
+            source_sha256: hash(text),
+            status: "ready",
+            edits: [
+              {
+                range: {
+                  start: { line: 1, column: 1 },
+                  end: { line: 1, column: 1 },
+                },
+                span: { start: 0, end: 0 },
+                text: "# formatted\n",
+              },
+            ],
+          });
+        },
+      },
+      async ({ editor, document, resources }) => {
+        let ready = false;
+        const readiness = resources.operation("current root readiness", () =>
+          editor.ready().then(() => {
+            ready = true;
+          }),
+        );
+        const formatting = resources.operation("first root formatter", () =>
+          editor.format(document.asDocument(), "canonical"),
+        );
+        let currentReadiness: Promise<void> | undefined;
+        try {
+          await Promise.race([
+            entered[0].promise,
+            readiness.then(() => {
+              throw new Error(
+                "Initial readiness settled before probe admission",
+              );
+            }),
+          ]);
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          assert.ok(
+            markerDeleted,
+            "the marker watcher has its delete listener",
+          );
+          markerDeleted();
+          assert.equal(probes, 2, "the replacement probe was admitted");
+          currentReadiness = resources.operation(
+            "replacement root readiness",
+            () => editor.ready(),
+          );
+          await Promise.race([
+            entered[1].promise,
+            currentReadiness.then(() => {
+              throw new Error(
+                "Replacement readiness settled before probe admission",
+              );
+            }),
+          ]);
+          if (changed) {
+            document.edit("# edited while probing\n" + document.getText());
+            editor.change(document.asDocument());
+          }
+          released[0].resolve();
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          const readyBeforeCurrentProbe = ready;
+          assert.equal(
+            submitted,
+            0,
+            "no formatter runs before current readiness",
+          );
+          released[1].resolve();
+          await readiness;
+          const edits = await formatting;
+          assert.equal(
+            edits.length,
+            changed ? 0 : 1,
+            changed
+              ? "an edit during readiness declines the original format request"
+              : "the first formatter returns edits after the current probe",
+          );
+          assert.equal(submitted, changed ? 0 : 1);
+          assert.equal(
+            readyBeforeCurrentProbe,
+            false,
+            "the current marker was still pending when the older probe finished",
+          );
+        } finally {
+          for (const gate of released) gate.resolve();
+          await Promise.allSettled([readiness, formatting, currentReadiness]);
+        }
+      },
+      { waitForReady: false, acceptedOperations: ["format"] },
+    );
+  });
+}

@@ -483,9 +483,17 @@ Disposal cancels producers and prevents later public callbacks from creating
 new work. [`background-ownership.test.ts`](../extension/test/unit/background-ownership.test.ts)
 uses a controlled clock and real source I/O to test these completion boundaries.
 Root readiness/disposal regressions remain in
-[`background.test.ts`](../extension/test/unit/background.test.ts). User
-notification promises remain error-handled UI operations; backend joining does
-not wait for a user to dismiss a notification.
+[`background.test.ts`](../extension/test/unit/background.test.ts). Readiness
+joins the current root owner and its current probe, including a replacement
+admitted while an older probe was pending.
+[`root-readiness.test.ts`](../extension/test/unit/root-readiness.test.ts)
+controls that ordering through the real editor adapter and verifies the first
+format request and the edited-model rejection without retries. The installed
+marker assertion retains its original single formatting call and records
+bounded document, diagnostic and editor-event facts if it fails. Those public
+facts do not expose provider invocation or cancellation internals.
+User notification promises remain error-handled UI operations; backend joining
+does not wait for a user to dismiss a notification.
 
 The wider editor batches use the same boundaries:
 

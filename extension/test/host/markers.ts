@@ -346,6 +346,10 @@ export async function runMarkers(parentSignal?: AbortSignal): Promise<void> {
           }
         });
       };
+      const nestedObservation = observeRootFormatting(document);
+      resources.defer("nested workspace formatting observations", () =>
+        nestedObservation.dispose(),
+      );
       await updateFolders(0, true);
       try {
         await waitFor(
@@ -368,7 +372,26 @@ export async function runMarkers(parentSignal?: AbortSignal): Promise<void> {
           () => diagnostics(document.uri).length > 0,
           "nested root opts in independently",
         );
-        assert.ok((await formatting(document)).length > 0);
+        const nestedEdits = await formatting(document);
+        try {
+          assert.ok(nestedEdits.length > 0);
+        } catch (error) {
+          try {
+            nestedObservation.note("nested workspace format response", {
+              edits: nestedEdits.length,
+            });
+            console.error(
+              "SALTBOX_MARKER_FORMAT_FAILURE " + nestedObservation.report(),
+            );
+          } catch (evidenceError) {
+            throw new AggregateError(
+              [error, evidenceError],
+              "Nested workspace formatting and its failure evidence failed",
+              { cause: error },
+            );
+          }
+          throw error;
+        }
         await marker(nested, false);
       } finally {
         await updateFolders(1);

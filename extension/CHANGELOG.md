@@ -1,7 +1,11 @@
 # Changelog
 
-## 0.2.1 (2026-10-17)
+## 0.2.2 (2026-10-18)
 
+Version 0.2.1 was not published after release qualification failed.
+
+- Wait for the current root owner and marker probe before reporting readiness,
+  including probes that replace pending work. Preserve edited-model rejection.
 - Stop roles without defaults declarations from claiming variable namespaces.
   Continue checking duplicate declarations across defaults, vars and inventories.
 - Add directional `namespace_sharing` permissions in `.saltbox-lint`, preserving

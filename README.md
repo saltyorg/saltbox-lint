@@ -28,7 +28,7 @@ For editor diagnostics and bundled installation, follow the
 [VS Code extension guide](https://github.com/saltyorg/saltbox-lint/blob/main/extension/README.md).
 Create an empty regular `.saltbox-lint` file at each selected extension source
 root to enable it. The standalone CLI and process tasks do not require this
-extension opt-in marker. Version v0.2.1 and newer also read optional
+extension opt-in marker. Version v0.2.2 and newer also read optional
 project configuration from this file.
 
 With Go 1.27.2 or newer, installation from a complete local checkout is also
@@ -47,7 +47,7 @@ and use `bin/saltbox-lint`.
 
 ## Project configuration and inline ignores
 
-Configuration and generic inline ignores require v0.2.1 or newer.
+Configuration and generic inline ignores require v0.2.2 or newer.
 
 The source root's regular `.saltbox-lint` file may contain YAML configuration.
 A missing file, an empty marker, comments alone or `{}` keep the default policy.

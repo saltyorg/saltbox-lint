@@ -1,4 +1,11 @@
-import { mkdtemp, realpath, writeFile, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  realpath,
+  writeFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanupDependencies } from "../support/dependency-cleanup.ts";
@@ -54,16 +61,7 @@ async function owner(entry: string, io: Record<string, unknown>) {
         checkBackground: (document: unknown) => void;
       };
     };
-    MarkedRoots: new (
-      report: (error: unknown) => void,
-      adapters?: Partial<import("../../src/roots.ts").RootAdapters>,
-    ) => {
-      configure: () => void;
-      ready: () => Promise<void>;
-      refresh: () => Promise<void>;
-      join: () => Promise<void>;
-      dispose: () => void;
-    };
+    MarkedRoots: typeof import("../../src/roots.ts").MarkedRoots;
   };
 }
 
@@ -181,6 +179,109 @@ test("event probe reports failure while readiness retains the original rejection
     roots.dispose();
   }
 });
+
+for (const replaceOwner of [false, true]) {
+  test(`root readiness joins a replacement ${replaceOwner ? "owner" : "probe"} when older work is pending`, async (test) => {
+    const directory = await mkdtemp(join(tmpdir(), "saltbox-root-overlap-"));
+    test.after(() => rm(directory, { recursive: true, force: true }));
+    const root = await realpath(directory);
+    await writeFile(join(root, ".saltbox-lint"), "");
+    const replacement = join(root, "replacement");
+    await mkdir(replacement);
+    await writeFile(join(replacement, ".saltbox-lint"), "");
+    let configuredRoot = "";
+    const gates = [
+      Promise.withResolvers<void>(),
+      Promise.withResolvers<void>(),
+    ];
+    const entered = [
+      Promise.withResolvers<void>(),
+      Promise.withResolvers<void>(),
+    ];
+    const disposable = { dispose() {} };
+    let changed = () => {};
+    let watched = false;
+    let held = false;
+    let reads = 0;
+    const { MarkedRoots } = await owner("src/roots.ts", {
+      vscode: {
+        EventEmitter: class {
+          event = () => disposable;
+          fire() {}
+          dispose() {}
+        },
+        RelativePattern: class {},
+        Disposable: { from: () => disposable },
+        Uri: { file: (path: string) => ({ fsPath: path }) },
+        workspace: {
+          workspaceFolders: [
+            { uri: { scheme: "file", fsPath: root, toString: () => "root" } },
+          ],
+          getConfiguration: () => ({ get: () => configuredRoot }),
+          createFileSystemWatcher: () => {
+            const marker = !watched;
+            watched = true;
+            return {
+              ...disposable,
+              onDidCreate: () => disposable,
+              onDidChange: () => disposable,
+              onDidDelete: (listener: () => void) => {
+                if (marker) changed = listener;
+                return disposable;
+              },
+            };
+          },
+        },
+      },
+    });
+    const roots = new MarkedRoots(undefined, {
+      lstat: (async (...args: Parameters<typeof lstat>) => {
+        const stat = await lstat(...args);
+        if (held) {
+          const index = reads++;
+          assert.ok(index < gates.length, "only the two controlled probes run");
+          entered[index].resolve();
+          await gates[index].promise;
+        }
+        return stat;
+      }) as typeof lstat,
+    });
+    let pending: Promise<void> | undefined;
+    let settled = false;
+    try {
+      roots.configure();
+      await roots.ready();
+      assert.equal(roots.get("root"), root);
+      held = true;
+      changed();
+      await entered[0].promise;
+      pending = roots.ready().then(() => {
+        settled = true;
+      });
+      if (replaceOwner) {
+        configuredRoot = "replacement";
+        roots.configure();
+      } else changed();
+      await entered[1].promise;
+      gates[0].resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(roots.get("root"), undefined);
+      assert.equal(
+        settled,
+        false,
+        "superseded probe completion cannot establish current root readiness",
+      );
+      gates[1].resolve();
+      await pending;
+      assert.equal(roots.get("root"), replaceOwner ? replacement : root);
+    } finally {
+      for (const gate of gates) gate.resolve();
+      await pending;
+      roots.dispose();
+      await roots.join();
+    }
+  });
+}
 
 test("admission cleanup cancels its owner and joins the complete check before removing its gate", async () => {
   let release!: () => void;
