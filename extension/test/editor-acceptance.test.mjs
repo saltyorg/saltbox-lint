@@ -19,6 +19,7 @@ import { editorAcceptance } from "./host/editor-acceptance.ts";
 import { getHostProfile } from "./host/host-profile.ts";
 import { verifyInstalledProduct } from "./host/host-preflight.ts";
 import { hostInputs } from "../scripts/host-inputs.mjs";
+import { manifest } from "../scripts/release-inputs.mjs";
 import { ownedCommand } from "../scripts/owned-command.mjs";
 import { createHostProcessSupervisor } from "../scripts/host-process-supervisor.mjs";
 import { workspaceFixtureDirectory } from "./support/workspace-fixture.ts";
@@ -47,6 +48,9 @@ import {
 } from "../scripts/native-hosts.mjs";
 
 const workspaceBase = process.env.SALTBOX_TEST_WORKSPACE_BASE ?? tmpdir();
+assert.ok(typeof manifest.version === "string");
+const releaseVersion = manifest.version;
+const wrongVersion = `${releaseVersion}-mismatch`;
 
 const resultEnvironment = Object.freeze({
   GITHUB_SHA: "a".repeat(40),
@@ -112,7 +116,11 @@ function workerEnvironment(profile, mode = "disabled", version = "1.100.0") {
 /** @param {HostProfile} profile */
 function fakeProduct(
   profile,
-  { version = "0.1.0", publisher = "saltyorg", name = "saltbox-lint" } = {},
+  {
+    version = releaseVersion,
+    publisher = "saltyorg",
+    name = "saltbox-lint",
+  } = {},
 ) {
   const directory = join(
     profile.extensionsDir,
@@ -144,7 +152,7 @@ function releasedError(message) {
  * @returns {Map<string, import("../scripts/host-types.js").ArchiveEntry>}
  */
 function fakeVSIXEntries({
-  version = "0.1.0",
+  version = releaseVersion,
   backend = "fixture backend",
 } = {}) {
   return new Map([
@@ -312,7 +320,10 @@ test("native parent uses the owned command for both SDKs and every original mode
     assert.equal(hostInputs(call.env).expectedVersion, expected);
     assert.equal(
       call.env.SALTBOX_TEST_VSIX,
-      join(extensionDirectory, "../dist/saltbox-lint-0.1.0-darwin-x64.vsix"),
+      join(
+        extensionDirectory,
+        `../dist/saltbox-lint-${releaseVersion}-darwin-x64.vsix`,
+      ),
     );
     assert.equal(
       existsSync(profileRoot(call.env)),
@@ -845,17 +856,17 @@ for (const flag of ["--user-data-dir", "--extensions-dir"]) {
 test("installed package preflight rejects missing, wrong and duplicate packages", (t) => {
   const profile = profileFor(t);
   assert.throws(
-    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    () => installedPackage(profile, { packageVersion: releaseVersion }),
     /exactly one/,
   );
-  fakeProduct(profile, { version: "0.2.0" });
+  fakeProduct(profile, { version: wrongVersion });
   assert.throws(
-    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    () => installedPackage(profile, { packageVersion: releaseVersion }),
     /package version/,
   );
   fakeProduct(profile);
   assert.throws(
-    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    () => installedPackage(profile, { packageVersion: releaseVersion }),
     /exactly one/,
   );
 });
@@ -878,7 +889,7 @@ test("installed package and backend identity are forwarded before editor exercis
         if (name === "git") return "";
         commands.push({ args, options });
         if (args.includes("--install-extension")) fakeProduct(profile);
-        return "saltyorg.saltbox-lint@0.1.0\n";
+        return `saltyorg.saltbox-lint@${releaseVersion}\n`;
       },
       electron: {
         resolveCliArgsFromVSCodeExecutablePath: () => ["code-cli", "prefix"],
@@ -906,7 +917,7 @@ test("installed package and backend identity are forwarded before editor exercis
   assert.equal(editor.extensionDevelopmentPath, profile.controller);
   assert.equal(
     editor.extensionTestsEnv.SALTBOX_TEST_EXPECTED_PRODUCT_VERSION,
-    "0.1.0",
+    releaseVersion,
   );
   assert.equal(
     editor.extensionTestsEnv.SALTBOX_TEST_EXPECTED_CLI_SHA256?.length,
@@ -914,7 +925,7 @@ test("installed package and backend identity are forwarded before editor exercis
   );
   assert.equal(
     editor.extensionTestsEnv.SALTBOX_TEST_EXPECTED_PRODUCT_PATH,
-    join(profile.extensionsDir, "saltyorg.saltbox-lint-0.1.0"),
+    join(profile.extensionsDir, `saltyorg.saltbox-lint-${releaseVersion}`),
   );
 });
 
@@ -933,8 +944,8 @@ test("wrong installed version fails before any editor flow", async (t) => {
         readArchive: async () => fakeVSIXEntries(),
         command: async (name, args) => {
           if (name !== "git" && args.includes("--install-extension"))
-            fakeProduct(profile, { version: "9.0.0" });
-          return "saltyorg.saltbox-lint@9.0.0\n";
+            fakeProduct(profile, { version: wrongVersion });
+          return `saltyorg.saltbox-lint@${wrongVersion}\n`;
         },
         electron: {
           resolveCliArgsFromVSCodeExecutablePath: () => ["code-cli"],
@@ -967,7 +978,7 @@ test("same-version installed backend mismatch is detected against independent VS
         command: async (name, args) => {
           if (name !== "git" && args.includes("--install-extension"))
             fakeProduct(profile);
-          return "saltyorg.saltbox-lint@0.1.0\n";
+          return `saltyorg.saltbox-lint@${releaseVersion}\n`;
         },
         electron: {
           resolveCliArgsFromVSCodeExecutablePath: () => ["code-cli"],
@@ -1071,7 +1082,7 @@ test("installed backend links outside its package fail preflight", (t) => {
   unlinkSync(backend);
   symlinkSync(join(other.root, "backend"), backend, "file");
   assert.throws(
-    () => installedPackage(profile, { packageVersion: "0.1.0" }),
+    () => installedPackage(profile, { packageVersion: releaseVersion }),
     /backend must belong/,
   );
 });
@@ -1119,7 +1130,7 @@ test("native profile names are accepted by the directly imported controller poli
 test("controller preflight rejects incorrect loaded identity and profile before a flow", (t) => {
   const profile = profileFor(t);
   fakeProduct(profile);
-  const product = installedPackage(profile, { packageVersion: "0.1.0" });
+  const product = installedPackage(profile, { packageVersion: releaseVersion });
   const options = hostOptions({
     env: { SALTBOX_TEST_VSIX: "fixture.vsix" },
     profile,
@@ -1130,7 +1141,7 @@ test("controller preflight rejects incorrect loaded identity and profile before 
   const loaded = {
     id: "saltyorg.saltbox-lint",
     extensionPath: product.directory,
-    version: "0.1.0",
+    version: releaseVersion,
   };
   verifyInstalledProduct(options.extensionTestsEnv, loaded);
   assert.throws(() =>
@@ -1143,7 +1154,7 @@ test("controller preflight rejects incorrect loaded identity and profile before 
     () =>
       verifyInstalledProduct(options.extensionTestsEnv, {
         ...loaded,
-        version: "9.0.0",
+        version: wrongVersion,
       }),
     /product version/,
   );
@@ -1153,7 +1164,10 @@ test("controller preflight rejects incorrect loaded identity and profile before 
     () =>
       verifyInstalledProduct(options.extensionTestsEnv, {
         ...loaded,
-        extensionPath: join(other.extensionsDir, "saltyorg.saltbox-lint-0.1.0"),
+        extensionPath: join(
+          other.extensionsDir,
+          `saltyorg.saltbox-lint-${releaseVersion}`,
+        ),
       }),
     /isolated installation/,
   );
