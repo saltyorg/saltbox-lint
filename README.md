@@ -572,8 +572,10 @@ CGO disabled. `make snapshot` completes the same gate and creates six native CLI
 archives, eight VSIXs, corresponding source and checksums in ignored `dist/`.
 It publishes nothing.
 `make build VERSION=1.2.3` injects an explicit local version. The release workflow
-packages through GoReleaser and publishes validated artifacts only when an exact
-stable version tag is explicitly pushed for an authorized release. The
+packages through GoReleaser and publishes validated GitHub assets and all eight
+Marketplace VSIXs only when an exact stable version tag is explicitly pushed
+for an authorized release. Marketplace upload follows GitHub source publication
+and uses Azure workload identity federation. The
 [v0.1.0 release](https://github.com/saltyorg/saltbox-lint/releases/tag/v0.1.0) is
 published; local snapshots publish nothing.
 

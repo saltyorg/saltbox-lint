@@ -4,7 +4,8 @@ The [platform table](platforms.md) maps six standalone CLI targets to eight
 VSIX targets. `extension/scripts/release-inputs.mjs` owns the VSIX map;
 `.goreleaser.yaml` defines native archives. Tests require CI coverage for every
 native release target. Packages include a CGO-free CLI, licenses and source
-provenance. GitHub release publication and Marketplace publication are separate.
+provenance. The release workflow publishes GitHub assets first, then uploads the
+same qualified VSIXs to Visual Studio Marketplace.
 
 ## Local packaging
 
@@ -75,8 +76,52 @@ release authorization before creating or pushing a release tag. The
 [release workflow](../.github/workflows/release.yml) publishes artifacts for an
 exact stable version tag after its CI gates. Verify the remote tag target,
 successful publication and all expected assets. Changes after validation require
-validation again. Consumer version updates and Marketplace publication each
-require their own authorization.
+validation again. Release authorization must cover both the GitHub release and
+the automatic Marketplace upload. Consumer version updates require separate
+authorization.
+
+### Marketplace authentication and upload
+
+The release workflow uses the GitHub environment `marketplace-publish`. Its
+environment secrets `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` identify a
+user-assigned Azure managed identity. GitHub authenticates through OpenID
+Connect; no stored access token or client password is needed. Azure must trust
+the repository's exact environment subject, including numeric owner/repository
+IDs when GitHub uses immutable subjects. Query the repository's actual
+configuration before creating that credential:
+
+```sh
+gh api repos/saltyorg/saltbox-lint/actions/oidc/customization/sub
+```
+
+Create the Azure federated credential for entity type **Environment**, named
+`marketplace-publish`, using issuer `https://token.actions.githubusercontent.com`
+and audience `api://AzureADTokenExchange`. The managed identity must be a
+**Contributor** of the `saltyorg` Marketplace publisher. Its Marketplace member
+ID comes from the Azure DevOps profile API after authenticating as that
+identity; it differs from its Azure Client ID and Principal ID. The manual-only
+[identity workflow](../.github/workflows/marketplace-identity.yml) retrieves this
+ID. Running that setup workflow requires operator authorization and does not
+publish an extension. See Microsoft's [publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#secure-automated-publishing-to-visual-studio-marketplace)
+and GitHub's [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc).
+
+The Marketplace job waits for the GitHub release, including the corresponding
+source archive, to be published. It downloads the qualified artifacts from the
+same workflow run, checks their checksums, and uses the pinned `@vscode/vsce`
+public API to upload the existing VSIXs. It does not rebuild them or change
+their version. Before admitting any upload,
+[`publish-marketplace.mjs`](../extension/scripts/publish-marketplace.mjs)
+requires the stable tag, clean source provenance and commit to agree, verifies
+the source archive hash, and audits all eight target packages and bundled CLI
+hashes. A missing, duplicate, extra or changed package fails the job. Upload
+errors remain failures, including an already-published target/version.
+
+The identity's tenant-level login uses `allow-no-subscriptions`; publishing
+requires no Reader or Contributor access to the Azure subscription. The
+subscription is still needed to own the managed identity. Successful login and
+publisher membership do not establish a successful extension upload. Verify
+the release job results and all eight Marketplace targets after an authorized
+release.
 
 The published [v0.1.0 GitHub release](https://github.com/saltyorg/saltbox-lint/releases/tag/v0.1.0)
 is dated 2026-09-20 and targets commit
