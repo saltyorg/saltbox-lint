@@ -486,6 +486,7 @@ export async function runMarkers(parentSignal?: AbortSignal): Promise<void> {
         const sourceGate = gateFormatterSource(
           languageSource.uri,
           sourceIdentity,
+          resources.signal,
         );
         const component = ownJoinedResource(
           resources,
@@ -543,10 +544,6 @@ export async function runMarkers(parentSignal?: AbortSignal): Promise<void> {
               },
             },
           );
-        const eligibility = component.onDidChangeEligibility(refreshProviders);
-        resources.defer("literal-path eligibility listener", () =>
-          eligibility.dispose(),
-        );
         let changed: vscode.TextDocument | undefined;
         let pendingFormat: Promise<vscode.TextEdit[]> | undefined;
         try {
@@ -558,12 +555,30 @@ export async function runMarkers(parentSignal?: AbortSignal): Promise<void> {
           assert.equal(changed.uri.toString(), languageSource.uri.toString());
           assert.equal(changed.isClosed, false);
           assert.ok(vscode.workspace.textDocuments.includes(changed));
+          await component.check(changed, true);
+          assert.equal(
+            providers.size,
+            0,
+            "controlled providers stay unregistered during the installed formatter check",
+          );
           // The installed product retains the real language transition and result check.
           await waitFor(
             async () => (await formatting(changed!)).length > 0,
             "installed Ansible formatter is available after automatic language admission",
           );
-          await component.check(changed, true);
+          assert.equal(providers.size, 0);
+          assert.equal(
+            sourceGate.counts().invocations,
+            0,
+            "installed formatting must not invoke the controlled component",
+          );
+          // Public provider lookup must finish before the controlled provider
+          // can register, otherwise it can enter the deliberately held read.
+          const eligibility =
+            component.onDidChangeEligibility(refreshProviders);
+          resources.defer("literal-path eligibility listener", () =>
+            eligibility.dispose(),
+          );
           refreshProviders();
           // A separately owned native component provider holds its injected read.
           // Installed provider registrations and global filesystem APIs stay untouched.

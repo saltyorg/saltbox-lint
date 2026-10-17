@@ -3,7 +3,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
 
 /** Gate only this component provider's successful read, never a shared API. */
-export function gateFormatterSource(uri: vscode.Uri, sourceIdentity: string) {
+export function gateFormatterSource(
+  uri: vscode.Uri,
+  sourceIdentity: string,
+  signal?: AbortSignal,
+) {
   const owner = new AsyncLocalStorage<vscode.TextDocument>();
   const callbacks = new Set<Promise<void>>();
   const failures: unknown[] = [];
@@ -19,6 +23,12 @@ export function gateFormatterSource(uri: vscode.Uri, sourceIdentity: string) {
   const entered = new Promise<void>((resolve) => {
     enter = resolve;
   });
+  const cancel = () => {
+    active = false;
+    release();
+  };
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
   const readSource = (async (...args: Parameters<typeof readFile>) => {
     const bytes = await readFile(...args);
     if (!active || String(args[0]) !== sourceIdentity) return bytes;
@@ -57,8 +67,8 @@ export function gateFormatterSource(uri: vscode.Uri, sourceIdentity: string) {
     },
     counts: () => ({ automaticEntries, formatterEntries, invocations }),
     async dispose() {
-      active = false;
-      release();
+      cancel();
+      signal?.removeEventListener("abort", cancel);
       await Promise.all([...callbacks]);
       owner.disable();
       if (failures.length)

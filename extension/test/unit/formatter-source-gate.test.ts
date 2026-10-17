@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
+import { getEventListeners } from "node:events";
 import type * as vscode from "vscode";
 import { gateFormatterSource } from "../host/formatter-source-gate.ts";
 import {
@@ -38,6 +39,7 @@ test("actual registered formatter waits for its own injected source read and pre
       "closed",
       "changed version",
       "canceled",
+      "owner canceled",
     ] as const) {
       await context.test(`${mode}: ${state}`, async () => {
         let readSource: typeof readFile = readFile;
@@ -85,7 +87,11 @@ test("actual registered formatter waits for its own injected source read and pre
               undefined,
               "unadmitted models have no formatter",
             );
-            const gate = gateFormatterSource(document.uri, source);
+            const gate = gateFormatterSource(
+              document.uri,
+              source,
+              resources.signal,
+            );
             readSource = gate.readFile;
             resources.defer("source read gate", () => gate.dispose());
             let admitted!: () => void;
@@ -149,6 +155,17 @@ test("actual registered formatter waits for its own injected source read and pre
               if (state === "changed version")
                 document.edit(document.getText() + "# changed\n");
               if (state === "canceled") canceled.cancel();
+              if (state === "owner canceled") {
+                resources.cancel(
+                  new Error("controlled formatter owner canceled"),
+                );
+                await new Promise<void>((resolve) => setImmediate(resolve));
+                assert.equal(
+                  settled,
+                  true,
+                  "owner cancellation releases held reads before joining operations",
+                );
+              }
               gate.release();
               const edits = await pending;
               assert.equal(edits?.length, state === "stable" ? 1 : 0);
@@ -214,4 +231,58 @@ test("physical templates never register or submit writable formatting", async ()
     },
     { acceptedOperations: ["format"] },
   );
+});
+
+test("pre-canceled formatter owner admits no held invocation or abort listener", async () => {
+  await withNavigationFixture({}, async ({ document, source }) => {
+    const owner = new AbortController();
+    owner.abort();
+    const before = getEventListeners(owner.signal, "abort").length;
+    const gate = gateFormatterSource(document.uri, source, owner.signal);
+    const pending = gate.invoke(document.asDocument(), () =>
+      gate.readFile(source),
+    );
+    try {
+      const first = await Promise.race([
+        pending.then(() => "completed"),
+        gate.entered.then(() => "held"),
+      ]);
+      assert.equal(first, "completed");
+      assert.equal((await pending).toString(), document.getText());
+      assert.deepEqual(gate.counts(), {
+        automaticEntries: 0,
+        formatterEntries: 0,
+        invocations: 0,
+      });
+      assert.equal(getEventListeners(owner.signal, "abort").length, before);
+    } finally {
+      gate.release();
+      await Promise.allSettled([pending]);
+      await gate.dispose();
+    }
+  });
+});
+
+test("formatter callback failure retains its original error and removes the owner listener", async () => {
+  await withNavigationFixture({}, async ({ document, source }) => {
+    const owner = new AbortController();
+    const before = getEventListeners(owner.signal, "abort").length;
+    const gate = gateFormatterSource(document.uri, source, owner.signal);
+    const original = new Error("controlled formatter callback failure");
+    try {
+      assert.equal(getEventListeners(owner.signal, "abort").length, before + 1);
+      await assert.rejects(
+        gate.invoke(document.asDocument(), () => Promise.reject(original)),
+        (error) => error === original,
+      );
+      await assert.rejects(gate.dispose(), (error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.deepEqual(error.errors, [original]);
+        return true;
+      });
+      assert.equal(getEventListeners(owner.signal, "abort").length, before);
+    } finally {
+      await gate.dispose();
+    }
+  });
 });
