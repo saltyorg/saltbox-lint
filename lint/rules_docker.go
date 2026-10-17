@@ -240,6 +240,10 @@ func checkDockerEmptyLayers(_ *Project, source *Source) []Diagnostic {
 	expressions := newDeclarationExpressionQuery(source)
 	var diagnostics []Diagnostic
 	for _, def := range topLevelDeclarations(source) {
+		if def.Name == source.Role+"_role_docker_ports" && def.Value != nil && def.Value.Kind == "sequence" && emptyDockerCollection(def.Value) {
+			diagnostics = append(diagnostics, dockerDiagnostic(source, "docker-empty-layers", def.Key.Span, "Docker ports declaration is empty", "Remove the empty ports declaration and omit the unused Ports section."))
+			continue
+		}
 		if !strings.HasPrefix(def.Name, source.Role+"_role_docker_") || !strings.HasSuffix(def.Name, "_default") {
 			continue
 		}

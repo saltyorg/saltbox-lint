@@ -1,4 +1,5 @@
 import type { AnalysisRecord, SourceDependencies } from "./protocol.ts";
+import { variableDeclarationPath } from "./variable-sources.ts";
 
 interface Entry {
   record: SourceDependencies;
@@ -17,16 +18,25 @@ interface State {
 }
 const contains = (directory: string, file: string) =>
   file === directory || file.startsWith(`${directory}/`);
-const observesDirectory = (directory: string, file: string) => {
-  if (contains(directory, file)) return true;
+const observesDirectory = (
+  directory: SourceDependencies["directories"][number],
+  file: string,
+) => {
+  if (contains(directory.path, file))
+    return (
+      !directory.variables_only ||
+      file === directory.path ||
+      file.endsWith("/.gitignore") ||
+      variableDeclarationPath(file)
+    );
   if (file === ".gitignore") return true;
   if (!file.endsWith("/.gitignore")) return false;
-  return contains(file.slice(0, -"/.gitignore".length), directory);
+  return contains(file.slice(0, -"/.gitignore".length), directory.path);
 };
 const observes = (record: SourceDependencies, file: string) =>
   [...record.files, ...record.identity, ...record.discovery].some(
     (item) => item.path === file,
-  ) || record.directories.some((item) => observesDirectory(item.path, file));
+  ) || record.directories.some((item) => observesDirectory(item, file));
 
 // Dependency ownership and event freshness share one lifecycle. Tokens precede
 // scans so even events for previously unknown dependencies reject late results.
@@ -174,11 +184,17 @@ export class Dependencies {
     if (state.root !== root) return new Set();
     const candidates = new Set(state.files.get(file));
     for (const [directory, sources] of state.directories)
-      if (observesDirectory(directory, file))
+      if (
+        observesDirectory(
+          { path: directory, state: "directory", members: [] },
+          file,
+        )
+      )
         for (const source of sources) candidates.add(source);
     const affected = new Set<string>();
     for (const source of candidates) {
       const entry = state.sources.get(source)!;
+      if (!observes(entry.record, file)) continue;
       const reads = [...entry.record.files, ...entry.record.discovery].some(
         (item) => item.path === file && item.state === "read",
       );

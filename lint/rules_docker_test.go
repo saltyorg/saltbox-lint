@@ -166,6 +166,39 @@ func TestDockerEmptyLayerExceptions(t *testing.T) {
 	}
 }
 
+func TestDockerStandaloneEmptyPorts(t *testing.T) {
+	for _, name := range []string{"standalone-empty-ports.bad.yml", "ports-omitted.good.yml"} {
+		input, err := os.ReadFile("testdata/docker/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(name, ".bad.") {
+			assertDockerDiagnostic(t, string(input), "docker-empty-layers", "example_role_docker_ports", "omit", "Ports")
+		} else if ds := dockerDiagnostics(t, string(input), "docker-empty-layers"); len(ds) != 0 {
+			t.Fatalf("omitted ports section diagnosed: %+v", ds)
+		}
+	}
+	for _, value := range []string{"[]", "[] # no inbound ports", "!!seq []"} {
+		t.Run(value, func(t *testing.T) {
+			assertDockerDiagnostic(t, "example_role_docker_ports: "+value+"\n", "docker-empty-layers", "example_role_docker_ports", "omit", "Ports")
+		})
+	}
+	for _, input := range []string{
+		"example_role_docker_ports: [8080:80]\n",
+		"example_role_docker_ports: '{{ optional_ports }}'\n",
+		"example_role_docker_ports_default: [8080:80]\nexample_role_docker_ports_custom: []\n",
+		"example_role_docker_networks_default: []\nexample_role_docker_networks_custom: []\n",
+		"example_role_docker_volumes_global: false\n",
+		"other_role_docker_ports: []\n",
+		"example_role_settings:\n  example_role_docker_ports: []\n",
+		"example_role_description: |\n  example_role_docker_ports: []\n",
+	} {
+		if ds := dockerDiagnostics(t, input, "docker-empty-layers"); len(ds) != 0 {
+			t.Fatalf("meaningful, unresolved or unrelated declaration diagnosed: %+v", ds)
+		}
+	}
+}
+
 func TestDockerRuleFixturesAndMetadata(t *testing.T) {
 	for _, name := range []string{"canonical.good.yml", "violations.bad.yml"} {
 		input, err := os.ReadFile("testdata/docker/" + name)

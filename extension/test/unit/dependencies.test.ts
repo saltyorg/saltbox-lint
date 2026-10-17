@@ -33,6 +33,69 @@ const report = (...sources: SourceDependencies[]): AnalysisRecord => ({
   sources,
 });
 
+test("variable directory observations invalidate declaration changes and exclude task/template/localhost changes", () => {
+  const a = source("a");
+  a.directories = [
+    { path: "roles", state: "directory", members: [], variables_only: true },
+    {
+      path: "inventories",
+      state: "directory",
+      members: [],
+      variables_only: true,
+    },
+  ];
+  for (const [file, expected] of [
+    ["roles/b/defaults/new.yml", true],
+    ["roles/b/vars/new.yml", true],
+    ["roles", true],
+    ["roles/b/.gitignore", true],
+    ["inventories/prod/.gitignore", true],
+    ["inventories/prod/group_vars/all.yml", true],
+    ["roles/b/tasks/main.yml", false],
+    ["roles/b/templates/config.yml", false],
+    ["inventories/host_vars/localhost.yml", false],
+  ] as const) {
+    const graph = new Dependencies();
+    graph.accept("one", report(a), graph.begin(), true);
+    const token = graph.begin();
+    assert.deepEqual(
+      [...graph.event("one", "/project", file)!],
+      expected ? [a.path] : [],
+      file,
+    );
+    assert.equal(graph.accept("one", report(a), token, false), !expected, file);
+  }
+});
+
+test("variable-only directory metadata keeps declaration membership strict while allowing other owned context", () => {
+  const a = source("a");
+  a.directories = [
+    { path: "roles", state: "directory", members: [], variables_only: true },
+  ];
+  const wire = (value: unknown) =>
+    JSON.stringify({
+      schema_version: 2,
+      diagnostics: [],
+      fixes: [],
+      analysis: value,
+    });
+  assert.ok(parseCheck(wire(report(a)), true).analysis);
+  for (const flag of [false, "true", 1, null]) {
+    const invalid = {
+      ...a,
+      directories: [{ ...a.directories[0], variables_only: flag }],
+    };
+    assert.throws(() =>
+      parseCheck(wire({ ...report(a), sources: [invalid] }), true),
+    );
+  }
+  const invalidMember = {
+    ...a,
+    directories: [{ ...a.directories[0], members: [a.path] }],
+  };
+  assert.throws(() => parseCheck(wire(report(invalidMember)), true));
+});
+
 test("dependency lifecycle observes clean files, missing creations, directories and deletions within owning roots", () => {
   const graph = new Dependencies();
   const a = source("a"),

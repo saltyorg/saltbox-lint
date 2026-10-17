@@ -40,6 +40,7 @@ This reference describes source-built, unreleased functionality. The published v
 - [traefik-adapter-contract](#traefik-adapter-contract)
 - [traefik-api-contract](#traefik-api-contract)
 - [traefik-renderer-contract](#traefik-renderer-contract)
+- [variable-duplicate](#variable-duplicate)
 
 ## ansible-source-header
 
@@ -258,7 +259,7 @@ example_role_docker_networks: []
 
 Omit redundant empty Docker layers
 
-Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change.
+Standalone empty Docker ports declarations and their unused Ports sections are omitted. Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change.
 
 Source kinds: defaults. Scope: file. Automatic fix: false.
 
@@ -652,7 +653,7 @@ example_role_value: "{{ lookup('role_var', '_value', role='example') if (lookup(
 
 Use the owning role variable prefix
 
-Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces, including _name declarations and overlapping companion prefixes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.
+Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces. Names matching their owning role are allowed to overlap companion prefixes unless a supported explicit role_var read captures the variable; variable-duplicate separately checks declaration clashes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.
 
 Source kinds: defaults. Scope: role defaults and local namespace owners. Automatic fix: false.
 
@@ -903,4 +904,26 @@ Violation example:
 
 ```yaml
 example_role_traefik_enabled: false
+```
+
+## variable-duplicate
+
+Declare variables once
+
+Variable names are unique across defaults, vars and inventory files, including declarations with identical values and repeated declarations in separate YAML documents. Task and handler variables, nested data keys, YAML merge directives and user localhost.yml overrides are excluded. Aliases and merge values are not expanded into declarations. Inventory group and host identities are not variables. Duplicate declarations carry related source locations and have no automatic fix.
+
+Source kinds: defaults, inventory, vars. Scope: project variable declarations. Automatic fix: false.
+
+Expected example:
+
+```yaml
+example_role_enabled: true
+```
+
+Violation example:
+
+```yaml
+example_role_enabled: true
+---
+example_role_enabled: false
 ```

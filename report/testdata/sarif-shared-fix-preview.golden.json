@@ -132,10 +132,10 @@
                 "text": "Omit redundant empty Docker layers"
               },
               "fullDescription": {
-                "text": "Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change."
+                "text": "Standalone empty Docker ports declarations and their unused Ports sections are omitted. Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change."
               },
               "help": {
-                "text": "Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change.\n\nValid example:\nexample_role_docker_ports_default: [80]\nexample_role_docker_ports_custom: []\n\n\nInvalid example:\nexample_role_docker_ports_default: []\nexample_role_docker_ports_custom: []\n"
+                "text": "Standalone empty Docker ports declarations and their unused Ports sections are omitted. Matching empty default/custom lists or maps need a meaningful additional aggregate source; network layers are exempt. Removing declarations requires a deliberate semantic change.\n\nValid example:\nexample_role_docker_ports_default: [80]\nexample_role_docker_ports_custom: []\n\n\nInvalid example:\nexample_role_docker_ports_default: []\nexample_role_docker_ports_custom: []\n"
               },
               "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#docker-empty-layers"
             },
@@ -366,10 +366,10 @@
                 "text": "Use the owning role variable prefix"
               },
               "fullDescription": {
-                "text": "Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces, including _name declarations and overlapping companion prefixes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change."
+                "text": "Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces. Names matching their owning role are allowed to overlap companion prefixes unless a supported explicit role_var read captures the variable; variable-duplicate separately checks declaration clashes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change."
               },
               "help": {
-                "text": "Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces, including _name declarations and overlapping companion prefixes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.\n\nValid example:\nexample_name: example\nexample_role_enabled: true\n\n\nInvalid example:\nother_role_enabled: true\n"
+                "text": "Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces. Names matching their owning role are allowed to overlap companion prefixes unless a supported explicit role_var read captures the variable; variable-duplicate separately checks declaration clashes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.\n\nValid example:\nexample_name: example\nexample_role_enabled: true\n\n\nInvalid example:\nother_role_enabled: true\n"
               },
               "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#role-variable-prefix"
             },
@@ -476,6 +476,19 @@
                 "text": "Roles declaring Traefik use the shared Docker renderer or consume API middleware, enablement and endpoint in actual copy content or referenced templates. Actual retirement fail paths are exempt; comments and debug text do not establish rendering.\n\nValid example:\n# roles/example/defaults/main.yml\nexample_role_traefik_middleware_default_api: \"{{ traefik_default_middleware_api }}\"\nexample_role_traefik_middleware_custom_api: \"\"\nexample_role_traefik_enabled: true\nexample_role_traefik_api_enabled: true\nexample_role_traefik_api_endpoint: \"PathPrefix(`/api`)\"\n\n---\n# roles/example/tasks/main.yml\n- name: Render API router\n  ansible.builtin.copy:\n    dest: /traefik/router.yml\n    mode: \"0644\"\n    content: |\n      http:\n        routers:\n      {% if example_role_traefik_api_enabled %}\n          example-api:\n            entrypoints:\n              - \"websecure\"\n            rule: \"{{ example_role_traefik_api_endpoint }}\"\n            middlewares:\n      {% for item in traefik_middleware_api.split(',') %}\n              - {{ item.strip() | string | to_json }}\n      {% endfor %}\n            service: \"example\"\n      {% endif %}\n        services:\n          example:\n            loadBalancer:\n              servers:\n                - url: \"http://127.0.0.1:8080\"\n\n\nInvalid example:\nexample_role_traefik_enabled: false\n"
               },
               "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#traefik-renderer-contract"
+            },
+            {
+              "id": "variable-duplicate",
+              "shortDescription": {
+                "text": "Declare variables once"
+              },
+              "fullDescription": {
+                "text": "Variable names are unique across defaults, vars and inventory files, including declarations with identical values and repeated declarations in separate YAML documents. Task and handler variables, nested data keys, YAML merge directives and user localhost.yml overrides are excluded. Aliases and merge values are not expanded into declarations. Inventory group and host identities are not variables. Duplicate declarations carry related source locations and have no automatic fix."
+              },
+              "help": {
+                "text": "Variable names are unique across defaults, vars and inventory files, including declarations with identical values and repeated declarations in separate YAML documents. Task and handler variables, nested data keys, YAML merge directives and user localhost.yml overrides are excluded. Aliases and merge values are not expanded into declarations. Inventory group and host identities are not variables. Duplicate declarations carry related source locations and have no automatic fix.\n\nValid example:\nexample_role_enabled: true\n\n\nInvalid example:\nexample_role_enabled: true\n---\nexample_role_enabled: false\n"
+              },
+              "helpUri": "https://github.com/saltyorg/saltbox-lint/blob/main/docs/rules.md#variable-duplicate"
             },
             {
               "id": "yaml-syntax",

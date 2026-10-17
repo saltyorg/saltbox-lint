@@ -1,0 +1,6 @@
+################################
+# Docker
+################################
+
+# Container
+example_role_docker_container: "{{ example_name }}"

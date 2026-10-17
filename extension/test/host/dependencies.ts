@@ -654,10 +654,8 @@ async function dependencies(resources: TestResources): Promise<void> {
     success(
       "late context events retain every rejected selected source after full coverage",
     );
-    const admissionGood = unrelatedGood.replace(
-      "unrelated_value:",
-      "admission_value:",
-    );
+    const admissionGood = (index: number) =>
+      unrelatedGood.replace("unrelated_value:", `admission_value_${index}:`);
     const admissionDirectory = vscode.Uri.joinPath(
       roots[0].uri,
       "roles/admission/defaults",
@@ -672,10 +670,10 @@ async function dependencies(resources: TestResources): Promise<void> {
     const admissionIgnoreText = await readFile(admissionIgnore.fsPath, "utf8");
     await mkdir(admissionDirectory.fsPath, { recursive: true });
     await Promise.all(
-      admissionFiles.map((uri) =>
+      admissionFiles.map((uri, index) =>
         writeFile(
           uri.fsPath,
-          admissionGood.replace("{{ other\n }}", "{{ other }}"),
+          admissionGood(index).replace("{{ other\n }}", "{{ other }}"),
         ),
       ),
     );
@@ -723,7 +721,9 @@ async function dependencies(resources: TestResources): Promise<void> {
       "unrelated document request must start under the admission gate",
     );
     await Promise.all(
-      admissionFiles.map((uri) => writeFile(uri.fsPath, admissionGood)),
+      admissionFiles.map((uri, index) =>
+        writeFile(uri.fsPath, admissionGood(index)),
+      ),
     );
     for (const uri of admissionFiles) editor.removeFile(uri);
     await waitFor(

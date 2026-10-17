@@ -4,12 +4,13 @@ package lint
 // nodes remain caller-owned and mutable between invocations; nothing is attached
 // to them. Direct Rule.Check calls have no analysis and derive current facts.
 type analysis struct {
-	roles          map[string][]*Source
-	runtime        map[*Source][]Expression
-	renderers      map[traefikRoleIdentity]*traefikRoleFacts
-	docker         *dockerPolicyFacts
-	namespaces     map[string][]RelatedLocation
-	namespaceReads map[*Source][]RoleReference
+	roles                map[string][]*Source
+	runtime              map[*Source][]Expression
+	renderers            map[traefikRoleIdentity]*traefikRoleFacts
+	docker               *dockerPolicyFacts
+	namespaces           map[string][]RelatedLocation
+	namespaceReads       map[*Source][]RoleReference
+	variableDeclarations map[string][]RelatedLocation
 }
 
 type traefikRoleIdentity struct{ path, name string }

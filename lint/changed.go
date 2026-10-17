@@ -186,7 +186,12 @@ func affectedSelection(project *Project, commit string, changed, uncertain []str
 				kind = "dependency-file"
 			case slices.ContainsFunc(source.Identity, func(file DependencyFile) bool { return file.Path == name }):
 				kind = "project-identity"
-			case slices.ContainsFunc(source.Directories, func(dir DependencyDirectory) bool { return name == dir.Path || strings.HasPrefix(name, dir.Path+"/") }):
+			case slices.ContainsFunc(source.Directories, func(dir DependencyDirectory) bool {
+				if dir.VariablesOnly && !variableDeclarationPath(name) {
+					return false
+				}
+				return name == dir.Path || strings.HasPrefix(name, dir.Path+"/")
+			}):
 				kind = "dependency-scope"
 			}
 			if kind != "" {

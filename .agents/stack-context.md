@@ -1,7 +1,7 @@
 # Stack Context
 
 Generated: 2026-09-12
-Updated: 2026-10-13 for GitHub Actions summaries and editor-result checkpoints
+Updated: 2026-10-17 for duplicate declarations and declaration-only dependency scopes
 
 ## Stack
 - Go 1.27.2; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
@@ -20,6 +20,7 @@ Updated: 2026-10-13 for GitHub Actions summaries and editor-result checkpoints
 ## Conventions
 - Flat cmd, lint, report, highlight and yamlindex packages separate commands, analysis, policy and display; main owns process stdin/signals.
 - Rules consume shared analysis and return metadata-backed diagnostics. Paths/spans retain source identity; renderers adapt columns for consumers.
+- Variable duplicates are checked across defaults, vars and inventories, excluding user localhost.yml overrides and task/handler declarations. Declaration-only directory observations keep Go affected-file selection and editor invalidation aligned. Role-matching companion prefixes are allowed unless literal parent-role lookups capture the variable; standalone empty Docker ports are rejected.
 - Loading uses ordered Git candidates and bounded read/parse batches. The coordinator publishes selected/context sources deterministically before sequential rule evaluation.
 - Display retains full-source semantic context in both palettes; evidence APIs honor imported theme enablement. Preview indexes are immutable and require exact source matches.
 - Each renderer retains one original semantic document; suggested variants remain ephemeral and never authorize source writes.

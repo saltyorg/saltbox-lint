@@ -135,8 +135,13 @@ func checkRoleVariablePrefix(project *Project, source *Source) []Diagnostic {
 			if prefix == source.Role || len(owners[prefix]) == 0 {
 				continue
 			}
+			reads := relatedNamespaceReads(project, source, declaration.Name, []string{prefix + "_"})
+			if strings.HasPrefix(declaration.Name, source.Role+"_") && len(reads) == 0 {
+				continue
+			}
 			foreign = append(foreign, prefix+"_")
 			related = append(related, owners[prefix]...)
+			related = append(related, reads...)
 		}
 		expectedPrefix := source.Role + "_"
 		if len(foreign) == 0 && (!strings.Contains(declaration.Name, "_role_") || strings.HasPrefix(declaration.Name, expectedPrefix)) {
@@ -144,8 +149,7 @@ func checkRoleVariablePrefix(project *Project, source *Source) []Diagnostic {
 		}
 		expected := fmt.Sprintf("Use an owning-role name such as %q, beginning with %q.", expectedPrefix+declaration.Name, expectedPrefix)
 		if len(foreign) > 0 {
-			expected = fmt.Sprintf("Declare defaults under %q without occupying the foreign namespaces %s. Move shared declarations to their owning role and read them with an explicitly targeted role_var lookup; rename overlapping companion roles to use a disjoint prefix.", expectedPrefix, strings.Join(foreign, ", "))
-			related = append(related, relatedNamespaceReads(project, source, declaration.Name, foreign)...)
+			expected = fmt.Sprintf("Declare defaults under %q without conflicting with the foreign namespaces %s. Role-matching companion prefixes are allowed unless an explicit role_var read captures the variable. Resolve the captured lookup shown in related locations; variable-duplicate separately reports declaration clashes.", expectedPrefix, strings.Join(foreign, ", "))
 		}
 		diagnostics = append(diagnostics, Diagnostic{
 			Path:     source.Path,

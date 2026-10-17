@@ -368,8 +368,11 @@ object with its own `schema_version: 1`. Default schema-2 JSON remains unchanged
 Analysis records cover every selected source, including clean and invalid YAML,
 with the canonical root, a source-set generation digest, exact primary SHA-256
 and dependency observations. Each source lists required files and conservative
-conventional directories with admitted members. File states distinguish read
-bytes, physically missing paths, unavailable or Git-excluded inputs, and regular
+conventional directories with admitted members. Directory observations with
+`variables_only: true` cover defaults, vars
+and inventory declarations across the project, excluding tasks, templates and
+user `localhost.yml` overrides. This scope also observes new declaration files.
+File states distinguish read bytes, physically missing paths, unavailable or Git-excluded inputs, and regular
 or nonregular project identity markers. Separate `identity` observations preserve
 marker existence/type independently of loaded YAML bytes. `discovery` records
 in-root Git admission controls. Missing targets and directory membership

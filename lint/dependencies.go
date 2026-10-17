@@ -18,10 +18,11 @@ import (
 type ContextRequirement string
 
 const (
-	OwningRole      ContextRequirement = "owning-role"
-	SharedDocker    ContextRequirement = "shared-docker"
-	ProjectIdentity ContextRequirement = "project-identity"
-	RoleNamespaces  ContextRequirement = "role-namespaces"
+	OwningRole           ContextRequirement = "owning-role"
+	SharedDocker         ContextRequirement = "shared-docker"
+	ProjectIdentity      ContextRequirement = "project-identity"
+	RoleNamespaces       ContextRequirement = "role-namespaces"
+	VariableDeclarations ContextRequirement = "variable-declarations"
 )
 
 // AnalysisRecord is an optional, data-only check projection. Generation hashes
@@ -48,9 +49,10 @@ type DependencyFile struct {
 	State  string `json:"state"`
 }
 type DependencyDirectory struct {
-	State   string   `json:"state"`
-	Path    string   `json:"path"`
-	Members []string `json:"members"`
+	State         string   `json:"state"`
+	Path          string   `json:"path"`
+	Members       []string `json:"members"`
+	VariablesOnly bool     `json:"variables_only,omitempty"`
 }
 
 func contextRequirements(s *Source, rules []Rule) []ContextRequirement {
@@ -104,6 +106,12 @@ func contextDirectories(s *Source, rules []Rule) []string {
 			for _, dir := range roleNamespaceDirectories(s) {
 				dirs[dir] = true
 			}
+		case VariableDeclarations:
+			if variableDeclarationSource(s) {
+				for _, dir := range variableContextDirectories {
+					dirs[dir] = true
+				}
+			}
 		}
 	}
 	return sortedKeys(dirs)
@@ -134,17 +142,21 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 		source := p.Sources[name]
 		record := SourceDependencies{Path: name, SourceSHA256: hashes[name], Files: []DependencyFile{}, Directories: []DependencyDirectory{}, Identity: []DependencyFile{}, Discovery: p.discovery}
 		files := map[string]bool{name: true}
+		for _, file := range contextFiles(source, rules) {
+			files[file] = true
+		}
 		for _, file := range p.referenceFiles {
 			files[file] = true
 		}
 		dirs := append(contextDirectories(source, rules), p.referenceDirectories[name]...)
 		slices.Sort(dirs)
 		for _, dir := range slices.Compact(dirs) {
+			variablesOnly := variableContextDirectory(dir) && !slices.Contains(p.referenceDirectories[name], dir)
 			directoryMembers := members[dir]
-			if p.referenceDirectories != nil {
+			if p.referenceDirectories != nil || variableContextDirectory(dir) {
 				directoryMembers = nil
 				for _, context := range names {
-					if strings.HasPrefix(context, dir+"/") {
+					if strings.HasPrefix(context, dir+"/") && (!variablesOnly || variableDeclarationPath(context)) {
 						directoryMembers = append(directoryMembers, context)
 					}
 				}
@@ -155,7 +167,7 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 			for _, context := range directoryMembers {
 				files[context] = true
 			}
-			record.Directories = append(record.Directories, DependencyDirectory{Path: dir, State: p.directories[dir], Members: directoryMembers})
+			record.Directories = append(record.Directories, DependencyDirectory{Path: dir, State: p.directories[dir], Members: directoryMembers, VariablesOnly: variablesOnly})
 		}
 		// Literal template targets include negative lookups. Directory observations
 		// also invalidate newly admitted templates regardless of filename extension.
@@ -190,7 +202,7 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 			}
 			for i := range record.Directories {
 				directory := &record.Directories[i]
-				if strings.HasPrefix(owner, directory.Path+"/") && !slices.Contains(directory.Members, owner) {
+				if strings.HasPrefix(owner, directory.Path+"/") && (!directory.VariablesOnly || variableDeclarationPath(owner)) && !slices.Contains(directory.Members, owner) {
 					directory.Members = append(directory.Members, owner)
 					slices.Sort(directory.Members)
 				}

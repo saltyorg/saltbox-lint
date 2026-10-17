@@ -83,8 +83,8 @@ func TestRoleVariablePrefixOwnership(t *testing.T) {
 		{"foreign instance prefix", "roles/periphery/defaults/main.yml", "komodo_extra: value\n", owner, []string{"komodo_extra"}},
 		{"foreign role name", "roles/periphery/defaults/main.yml", "komodo_name: foreign-name\n", owner, []string{"komodo_name"}},
 		{"foreign role-default prefix", "roles/periphery/defaults/main.yml", "komodo_role_extra: value\n", owner, []string{"komodo_role_extra"}},
-		{"overlapping companion", "roles/komodo_periphery/defaults/main.yml", prefixFixture(t, "komodo_periphery.bad.yml"), owner, []string{"komodo_periphery_name", "komodo_periphery_role_docker_container"}},
-		{"custom instance still violates ownership", "roles/komodo_periphery/defaults/main.yml", prefixFixture(t, "komodo_periphery.bad.yml"), strings.Replace(owner, "komodo_name: komodo", "komodo_name: control", 1), []string{"komodo_periphery_name", "komodo_periphery_role_docker_container"}},
+		{"overlapping companion", "roles/komodo_periphery/defaults/main.yml", prefixFixture(t, "komodo_periphery.bad.yml"), owner, []string{"komodo_periphery_name"}},
+		{"custom instance still violates ownership", "roles/komodo_periphery/defaults/main.yml", prefixFixture(t, "komodo_periphery.bad.yml"), strings.Replace(owner, "komodo_name: komodo", "komodo_name: control", 1), []string{"komodo_periphery_name"}},
 		{"dynamic instance still violates ownership", "roles/periphery/defaults/main.yml", "komodo_extra: '{{ left if enabled else right }}'\n", "komodo_name: '{{ inventory_name }}'\n", []string{"komodo_extra"}},
 		{"quoted key keeps exact span", "roles/periphery/defaults/main.yml", "'komodo_extra': value # preserve\n", owner, []string{"'komodo_extra'"}},
 		{"resource companion", "resources/roles/periphery/defaults/private/options.yml", "komodo_extra: value\n", owner, []string{"komodo_extra"}},
@@ -124,6 +124,19 @@ func TestRoleVariablePrefixOwnershipAllowsSeparateDeclarationsAndReads(t *testin
 	}
 }
 
+func TestRoleVariablePrefixAllowsMatchingCompanionNames(t *testing.T) {
+	const child = "roles/arcane_agent/defaults/main.yml"
+	for _, instance := range []string{"arcane", "control", "'{{ inventory_name }}'"} {
+		project := prefixProject(t, map[string]string{
+			"roles/arcane/defaults/main.yml": "arcane_name: " + instance + "\narcane_role_enabled: true\n",
+			child:                            prefixFixture(t, "arcane_agent.good.yml"),
+		})
+		if ds := Analyze(project, prefixRules()); len(ds) != 0 {
+			t.Fatalf("matching companion prefix diagnosed: %+v", ds)
+		}
+	}
+}
+
 func TestRoleVariablePrefixOwnershipDoesNotInventMissingRoles(t *testing.T) {
 	for _, files := range []map[string]string{
 		{"roles/periphery/defaults/main.yml": "komodo_extra: value\n"},
@@ -160,10 +173,10 @@ func TestRoleVariablePrefixOwnershipRecomputesContext(t *testing.T) {
 	project.Sources[prefixOwnerDefaults] = owner
 	project.Selected[prefixOwnerDefaults] = false
 	diagnostics := Analyze(project, prefixRules())
-	if len(diagnostics) != 2 {
+	if len(diagnostics) != 1 {
 		t.Fatalf("added context was not used: %+v", diagnostics)
 	}
-	for index, key := range []string{"komodo_periphery_name", "komodo_periphery_role_docker_container"} {
+	for index, key := range []string{"komodo_periphery_name"} {
 		assertPrefixViolation(t, project, diagnostics[index], foreign, key, prefixOwnerDefaults)
 	}
 	delete(project.Sources, prefixOwnerDefaults)
@@ -179,7 +192,7 @@ func TestRoleVariablePrefixOwnershipSelectedFileLoadsContext(t *testing.T) {
 				name, path, input string
 				keys              []string
 			}{
-				{"overlap", "roles/komodo_periphery/defaults/main.yml", prefixFixture(t, "komodo_periphery.bad.yml"), []string{"komodo_periphery_name", "komodo_periphery_role_docker_container"}},
+				{"overlap", "roles/komodo_periphery/defaults/main.yml", prefixFixture(t, "komodo_periphery.bad.yml"), []string{"komodo_periphery_name"}},
 				{"disjoint", "roles/periphery/defaults/main.yml", "komodo_extra: value\nkomodo_role_extra: value\n", []string{"komodo_extra", "komodo_role_extra"}},
 			} {
 				t.Run(test.name, func(t *testing.T) {
@@ -246,10 +259,10 @@ func TestRoleVariablePrefixOwnershipTracksMissingOwnerContext(t *testing.T) {
 		t.Fatalf("new owner did not change dependency generation: %+v", after.Dependencies)
 	}
 	diagnostics := Analyze(after, prefixRules())
-	if len(diagnostics) != 2 {
+	if len(diagnostics) != 1 {
 		t.Fatalf("new owner context was not detected: %+v", diagnostics)
 	}
-	for index, key := range []string{"komodo_periphery_name", "komodo_periphery_role_docker_container"} {
+	for index, key := range []string{"komodo_periphery_name"} {
 		assertPrefixViolation(t, after, diagnostics[index], foreign, key, prefixOwnerDefaults)
 	}
 }
@@ -309,7 +322,7 @@ func TestRoleVariablePrefixOwnershipRelatedCapturedReads(t *testing.T) {
 		foreign:             prefixFixture(t, "komodo_periphery.bad.yml"),
 	})
 	diagnostics := Analyze(project, prefixRules())
-	if len(diagnostics) != 2 {
+	if len(diagnostics) != 1 {
 		t.Fatalf("captured declarations missed: %+v", diagnostics)
 	}
 	for _, path := range []string{parentTasks, foreign} {
@@ -324,9 +337,6 @@ func TestRoleVariablePrefixOwnershipRelatedCapturedReads(t *testing.T) {
 	}
 	if len(diagnostics[0].Related) != 3 {
 		t.Errorf("name collision related locations = %+v, want owner and two literal reads", diagnostics[0].Related)
-	}
-	if len(diagnostics[1].Related) != 1 {
-		t.Errorf("container declaration gained an unrelated name read: %+v", diagnostics[1].Related)
 	}
 }
 
@@ -384,7 +394,7 @@ func TestRoleVariablePrefixOwnershipUnrelatedCallersPreserveSelectionParity(t *t
 	}
 	full.Selected = selected.Selected
 	got, want := Analyze(selected, prefixRules()), Analyze(full, prefixRules())
-	if len(got) != 2 || !reflect.DeepEqual(got, want) {
+	if len(got) != 1 || !reflect.DeepEqual(got, want) {
 		t.Fatalf("selected/full related locations differ: %+v / %+v", got, want)
 	}
 	for _, diagnostic := range got {
@@ -408,8 +418,8 @@ func TestRoleVariablePrefixOwnershipChangedSinceOwnerLifecycle(t *testing.T) {
 				t.Fatalf("new owner did not select existing foreign declarations: %+v", added.Selection)
 			}
 			diagnostics := slices.DeleteFunc(Analyze(added, prefixRules()), func(diagnostic Diagnostic) bool { return diagnostic.Path != foreign })
-			if len(diagnostics) != 2 {
-				t.Fatalf("new owner did not expose both collisions: %+v", diagnostics)
+			if len(diagnostics) != 1 {
+				t.Fatalf("new owner did not expose the captured name: %+v", diagnostics)
 			}
 			commitChangedFixture(t, root)
 			const renamed = "resources/roles/komodo/defaults/main.yml"
@@ -430,10 +440,10 @@ func TestRoleVariablePrefixOwnershipChangedSinceOwnerLifecycle(t *testing.T) {
 				}
 				return
 			}
-			if len(diagnostics) != 2 {
+			if len(diagnostics) != 1 {
 				t.Fatalf("relocated owner lost namespace ownership: %+v", diagnostics)
 			}
-			for index, key := range []string{"komodo_periphery_name", "komodo_periphery_role_docker_container"} {
+			for index, key := range []string{"komodo_periphery_name"} {
 				assertPrefixViolation(t, changed, diagnostics[index], foreign, key, renamed)
 				if slices.ContainsFunc(diagnostics[index].Related, func(related RelatedLocation) bool { return related.Path == prefixOwnerDefaults }) {
 					t.Errorf("relocated owner retained stale related path: %+v", diagnostics[index])

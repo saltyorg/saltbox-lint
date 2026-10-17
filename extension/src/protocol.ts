@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { variableDeclarationPath } from "./variable-sources.ts";
 
 export interface Position {
   line: number;
@@ -60,6 +61,7 @@ export interface SourceDependencies {
     path: string;
     state: "directory" | "missing" | "non-directory";
     members: string[];
+    variables_only?: true;
   }[];
 }
 export interface AnalysisRecord {
@@ -343,6 +345,10 @@ export function analysisRecord(
       object(directory);
       sourcePath(directory.path);
       valid(
+        directory.variables_only === undefined ||
+          directory.variables_only === true,
+      );
+      valid(
         ["directory", "missing", "non-directory"].includes(
           directory.state as string,
         ),
@@ -357,12 +363,17 @@ export function analysisRecord(
         valid(
           member.startsWith(`${directory.path}/`) &&
             !members.has(member) &&
-            files.get(member)?.state === "read",
+            files.get(member)?.state === "read" &&
+            (!directory.variables_only || variableDeclarationPath(member)),
         );
         members.add(member);
       }
       for (const [file, entry] of files)
-        if (entry.state === "read" && file.startsWith(`${directory.path}/`))
+        if (
+          entry.state === "read" &&
+          file.startsWith(`${directory.path}/`) &&
+          (!directory.variables_only || variableDeclarationPath(file))
+        )
           valid(members.has(file));
     }
   }
