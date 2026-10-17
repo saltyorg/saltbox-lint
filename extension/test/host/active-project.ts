@@ -567,10 +567,7 @@ export async function runActiveProject(
             "late hidden save and closed-file results update cache without publishing",
             async () => {
               const late = await vscode.workspace.openTextDocument(
-                vscode.Uri.joinPath(
-                  roots[0].uri,
-                  "roles/late/defaults/main.yml",
-                ),
+                vscode.Uri.joinPath(roots[0].uri, "late.yml"),
               );
               await show(late);
               await check(late);

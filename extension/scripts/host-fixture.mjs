@@ -283,34 +283,37 @@ export async function populateHostFixture(
     writeFileSync(resolve(root, "one/other.yml"), 'value: "{{ other\n }}"\n');
   }
   if (env.SALTBOX_TEST_ACTIVE_PROJECT === "1") {
-    // Late-save cache checks need a role with no pending context peers.
-    mkdirSync(resolve(root, "one/roles/late/defaults"), { recursive: true });
-    writeFileSync(
-      resolve(root, "one/roles/late/defaults/main.yml"),
-      'value: "{{ initial\n }}"\n',
-    );
+    // The isolated late save must not depend on other declaration files.
+    writeFileSync(resolve(root, "one/late.yml"), 'value: "{{ initial\n }}"\n');
     for (const name of ["one", "two"]) {
       writeFileSync(resolve(root, name, "README.md"), "Project context\n");
       writeFileSync(
         resolve(root, name, "roles/example/defaults/saved.yml"),
-        'value: "{{ saved\n }}"\n',
+        'example_saved_value: "{{ saved\n }}"\n',
       );
     }
     writeFileSync(
       resolve(root, "one/roles/example/defaults/closed.yml"),
-      'value: "{{ closed\n }}"\n',
+      'example_closed_value: "{{ closed\n }}"\n',
     );
     for (const name of [
       "related.yml",
       "related-closed.yml",
       "a-related.yml",
       "z-gate.yml",
-    ])
+    ]) {
+      const prefix =
+        "example_" + name.replace(/\.yml$/, "").replaceAll("-", "_");
       writeFileSync(
         resolve(root, "one/roles/example/defaults", name),
-        "################################\n# Settings\n################################\nfirst: 1\n" +
-          "################################\n# Settings\n################################\nsecond: 2\n",
+        "################################\n# Settings\n################################\n" +
+          prefix +
+          "_first: 1\n" +
+          "################################\n# Settings\n################################\n" +
+          prefix +
+          "_second: 2\n",
       );
+    }
   }
   if (env.SALTBOX_TEST_REGRESSIONS === "1") {
     for (const name of [

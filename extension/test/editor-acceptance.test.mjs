@@ -596,6 +596,59 @@ test("queue fixture retains all 46 entries in each independent repository", asyn
     );
 });
 
+test("active-project fixtures isolate late saves and keep related declarations distinct", async (t) => {
+  for (const mode of ["active-project", "active-project-cache"]) {
+    const profile = profileFor(t);
+    await populateHostFixture(profile, {
+      env: workerEnvironment(profile, mode),
+      extensionDirectory,
+      command: async () => "",
+    });
+    assert.equal(
+      readFileSync(join(profile.workspaceRoot, "one/late.yml"), "utf8"),
+      'value: "{{ initial\n }}"\n',
+    );
+    assert.equal(
+      existsSync(
+        join(profile.workspaceRoot, "one/roles/late/defaults/main.yml"),
+      ),
+      false,
+      "late-save control must be outside cross-file declaration dependencies",
+    );
+    const names = new Set();
+    for (const filename of readdirSync(
+      join(profile.workspaceRoot, "one/roles/example/defaults"),
+    )) {
+      const text = readFileSync(
+        join(profile.workspaceRoot, "one/roles/example/defaults", filename),
+        "utf8",
+      );
+      for (const match of text.matchAll(/^([a-z][a-z0-9_]*):/gm)) {
+        assert.equal(
+          names.has(match[1]),
+          false,
+          `duplicate fixture variable ${match[1]}`,
+        );
+        names.add(match[1]);
+      }
+      if (
+        [
+          "related.yml",
+          "related-closed.yml",
+          "a-related.yml",
+          "z-gate.yml",
+        ].includes(filename)
+      ) {
+        assert.equal(
+          text.match(/^# Settings$/gm)?.length,
+          2,
+          "related-location section workload is preserved",
+        );
+      }
+    }
+  }
+});
+
 test("disabled live performance preserves original fixtures and registers controller configuration", async (t) => {
   const profile = profileFor(t);
   const env = workerEnvironment(profile, "live-performance");
