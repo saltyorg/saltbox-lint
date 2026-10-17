@@ -293,12 +293,12 @@ export async function runMarkers(parentSignal?: AbortSignal): Promise<void> {
       assert.ok((await formatting(document)).length > 0);
       await vscode.workspace.fs.writeFile(
         vscode.Uri.joinPath(roots[0].uri, ".saltbox-lint"),
-        Buffer.from("contents are ignored\n"),
+        Buffer.from("{}\n"),
       );
       await vscode.commands.executeCommand("saltboxLint.checkDocument");
       await waitFor(
         () => diagnostics(document.uri).length > 0,
-        "nonempty marker contents are ignored",
+        "nonempty valid configuration keeps the root enabled",
       );
       const renamedMarker = vscode.Uri.joinPath(
         roots[0].uri,
