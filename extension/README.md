@@ -115,8 +115,8 @@ runtime downloads, telemetry, Python/Ansible execution, or persistent server.
 
 ## Role lookup navigation
 
-Navigation is available in source builds and remains unreleased. In an eligible
-marked YAML or Ansible document, Go to Definition returns every applicable local
+Navigation is available from v0.2.0. In an eligible marked YAML or Ansible
+document, Go to Definition returns every applicable local
 declaration candidate for a literal `role_var` or `role_web` lookup. Hover shows
 escaped declaration comments and the literal source representation. These are
 source declarations; the extension does not evaluate runtime values or Ansible
@@ -150,8 +150,7 @@ appears as partial coverage. See [template coverage](https://github.com/saltyorg
 
 ## Rule help and check status
 
-Rule help and status are source-built, unreleased additions. They are not in the
-published v0.1.0 extension.
+Rule help and status are available from v0.2.0.
 
 **Saltbox Lint: Explain This Rule** reads the bundled CLI registry and offers
 rule explanations and expected/violation examples offline. A diagnostic quick

@@ -2,7 +2,7 @@
 
 Generated from the rule registry. Run `make rules-update` to refresh it.
 
-This reference describes source-built, unreleased functionality. The published v0.1.0 CLI does not export registry JSON or source explanations.
+This reference describes the current rule registry. Registry JSON and source explanations require v0.2.0 or newer.
 
 - [ansible-source-header](#ansible-source-header)
 - [ansible-static-import](#ansible-static-import)

@@ -139,8 +139,7 @@ failures, and JSON output failures are operational errors on stderr with exit
 
 ## Check affected worktree files
 
-`check --changed-since REF` is available in source builds and remains unreleased.
-The published v0.1.0 CLI does not provide it.
+`check --changed-since REF` is available from v0.2.0.
 
 ```sh
 saltbox-lint check --root . --changed-since HEAD
@@ -215,8 +214,8 @@ missing commit. These examples do not modify consumer repositories.
 ## Role reference inspection
 
 `references` inspects static `role_var` and `role_web` declaration candidates,
-including cross-role locations and unresolved reasons. It is available in source
-builds and remains unreleased. It never evaluates runtime values or writes sources.
+including cross-role locations and unresolved reasons. It is available from
+v0.2.0. It never evaluates runtime values or writes sources.
 
 ```sh
 saltbox-lint references roles/example/tasks/main.yml --root .
@@ -228,8 +227,7 @@ candidate layers, dependency observations and conservative coverage limits.
 
 ## Rule and source explanations
 
-These commands are available in source builds and remain unreleased. The
-published v0.1.0 CLI does not provide registry JSON or source explanations.
+Registry JSON and source explanations are available from v0.2.0.
 
 ```sh
 saltbox-lint rules --format json

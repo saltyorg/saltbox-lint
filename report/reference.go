@@ -11,7 +11,7 @@ import (
 // RuleReference renders the same data used by the JSON registry and editor help.
 func RuleReference(out io.Writer, registry lint.RuleRegistry) error {
 	var b strings.Builder
-	b.WriteString("# Rule reference\n\nGenerated from the rule registry. Run `make rules-update` to refresh it.\n\nThis reference describes source-built, unreleased functionality. The published v0.1.0 CLI does not export registry JSON or source explanations.\n\n")
+	b.WriteString("# Rule reference\n\nGenerated from the rule registry. Run `make rules-update` to refresh it.\n\nThis reference describes the current rule registry. Registry JSON and source explanations require v0.2.0 or newer.\n\n")
 	for _, rule := range registry.Rules {
 		fmt.Fprintf(&b, "- [%s](#%s)\n", rule.ID, rule.ID)
 	}

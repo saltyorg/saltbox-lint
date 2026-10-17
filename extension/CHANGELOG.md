@@ -1,12 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-17)
 
-- Await process-tree termination in cleanup tests before checking descendants.
-- Isolate installed quick-fix tests from create-watcher rechecks.
-- Centralize cached diagnostic lifecycle and rule structural-fix registration.
-- Align local extension bundling and CI coverage across all release targets.
-- Repair installation/adoption guides and check public links and platform docs.
+- Add optional checks while typing with `saltboxLint.checkOnType`, disabled by default.
+- Add definition, hover, completion, references and static impact inspection for
+  supported `role_var` and `role_web` lookups.
+- Add offline rule help, expected-format examples and source freshness status in
+  the editor, plus CLI registry JSON and source explanations.
+- Add changed-file checks with `--changed-since`, static reference inspection,
+  check statistics and validated role scaffolding with preview before creation.
+- Add SARIF output for code scanning, including related source locations.
+- Add bounded, read-only Jinja template checking and navigation with explicit
+  partial-coverage reasons for unsupported syntax and configuration.
+- Reject empty Docker port declarations and duplicate variable declarations
+  across defaults, vars and inventories. Exclude tasks and user `localhost.yml`
+  overrides, and accept owning-role prefixes when namespaces overlap safely.
+- Forbid `role_var` lookups in Paths defaults and detect foreign role namespaces.
+- Improve large YAML mapping parsing, Unicode/CRLF source positions, alias
+  ownership, stale-result handling and joined process cleanup.
+- Expand validation to six native source targets and installed packages at both
+  configured editor versions, with Alpine CLI probes and vulnerability checks.
+- Publish all eight qualified VSIX packages to Marketplace after GitHub source
+  publication, using Azure workload identity federation.
 
 ## 0.1.0 (2026-09-20)
 

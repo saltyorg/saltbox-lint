@@ -1,7 +1,7 @@
 # Role reference inspection
 
-`references` is available in source builds and remains unreleased. It reads YAML
-and local context without executing lookups, templates, modules or playbooks.
+`references` is available from v0.2.0. It reads YAML and local context without
+executing lookups, templates, modules or playbooks.
 It never writes source files. Explicit templates expose supported static reads while remaining read-only.
 
 ```sh
@@ -137,8 +137,8 @@ unresolved queries retain dependencies so later changes can invalidate them.
 
 ## Editor query endpoint
 
-`query` is an unreleased read-only endpoint for one exact YAML buffer. It reuses
-this declaration index and resolver. Supply an operation, a filename and a UTF-8
+`query` is a read-only endpoint available from v0.2.0 for one exact YAML buffer.
+It reuses this declaration index and resolver. Supply an operation, a filename and a UTF-8
 byte offset through the current snapshot. Offsets inside encoded characters or
 between CR and LF are rejected. The snapshot is limited to 16 MiB.
 

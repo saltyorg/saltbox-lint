@@ -80,6 +80,10 @@ validation again. Release authorization must cover both the GitHub release and
 the automatic Marketplace upload. Consumer version updates require separate
 authorization.
 
+Keep the extension manifest and lockfile versions aligned, and add a matching
+version heading to `extension/CHANGELOG.md`. The release workflow prepends that
+section to GitHub's generated release notes and refuses a missing section.
+
 ### Marketplace authentication and upload
 
 The release workflow uses the GitHub environment `marketplace-publish`. Its
