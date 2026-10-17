@@ -7,7 +7,7 @@ import (
 )
 
 // Candidate spellings authorize context reads, not ownership. Only admitted
-// conventional role sources can establish a namespace below.
+// role defaults declarations can establish a namespace below.
 func declarationRolePrefixes(name string) []string {
 	var prefixes []string
 	for i := range len(name) {
@@ -56,24 +56,18 @@ func roleNamespaceOwners(project *Project) map[string][]RelatedLocation {
 		if source == nil || source.Role == "" || source.RolePath == "" || len(source.parseDiagnostics) > 0 {
 			continue
 		}
-		if source.Kind != Defaults && source.Kind != Tasks && source.Kind != Handlers && source.Kind != Vars {
+		if source.Kind != Defaults {
 			continue
 		}
-		span, rank := Span{}, 0
-		if len(source.Documents) > 0 && source.Documents[0] != nil {
-			span = source.Documents[0].Span
+		declarations := topLevelDeclarations(source)
+		if len(declarations) == 0 {
+			continue
 		}
-		if source.Kind == Defaults {
-			rank = 1
-			declarations := topLevelDeclarations(source)
-			if len(declarations) > 0 {
-				span = declarations[0].Key.Span
-			}
-			for _, declaration := range declarations {
-				if declaration.Name == source.Role+"_name" {
-					span, rank = declaration.Key.Span, 2
-					break
-				}
+		span, rank := declarations[0].Key.Span, 1
+		for _, declaration := range declarations {
+			if declaration.Name == source.Role+"_name" {
+				span, rank = declaration.Key.Span, 2
+				break
 			}
 		}
 		if prior, ok := anchors[source.RolePath]; ok && prior.rank >= rank {

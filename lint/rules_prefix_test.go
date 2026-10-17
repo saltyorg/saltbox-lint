@@ -153,6 +153,37 @@ func TestRoleVariablePrefixOwnershipDoesNotInventMissingRoles(t *testing.T) {
 	}
 }
 
+func TestRoleVariablePrefixOwnershipRequiresDefaults(t *testing.T) {
+	const declaration = "resources/roles/dns/defaults/main.yml"
+	const tasks = "roles/cloudflare/tasks/main.yml"
+	root := t.TempDir()
+	writeTestSource(t, filepath.Join(root, declaration), "cloudflare_allow_nested_proxy: false\n")
+	writeTestSource(t, filepath.Join(root, tasks), "- ansible.builtin.debug:\n    msg: cloudflare\n")
+	for _, selected := range []string{declaration, "."} {
+		t.Run(selected, func(t *testing.T) {
+			project, err := Load(t.Context(), Options{Root: root, Paths: []string{filepath.Join(root, selected)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diagnostics := Analyze(project, prefixRules()); len(diagnostics) != 0 {
+				t.Fatalf("role without defaults claimed the cloudflare namespace: %+v", diagnostics)
+			}
+		})
+	}
+	writeTestSource(t, filepath.Join(root, "vars.yml"), "cloudflare_allow_nested_proxy: true\n")
+	project, err := Load(t.Context(), Options{Root: root, Paths: []string{filepath.Join(root, declaration)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := slices.DeleteFunc(Rules(), func(rule Rule) bool {
+		return rule.ID != "role-variable-prefix" && rule.ID != "variable-duplicate"
+	})
+	diagnostics := Analyze(project, rules)
+	if len(diagnostics) != 1 || diagnostics[0].RuleID != "variable-duplicate" || diagnostics[0].Path != declaration {
+		t.Fatalf("role without defaults must still report declaration clashes: %+v", diagnostics)
+	}
+}
+
 func TestRoleVariablePrefixOwnershipSameRoleInBothRoots(t *testing.T) {
 	project := prefixProject(t, map[string]string{
 		prefixOwnerDefaults:                        prefixFixture(t, "komodo.defaults.yml"),
@@ -232,6 +263,7 @@ func TestRoleVariablePrefixOwnershipTracksMissingOwnerContext(t *testing.T) {
 	root := t.TempDir()
 	const foreign = "roles/komodo_periphery/defaults/main.yml"
 	writeTestSource(t, filepath.Join(root, foreign), prefixFixture(t, "komodo_periphery.bad.yml"))
+	writeTestSource(t, filepath.Join(root, "roles/komodo/tasks/main.yml"), prefixFixture(t, "komodo.tasks.yml"))
 	options := Options{Root: root, Paths: []string{filepath.Join(root, foreign)}, IncludeAnalysis: true}
 	before, err := Load(t.Context(), options)
 	if err != nil {
@@ -265,6 +297,19 @@ func TestRoleVariablePrefixOwnershipTracksMissingOwnerContext(t *testing.T) {
 	for index, key := range []string{"komodo_periphery_name"} {
 		assertPrefixViolation(t, after, diagnostics[index], foreign, key, prefixOwnerDefaults)
 	}
+	if err := os.Remove(filepath.Join(root, prefixOwnerDefaults)); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := Load(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.Dependencies.Generation == after.Dependencies.Generation {
+		t.Fatal("removing owner defaults did not invalidate dependencies")
+	}
+	if diagnostics := Analyze(removed, prefixRules()); len(diagnostics) != 0 {
+		t.Fatalf("remaining tasks retained ownership after defaults removal: %+v", diagnostics)
+	}
 }
 
 func TestRoleVariablePrefixOwnershipRequiresValidConventionalRoleContext(t *testing.T) {
@@ -272,9 +317,13 @@ func TestRoleVariablePrefixOwnershipRequiresValidConventionalRoleContext(t *test
 		name, ownerPath, input string
 		wantOwnership          bool
 	}{
-		{"tasks establish ownership", "roles/komodo/tasks/main.yml", "- name: Known owning role\n  ansible.builtin.debug:\n    msg: owner\n", true},
-		{"handlers establish ownership", "roles/komodo/handlers/main.yml", "- name: Known owning role\n  ansible.builtin.debug:\n    msg: owner\n", true},
-		{"vars establish ownership", "roles/komodo/vars/main.yml", "komodo_role_settings: value\n", true},
+		{"defaults establish ownership", prefixOwnerDefaults, "komodo_name: komodo\n", true},
+		{"defaults without instance name establish ownership", prefixOwnerDefaults, "komodo_role_settings: value\n", true},
+		{"tasks alone do not establish ownership", "roles/komodo/tasks/main.yml", "- name: Known role\n  ansible.builtin.debug:\n    msg: owner\n", false},
+		{"handlers alone do not establish ownership", "roles/komodo/handlers/main.yml", "- name: Known role\n  ansible.builtin.debug:\n    msg: owner\n", false},
+		{"vars alone do not establish ownership", "roles/komodo/vars/main.yml", "komodo_role_settings: value\n", false},
+		{"empty defaults are incomplete", prefixOwnerDefaults, "# No defaults declared\n", false},
+		{"empty defaults mapping is incomplete", prefixOwnerDefaults, "{}\n", false},
 		{"raw template alone is incomplete", "roles/komodo/templates/main.yml.j2", "{{ komodo_name }}\n", false},
 		{"malformed defaults are incomplete", prefixOwnerDefaults, "komodo_name: [\n", false},
 	} {
