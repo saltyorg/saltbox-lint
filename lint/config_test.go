@@ -32,7 +32,11 @@ func TestNamespaceSharingIsDirectional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Root != root {
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Root != canonicalRoot {
 		t.Fatalf("config marker did not establish source root: %s", project.Root)
 	}
 	if diagnostics := Analyze(project, duplicateRules()); len(diagnostics) != 1 {
