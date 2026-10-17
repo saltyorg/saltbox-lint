@@ -28,7 +28,8 @@ For editor diagnostics and bundled installation, follow the
 [VS Code extension guide](https://github.com/saltyorg/saltbox-lint/blob/main/extension/README.md).
 Create an empty regular `.saltbox-lint` file at each selected extension source
 root to enable it. The standalone CLI and process tasks do not require this
-extension opt-in marker.
+extension opt-in marker. Version v0.2.1 and newer also read optional
+project configuration from this file.
 
 With Go 1.27.2 or newer, installation from a complete local checkout is also
 supported. The checkout must include the repository's `third_party/nuri`
@@ -43,6 +44,50 @@ go install .
 Source builds without release linker flags report `dev`; `go version -m` shows
 Go module/build metadata. For the checked local build path, run `make build`
 and use `bin/saltbox-lint`.
+
+## Project configuration and inline ignores
+
+Configuration and generic inline ignores require v0.2.1 or newer.
+
+The source root's regular `.saltbox-lint` file may contain YAML configuration.
+A missing file, an empty marker, comments alone or `{}` keep the default policy.
+For example:
+
+```yaml
+namespace_sharing:
+  remote:
+    - rclone
+  cloudplow:
+    - rclone
+```
+
+Each key is the declaring role; its list names other roles whose variable
+namespaces it may use. This permits `remote` and `cloudplow` to declare
+`rclone_` variables. It does not permit the reverse direction or allow other
+roles to use those namespaces. Sharing permissions do not suppress duplicate
+variable declarations. Use exact snake_case role names, without paths or globs.
+Unknown fields, repeated permissions, invalid shapes, aliases, anchors and YAML
+tags produce a configuration error with exit status 2.
+
+The CLI reads configuration from `--root`, or its inferred source root.
+An existing `.saltbox-lint` also establishes a root for inference. The extension
+uses the same configuration and refreshes checks when it is saved. Configuration
+creation, changes and removal affect `--changed-since` selection too. Unsaved
+configuration edits are not used.
+
+To ignore one YAML finding, put a trailing comment on the same physical line as
+its primary location:
+
+```yaml
+custom_mount_branch: mergerfs # saltbox-lint ignore role-variable-prefix
+```
+
+Only that rule on that line is suppressed. Other rules and lines remain checked.
+Use an exact registered rule ID from `saltbox-lint rules`; YAML syntax errors and
+`lint-directive` cannot be ignored. Standalone comments, unknown IDs and malformed
+directives remain errors. Quoted strings and block scalar contents do not act as
+directives. Automatic lint fixes are declined if their edit range would touch a
+line carrying an ignore; explicit canonical formatting remains a separate action.
 
 ## Commands
 

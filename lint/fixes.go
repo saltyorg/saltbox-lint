@@ -122,7 +122,7 @@ func planFixes(project *Project, diagnostics []Diagnostic, decisions *[]FixDecis
 				break
 			}
 		}
-		if !valid {
+		if !valid || !fixesPreserveIgnoredLines(source, edits) {
 			continue
 		}
 		after := applyEdits(source.Data, edits)
@@ -447,6 +447,9 @@ func replaceFile(rootPath string, root *os.Root, path string, change Change, ide
 }
 
 func verifiedChange(s *Source, change Change) bool {
+	if !fixesPreserveIgnoredLines(s, replacementEdits(s.Data, change.After)) {
+		return false
+	}
 	if len(change.fixRules) == 0 {
 		return verifiedCandidate(s, change.After)
 	}

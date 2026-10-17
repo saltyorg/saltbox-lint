@@ -477,7 +477,7 @@ value: "{{ (a if condition else b) }}"
 
 Keep lint allowances exact and local
 
-Only # saltbox-lint allow cmd-shell is supported, on a Docker healthcheck test key that needs shell execution. Unknown, malformed, misplaced and unnecessary directives fail; quoted and block command contents are not comments.
+Use # saltbox-lint allow cmd-shell on a Docker healthcheck test key that needs shell execution, or # saltbox-lint ignore RULE_ID after YAML code on the primary finding line. An inline ignore suppresses only the named rule on that physical line, never YAML syntax or lint-directive validation. Unknown, malformed and misplaced directives fail; unnecessary cmd-shell allowances fail. Quoted and block scalar contents are not comments.
 
 Source kinds: defaults, generic, handlers, inventory, playbook, tasks, vars. Scope: file. Automatic fix: false.
 
@@ -653,7 +653,7 @@ example_role_value: "{{ lookup('role_var', '_value', role='example') if (lookup(
 
 Use the owning role variable prefix
 
-Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces. Names matching their owning role are allowed to overlap companion prefixes unless a supported explicit role_var read captures the variable; variable-duplicate separately checks declaration clashes. Valid local defaults, tasks, handlers or vars establish an owner; missing or malformed context does not. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.
+Top-level role defaults containing _role_ use their exact owning role prefix. All top-level defaults also avoid another locally established role's instance and role-default namespaces. Names matching their owning role are allowed to overlap companion prefixes unless a supported explicit role_var read captures the variable; variable-duplicate separately checks declaration clashes. Valid local defaults declarations establish an owner; tasks, handlers and vars alone do not. Missing, empty or malformed defaults do not claim a namespace. Directional namespace_sharing in the root .saltbox-lint file permits listed foreign namespaces for the declaring role without suppressing duplicate declarations. Explicit cross-role reads and inventory overrides remain valid. Namespace renames require a deliberate semantic change.
 
 Source kinds: defaults. Scope: role defaults and local namespace owners. Automatic fix: false.
 

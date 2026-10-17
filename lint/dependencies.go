@@ -226,6 +226,9 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 		if slices.Contains(contextRequirements(source, rules), ProjectIdentity) {
 			record.Identity = append(record.Identity, p.identity...)
 		}
+		if p.configuration.observation.Path != "" {
+			record.Files = append(record.Files, p.configuration.observation)
+		}
 		slices.SortFunc(record.Files, func(a, b DependencyFile) int { return strings.Compare(a.Path, b.Path) })
 		result.Sources = append(result.Sources, record)
 	}

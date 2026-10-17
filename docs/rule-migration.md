@@ -68,6 +68,8 @@ does not move the check run or annotations into the other repository.
 
 For the bundled extension, create an empty regular `.saltbox-lint` marker at the
 selected source root and follow [extension installation](../extension/README.md#platforms-and-installation).
-The marker does not configure the standalone CLI or Action. For process tasks,
+Version v0.2.1 and newer also read optional YAML configuration from this
+file in the CLI, Action and extension. See [configuration](../README.md#project-configuration-and-inline-ignores).
+For process tasks,
 copy or merge [tasks.json](../examples/vscode/tasks.json), install the CLI on the
 workspace host and save files before checking them. Tasks read disk.

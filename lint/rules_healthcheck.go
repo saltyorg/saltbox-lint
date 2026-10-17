@@ -135,8 +135,13 @@ func checkLintDirectives(_ *Project, source *Source) []Diagnostic {
 			continue
 		}
 		message := ""
-		expected := "Use the exact directive " + shellAllowance + "."
+		expected := "Use the exact directive " + shellAllowance + " or # saltbox-lint ignore RULE_ID on the finding's line."
 		switch {
+		case strings.HasPrefix(comment, ignoreDirectivePrefix):
+			if inlineIgnoreRule(source, span) == "" {
+				message = "Invalid inline Saltbox lint ignore"
+				expected = "Use # saltbox-lint ignore RULE_ID after YAML code on the finding's line, with a known rule other than lint-directive."
+			}
 		case comment != shellAllowance:
 			fields := strings.Fields(comment)
 			if len(fields) == 4 && fields[0] == "#" && fields[1] == "saltbox-lint" && fields[2] == "allow" && fields[3] != "cmd-shell" {

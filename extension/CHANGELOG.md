@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 (2026-10-17)
+
+- Stop roles without defaults declarations from claiming variable namespaces.
+  Continue checking duplicate declarations across defaults, vars and inventories.
+- Add directional `namespace_sharing` permissions in `.saltbox-lint`, preserving
+  empty marker files and refreshing checks when saved configuration changes.
+- Add `# saltbox-lint ignore RULE_ID` for individual YAML findings. Keep other
+  rules active and decline automatic edits that would rewrite an ignored line.
+
 ## 0.2.0 (2026-10-17)
 
 - Add optional checks while typing with `saltboxLint.checkOnType`, disabled by default.

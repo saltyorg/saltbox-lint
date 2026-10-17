@@ -86,7 +86,7 @@ export async function exerciseProfile(resources: TestResources): Promise<void> {
       );
     case "normal":
       await activatedDocument();
-      return;
+      return (await import("./configuration.ts")).runConfiguration(resources);
     case "navigation":
       await activatedDocument();
       return (await import("./navigation.ts")).runNavigation(resources.signal);

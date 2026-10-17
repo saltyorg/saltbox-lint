@@ -139,6 +139,7 @@ type Project struct {
 	discovery            []DependencyFile
 	directories          map[string]string
 	analysis             *analysis
+	configuration        projectConfiguration
 	Root, Name           string
 	Sources              map[string]*Source
 	Selected             map[string]bool

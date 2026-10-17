@@ -7,8 +7,9 @@ Untrusted and virtual workspaces are unsupported.
 
 Create an empty regular file named `.saltbox-lint` in each source root to opt
 that root in. The source root is the workspace folder by default, or the path
-selected by `saltboxLint.root`. Marker contents are ignored; a directory or
-symlink with that name does not opt in. The same requirement applies on native
+selected by `saltboxLint.root`. Empty markers use the default policy. Version
+v0.2.1 and newer also read optional configuration from this file, as described
+below. A directory or symlink with that name does not opt in. The same requirement applies on native
 and remote workspace hosts. The extension never creates markers automatically.
 
 When adding the first marker to an already open workspace, run **Developer:
@@ -216,3 +217,11 @@ The build runs TypeScript and pinned type-aware ESLint checks. See the
 [contributor guide](https://github.com/saltyorg/saltbox-lint/blob/main/docs/contributing.md)
 for live ESLint diagnostics in VS Code. `make check` includes these quality
 gates; `make snapshot` builds the eight local VSIXs and corresponding source.
+
+## Project configuration and individual ignores
+
+Version v0.2.1 and newer allow YAML `namespace_sharing` in `.saltbox-lint`
+and trailing `# saltbox-lint ignore RULE_ID` comments on individual findings.
+See [configuration and inline ignores](https://github.com/saltyorg/saltbox-lint/blob/main/README.md#project-configuration-and-inline-ignores)
+for syntax and scope. Empty marker files stay valid; saved configuration changes
+refresh checks. These features are unavailable in v0.2.0.

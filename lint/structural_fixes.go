@@ -214,6 +214,9 @@ func buildStructuralChange(source *Source, rules []string) (Change, []structural
 		}
 	}
 	projection := replacementEdits(s.Data, normalized.Data)
+	if !fixesPreserveIgnoredLines(s, projection) {
+		return Change{}, nil, false
+	}
 	return Change{Path: s.Path, Before: bytes.Clone(s.Data), After: bytes.Clone(normalized.Data), fixRules: slices.Clone(rules), fixEdits: projection}, chosen, true
 }
 func normalizeFixLayout(s *Source) (*Source, bool) {

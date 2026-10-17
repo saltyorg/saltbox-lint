@@ -52,6 +52,10 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 	}
 	defer func() { _ = files.Close() }()
 	l := sourceLoader{ctx: ctx, project: p, files: files, statistics: opts.Statistics, templateSpellings: map[string][]string{}}
+	p.configuration, err = l.loadConfiguration()
+	if err != nil {
+		return nil, err
+	}
 	gitRoot, err := enclosingGitRoot(root)
 	if err != nil {
 		return nil, err
@@ -977,7 +981,11 @@ func sourceRoot(opts Options) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if name != "" || marker {
+		_, configurationErr := os.Lstat(filepath.Join(current, configurationPath))
+		if configurationErr != nil && !errors.Is(configurationErr, fs.ErrNotExist) {
+			return "", fmt.Errorf("inspect %s: %w", configurationPath, configurationErr)
+		}
+		if name != "" || marker || configurationErr == nil {
 			return resolveSourcePath(current)
 		}
 		if filepath.Dir(current) == current {

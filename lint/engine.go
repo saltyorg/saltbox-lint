@@ -33,6 +33,7 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 			}
 			diagnostics = append(diagnostics, rule.Check(project, source)...)
 		}
+		diagnostics = append(diagnostics[:first], suppressLineFindings(source, diagnostics[first:])...)
 		if project.Selected[name] && source.Kind != Template {
 			attachStructuralFixes(source, diagnostics[first:])
 		}

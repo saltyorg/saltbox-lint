@@ -125,14 +125,22 @@ func declarationNodes(value *Node) map[*Node]bool {
 func checkRoleVariablePrefix(project *Project, source *Source) []Diagnostic {
 	var diagnostics []Diagnostic
 	owners := roleNamespaceOwners(project)
+	var configuration projectConfiguration
+	if project != nil {
+		configuration = project.configuration
+	}
 	for _, declaration := range topLevelDeclarations(source) {
 		if !defaultVariableName.MatchString(declaration.Name) {
 			continue
 		}
 		var related []RelatedLocation
 		var foreign []string
+		allowedPrefix := strings.HasPrefix(declaration.Name, source.Role+"_")
+		for _, owner := range configuration.namespaceSharing[source.Role] {
+			allowedPrefix = allowedPrefix || strings.HasPrefix(declaration.Name, owner+"_")
+		}
 		for _, prefix := range declarationRolePrefixes(declaration.Name) {
-			if prefix == source.Role || len(owners[prefix]) == 0 {
+			if prefix == source.Role || len(owners[prefix]) == 0 || configuration.allowsNamespace(source.Role, prefix) {
 				continue
 			}
 			reads := relatedNamespaceReads(project, source, declaration.Name, []string{prefix + "_"})
@@ -144,7 +152,7 @@ func checkRoleVariablePrefix(project *Project, source *Source) []Diagnostic {
 			related = append(related, reads...)
 		}
 		expectedPrefix := source.Role + "_"
-		if len(foreign) == 0 && (!strings.Contains(declaration.Name, "_role_") || strings.HasPrefix(declaration.Name, expectedPrefix)) {
+		if len(foreign) == 0 && (!strings.Contains(declaration.Name, "_role_") || allowedPrefix) {
 			continue
 		}
 		expected := fmt.Sprintf("Use an owning-role name such as %q, beginning with %q.", expectedPrefix+declaration.Name, expectedPrefix)
