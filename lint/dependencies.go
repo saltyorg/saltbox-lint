@@ -142,6 +142,9 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 		source := p.Sources[name]
 		record := SourceDependencies{Path: name, SourceSHA256: hashes[name], Files: []DependencyFile{}, Directories: []DependencyDirectory{}, Identity: []DependencyFile{}, Discovery: p.discovery}
 		files := map[string]bool{name: true}
+		if p.configuration.observation.Path != "" {
+			files[p.configuration.observation.Path] = true
+		}
 		for _, file := range contextFiles(source, rules) {
 			files[file] = true
 		}
@@ -209,6 +212,12 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 			}
 		}
 		for _, file := range sortedKeys(files) {
+			// Collapsed query context can already contain this control. Emit its
+			// captured read or absence once, rather than treating it as YAML.
+			if file == p.configuration.observation.Path {
+				record.Files = append(record.Files, p.configuration.observation)
+				continue
+			}
 			dep := DependencyFile{Path: file, State: "unavailable"}
 			if digest, found := hashes[file]; found {
 				dep.State = "read"
@@ -225,9 +234,6 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 		// candidates. projectName does not read their content.
 		if slices.Contains(contextRequirements(source, rules), ProjectIdentity) {
 			record.Identity = append(record.Identity, p.identity...)
-		}
-		if p.configuration.observation.Path != "" {
-			record.Files = append(record.Files, p.configuration.observation)
 		}
 		slices.SortFunc(record.Files, func(a, b DependencyFile) int { return strings.Compare(a.Path, b.Path) })
 		result.Sources = append(result.Sources, record)

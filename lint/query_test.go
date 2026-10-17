@@ -11,6 +11,43 @@ import (
 	"testing"
 )
 
+func TestQueryConfigurationObservationIsUnique(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(fmt.Sprint(configured), func(t *testing.T) {
+			fixture, _ := referenceFixture(t)
+			root := t.TempDir()
+			if err := os.CopyFS(root, os.DirFS(fixture)); err != nil {
+				t.Fatal(err)
+			}
+			primary := filepath.Join(root, "roles/alpha/tasks/main.yml")
+			if configured {
+				writeTestSource(t, filepath.Join(root, configurationPath), "namespace_sharing: {alpha: [beta]}\n")
+			}
+			data := []byte(`- debug: {msg: "{{ lookup('role_var', '_port', role='beta') }}"}`)
+			for _, operation := range []string{"definition", "hover", "completion", "references"} {
+				result, err := Query(t.Context(), QueryRequest{Root: root, Filename: primary, Source: data, Operation: operation, Offset: strings.Index(string(data), "_port") + 2})
+				if err != nil {
+					t.Fatal(err)
+				}
+				seen := map[string]bool{}
+				var control *DependencyFile
+				for _, file := range result.Dependencies.Sources[0].Files {
+					if seen[file.Path] {
+						t.Fatalf("%s query repeats dependency %s; editor protocol rejects duplicate paths", operation, file.Path)
+					}
+					seen[file.Path] = true
+					if file.Path == configurationPath {
+						control = &file
+					}
+				}
+				if control == nil || configured && (control.State != "read" || control.SHA256 == "") || !configured && control.State != "missing" {
+					t.Fatalf("configuration observation is not its loaded snapshot: %+v", control)
+				}
+			}
+		})
+	}
+}
+
 func TestQueryAgreesWithReferenceIndex(t *testing.T) {
 	root, primary := referenceFixture(t)
 	data, err := os.ReadFile(primary)
