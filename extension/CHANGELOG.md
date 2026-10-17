@@ -6,6 +6,8 @@ Version 0.2.1 was not published after release qualification failed.
 
 - Wait for the current root owner and marker probe before reporting readiness,
   including probes that replace pending work. Preserve edited-model rejection.
+- Terminate the owned child before sweeping its descendants after native exit.
+  Preserve denied signals and require the existing group-closure proof.
 - Stop roles without defaults declarations from claiming variable namespaces.
   Continue checking duplicate declarations across defaults, vars and inventories.
 - Add directional `namespace_sharing` permissions in `.saltbox-lint`, preserving

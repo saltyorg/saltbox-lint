@@ -774,16 +774,24 @@ async function withNativeCancellation(
   const queryFailures: unknown[] = [];
   let querySettled = 0;
   let nativeClosed: NativeCancellation["nativeClosed"];
+  const send = (context: Readonly<ProcessTerminationContext>) => {
+    assert.equal(Object.isFrozen(context), true);
+    kills.push(context);
+    if (context.phase === (options.phase ?? "exit")) {
+      // Model a redundant sweep racing native group closure. The descendants
+      // really terminate before the controlled post-exit denial is reported.
+      if (context.phase === "exit")
+        process.kill(context.target, context.signal);
+      throw fault;
+    }
+    process.kill(context.target, context.signal);
+  };
   const fixture = await startFixture(
     "live",
     {
       platform: options.platform ?? "darwin",
-      killGroup(context) {
-        assert.equal(Object.isFrozen(context), true);
-        kills.push(context);
-        if (context.phase === (options.phase ?? "exit")) throw fault;
-        process.kill(context.target, context.signal);
-      },
+      killChild: send,
+      killGroup: send,
       async groupHasLiveMembers(group, signal) {
         querySignals.push(signal);
         try {
@@ -825,6 +833,59 @@ async function withNativeCancellation(
   });
 }
 test(
+  "live cancellation signals the owned child before sweeping its group",
+  { skip: process.platform === "win32" },
+  async () => {
+    const calls: Readonly<ProcessTerminationContext>[] = [];
+    const fault = Object.assign(
+      new Error("Live group disappeared before native exit receipt"),
+      {
+        code: "EPERM",
+        errno: -1,
+        syscall: "kill",
+      },
+    );
+    const signal = function (
+      this: ProcessAdapters,
+      context: Readonly<ProcessTerminationContext>,
+    ) {
+      assert.equal(this.platform, "darwin");
+      assert.equal(this.killChild, signal);
+      assert.equal(this.killGroup, signal);
+      calls.push(context);
+      process.kill(context.target, context.signal);
+      if (context.phase === "abort" && context.target < 0) throw fault;
+    };
+    const platform: NodeJS.Platform = "darwin";
+    const adapters = { platform, killChild: signal, killGroup: signal };
+    await withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
+      const fixture = await startFixture(
+        "live",
+        adapters,
+        undefined,
+        "inherit",
+      );
+      resources.defer("child-first cancellation native fixture", () =>
+        fixture.cleanup(),
+      );
+      const ids = await fixture.ids();
+      assert.equal(await groupHasLiveMembers(ids.parent), true);
+      fixture.abort.abort();
+      await assert.rejects(fixture.pending, canceledWithoutCleanupFailure);
+      assert.deepEqual(
+        calls.map(({ phase, target }) => ({ phase, target })),
+        [
+          { phase: "abort", target: ids.parent },
+          { phase: "exit", target: -ids.parent },
+        ],
+      );
+      assert.equal(await groupHasLiveMembers(ids.parent), false);
+      await fixture.awaitTermination(ids.parent);
+      await fixture.awaitTermination(ids.descendant);
+    });
+  },
+);
+test(
   "Darwin exit sweep recovers only after actual canceled native group has no live members",
   { skip: process.platform === "win32" },
   async () => {
@@ -842,7 +903,10 @@ test(
         ["abort", "exit"],
       );
       for (const context of f.kills) {
-        assert.equal(context.target, -f.ids.parent);
+        assert.equal(
+          context.target,
+          context.phase === "abort" ? f.ids.parent : -f.ids.parent,
+        );
         assert.equal(context.signal, "SIGKILL");
       }
       assert.deepEqual(f.nativeClosed, { code: null, signal: "SIGKILL" });
@@ -981,7 +1045,11 @@ test(
           assert.equal(error.cause.message, "Canceled");
           assert.ok(failureContains(error, f.fault));
           assert.match(error.message, /"phase":/);
-          assert.ok(error.message.includes(`"target":${-f.ids.parent}`));
+          assert.ok(
+            error.message.includes(
+              `"target":${options.phase === "abort" ? f.ids.parent : -f.ids.parent}`,
+            ),
+          );
           assert.ok(error.message.includes(`"code":"${f.fault.code}"`));
           assert.match(error.message, /"errno":-1/);
           assert.match(error.message, /"syscall":"kill"/);
@@ -1411,7 +1479,7 @@ test("termination observer retains independent query and identity errors", async
 });
 
 test(
-  "native stderr, nonzero exit and setup errors survive denied group cleanup",
+  "native stderr, nonzero exit and setup errors survive denied termination",
   { skip: process.platform === "win32" },
   async (testContext) => {
     for (const mode of ["stderr", "exit-status", "setup"] as const) {
@@ -1480,6 +1548,15 @@ test(
                 }
                 return child;
               },
+              killChild(context) {
+                assert.equal(mode, "setup");
+                assert.ok(nativePID);
+                assert.equal(context.target, nativePID);
+                assert.equal(context.phase, "setup");
+                assert.equal(Object.isFrozen(context), true);
+                assert.equal(context.signal, "SIGKILL");
+                throw cleanup;
+              },
               killGroup(context) {
                 assert.ok(
                   context.target < 0,
@@ -1540,7 +1617,11 @@ test(
                 assert.match(error.message, /"errno":-1/);
                 assert.match(error.message, /"syscall":"kill"/);
                 assert.ok(nativePID);
-                assert.ok(error.message.includes(`"target":${-nativePID}`));
+                assert.ok(
+                  error.message.includes(
+                    `"target":${mode === "setup" ? nativePID : -nativePID}`,
+                  ),
+                );
                 assert.ok(
                   error.message.includes(
                     `"phase":"${mode === "setup" ? "setup" : "exit"}"`,

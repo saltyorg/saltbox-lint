@@ -42,6 +42,8 @@ export interface ProcessAdapters {
   ): ChildProcess;
   /** Recovery policy only; native spawning still uses the actual host platform. */
   platform?: NodeJS.Platform;
+  /** POSIX child termination before a native exit receipt. */
+  killChild?(context: Readonly<ProcessTerminationContext>): void;
   killGroup?(context: Readonly<ProcessTerminationContext>): void;
   groupHasLiveMembers?(group: number, signal?: AbortSignal): Promise<boolean>;
 }
@@ -281,16 +283,22 @@ function runOwnedProcess(
             Number.isInteger(child.exitCode) &&
             child.exitCode >= 0) ||
           (typeof child.signalCode === "string" && child.signalCode.length > 0);
+        // Stop the owned child first. Its exit receipt admits the descendant
+        // sweep, avoiding a zombie-only group before Node observes native exit.
+        const childOnly = phase !== "exit" && !nativeExitObserved;
         const context: Readonly<ProcessTerminationContext> = Object.freeze({
           phase,
-          target: -child.pid,
+          target: childOnly ? child.pid : -child.pid,
           signal: "SIGKILL",
         });
         try {
           // Windows editor invocations self-assign to a kill-on-close Job before CLI work.
           if (process.platform === "win32") child.kill();
-          else if (adapters.killGroup) adapters.killGroup(context);
-          else process.kill(context.target, context.signal);
+          else {
+            const kill = childOnly ? adapters.killChild : adapters.killGroup;
+            if (kill) kill.call(adapters, context);
+            else process.kill(context.target, context.signal);
+          }
         } catch (error) {
           if (
             (error as NodeJS.ErrnoException | undefined)?.code !== "ESRCH" &&

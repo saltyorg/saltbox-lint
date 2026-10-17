@@ -144,6 +144,11 @@ Production process cleanup and development command owners share
 [`native-group.ts`](../extension/src/native-group.ts). The development
 [`owned-group.mjs`](../extension/scripts/owned-group.mjs) facade preserves its
 existing interface; copied-source fixtures include the shared implementation.
+POSIX cancellation and operational failures first signal the owned child PID.
+Its native exit receipt admits the descendant group sweep. An already-observed
+exit retains the existing group signal path. Separate child/group signal adapters
+control genuine permission failures and the dying-group race in the native
+process tests; both keep their original phase and native-exit evidence.
 A Darwin `EPERM` during exit cleanup, or cancellation after native exit was
 already observed at the failed signal, is recoverable only after a fresh,
 independent bounded observation proves no live group members and the child,
