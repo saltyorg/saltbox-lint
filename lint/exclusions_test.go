@@ -174,7 +174,6 @@ func TestGitIgnoresTrackedFilesNestedRulesAndExplicitBuffers(t *testing.T) {
 	ignored := putFile(t, root, "tasks/hidden/main.yml", input)
 	putFile(t, root, "tasks/tracked.yml", input)
 	putFile(t, root, "tasks/space name.yml", input)
-	putFile(t, root, "tasks/line\nname.yml", input)
 	putFile(t, root, "tasks/visible.yml", "[]\n")
 	putFile(t, root, "tasks/nested/.gitignore", "*.yml\n!keep.yml\n")
 	putFile(t, root, "tasks/nested/drop.yml", input)
@@ -197,6 +196,35 @@ func TestGitIgnoresTrackedFilesNestedRulesAndExplicitBuffers(t *testing.T) {
 		project, err := Load(t.Context(), options)
 		if err != nil || len(Analyze(project, Rules())) != 0 || project.Sources["tasks/hidden/main.yml"].ExclusionReason == "" {
 			t.Fatalf("explicit selection bypassed Git ignores: %v", err)
+		}
+	}
+}
+
+func TestGitIgnoreNulRecordsDoNotRequireWorktreeFiles(t *testing.T) {
+	root := t.TempDir()
+	gitTest(t, root, "init", "-q")
+	putFile(t, root, ".gitignore", "tasks/*.yml\n")
+	if err := os.Mkdir(filepath.Join(root, "tasks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Git can match these names without opening a worktree file. This tests
+	// NUL-delimited transport on Windows too, where newline filenames cannot
+	// be created through the filesystem API.
+	paths := []string{
+		filepath.Join(root, "tasks/space name.yml"),
+		filepath.Join(root, "tasks/line\nname.yml"),
+	}
+	loader := sourceLoader{ctx: t.Context(), project: &Project{Root: root}, gitRoot: root}
+	reasons, err := loader.exclusionReasons(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reasons) != len(paths) {
+		t.Fatalf("Git ignore records were split or lost: %v", reasons)
+	}
+	for _, path := range paths {
+		if reasons[path] != "excluded by Git ignore rules" {
+			t.Fatalf("missing exact Git ignore record for %q", path)
 		}
 	}
 }
