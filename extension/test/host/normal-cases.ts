@@ -9,6 +9,7 @@ import { SnapshotIndex } from "../../src/protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
 import { join } from "node:path";
 import type { TestResources } from "../support/test-resources.ts";
+import { diagnosticTransition } from "../support/diagnostic-transition.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 async function waitFor(
   predicate: () => boolean,
@@ -323,19 +324,42 @@ export async function runDiagnostics(resources: TestResources): Promise<void> {
   );
   await vscode.window.showTextDocument(ignored);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
-  await waitFor(
-    () =>
-      diagnostics(ignored.uri).some(
-        (d) => diagnosticCode(d) === "jinja-layout",
-      ),
-    "open ignored source diagnosed after context refresh",
-  );
+  assert.equal(diagnostics(ignored.uri).length, 0);
   await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
-  assert.ok(
-    diagnostics(ignored.uri).some((d) => diagnosticCode(d) === "jinja-layout"),
+  assert.equal(diagnostics(ignored.uri).length, 0);
+  const ignoredFormat = await vscode.commands.executeCommand<vscode.TextEdit[]>(
+    "vscode.executeFormatDocumentProvider",
+    ignored.uri,
+    { tabSize: 2, insertSpaces: true },
   );
+  assert.equal(ignoredFormat?.length ?? 0, 0);
   console.log(
-    "PASS open ignored-file diagnostics survive saved discovery exclusions",
+    "PASS Git-ignored open files remain excluded from document, workspace and formatting checks",
+  );
+  const ignoreControl = vscode.Uri.joinPath(roots[0].uri, ".gitignore");
+  const originalIgnore = await readFile(ignoreControl.fsPath);
+  resources.defer("normal ignore policy", () =>
+    writeFile(ignoreControl.fsPath, originalIgnore),
+  );
+  await resources.operation("ignored source readmission", (signal) =>
+    diagnosticTransition({
+      signal,
+      subscribe: (observe) =>
+        vscode.languages.onDidChangeDiagnostics((event) => {
+          if (
+            event.uris.some((uri) => uri.toString() === ignored.uri.toString())
+          )
+            observe();
+        }),
+      ready: () =>
+        diagnostics(ignored.uri).some(
+          (finding) => diagnosticCode(finding) === "jinja-layout",
+        ),
+      trigger: async () => {
+        await writeFile(ignoreControl.fsPath, "");
+        await vscode.commands.executeCommand("saltboxLint.checkDocument");
+      },
+    }),
   );
   await vscode.commands.executeCommand(
     "workbench.action.revertAndCloseActiveEditor",
@@ -350,6 +374,7 @@ export async function runDiagnostics(resources: TestResources): Promise<void> {
     "closed tab clears diagnostics",
   );
   console.log("PASS close clears diagnostics");
+  await writeFile(ignoreControl.fsPath, originalIgnore);
   const renameFrom = vscode.Uri.joinPath(roots[0].uri, "rename.yml");
   const renameTo = vscode.Uri.joinPath(roots[0].uri, "renamed.yml");
   await ownFile(resources, renameFrom);

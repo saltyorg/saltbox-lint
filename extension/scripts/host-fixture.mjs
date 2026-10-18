@@ -378,8 +378,14 @@ export async function populateHostFixture(
         recursive: true,
       });
       writeFileSync(
-        resolve(root, name, "roles/example/tasks/first-open/ignored.yml"),
+        resolve(root, name, "roles/example/tasks/first-open/first.yml"),
         readFileSync(resolve(root, name, "roles/example/tasks/main.yml")),
+      );
+      // This case later removes an opaque administrative ignore before its
+      // first explicit check. Saved coverage must not already own the source.
+      writeFileSync(
+        resolve(root, name, ".git/info/exclude"),
+        "roles/example/tasks/first-open/first.yml\n",
       );
       writeFileSync(
         resolve(root, name, "roles/example/templates/router.conf"),

@@ -194,7 +194,6 @@ test("analysis wire validates identities, hashes, completeness, membership and o
     { ...valid, complete: false },
     { ...valid, root: "relative" },
     { ...valid, generation: "bad" },
-    { ...valid, sources: [] },
     { ...valid, sources: [source("a"), source("a")] },
     { ...valid, sources: [{ ...source("a"), path: "../out" }] },
     { ...valid, sources: [{ ...source("a"), source_sha256: hash("wrong") }] },
@@ -238,7 +237,28 @@ test("analysis wire validates identities, hashes, completeness, membership and o
     assert.throws(() => parseCheck(wire(invalid), true));
 });
 
-test("full coverage retains explicitly checked ignored buffer dependencies", () => {
+test("an all-excluded workspace accepts an empty complete analysis", () => {
+  const empty = report();
+  const parsed = parseCheck(
+    JSON.stringify({
+      schema_version: 2,
+      diagnostics: [],
+      fixes: [],
+      analysis: empty,
+    }),
+    true,
+  );
+  assert.deepEqual(parsed.analysis, empty);
+  const graph = new Dependencies();
+  assert.equal(
+    graph.accept("one", report(source("a")), graph.begin(), true),
+    true,
+  );
+  assert.equal(graph.accept("one", empty, graph.begin(), true), true);
+  assert.equal(graph.observationKind("one", source("a").path), undefined);
+});
+
+test("full coverage retains explicitly checked buffer dependencies", () => {
   const graph = new Dependencies(),
     a = source("a"),
     b = source("b");

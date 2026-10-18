@@ -5,15 +5,27 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 const configurationPath = ".saltbox-lint"
 
 type projectConfiguration struct {
 	namespaceSharing map[string][]string
+	excludePaths     []string
 	observation      DependencyFile
+}
+
+func (c projectConfiguration) excludes(name string) bool {
+	for _, excluded := range c.excludePaths {
+		if name == excluded || strings.HasPrefix(name, excluded+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c projectConfiguration) allowsNamespace(role, owner string) bool {
@@ -58,10 +70,33 @@ func (l *sourceLoader) loadConfiguration() (projectConfiguration, error) {
 	}
 	seen := map[string]bool{}
 	for _, field := range source.Documents[0].Entries {
-		if !configurationNode(field.Key, "string") || field.Key.Value != "namespace_sharing" || seen[field.Key.Value] {
-			return config, fmt.Errorf("%s: expected a unique namespace_sharing key", configurationPath)
+		if !configurationNode(field.Key, "string") || seen[field.Key.Value] {
+			return config, fmt.Errorf("%s: expected unique configuration keys", configurationPath)
 		}
 		seen[field.Key.Value] = true
+		switch field.Key.Value {
+		case "exclude_paths":
+			if !configurationNode(field.Value, "sequence") {
+				return config, fmt.Errorf("%s: exclude_paths must be a list of source-root-relative files or folders", configurationPath)
+			}
+			for _, item := range field.Value.Items {
+				if !configurationNode(item, "string") {
+					return config, fmt.Errorf("%s: exclude_paths entries must be strings", configurationPath)
+				}
+				name := strings.TrimSuffix(strings.TrimPrefix(item.Value, "./"), "/")
+				if strings.TrimSpace(name) == "" || name == "." || path.IsAbs(name) || path.Clean(name) != name || strings.ContainsAny(name, "\\:*?[]\x00\r\n") || slices.Contains(strings.Split(name, "/"), "..") {
+					return config, fmt.Errorf("%s: invalid exclude_paths entry %q; use a relative file or folder with forward slashes, without globs or parent traversal", configurationPath, item.Value)
+				}
+				if slices.Contains(config.excludePaths, name) {
+					return config, fmt.Errorf("%s: repeated exclude_paths entry %q", configurationPath, item.Value)
+				}
+				config.excludePaths = append(config.excludePaths, name)
+			}
+			continue
+		case "namespace_sharing":
+		default:
+			return config, fmt.Errorf("%s: unknown configuration key %q; expected namespace_sharing or exclude_paths", configurationPath, field.Key.Value)
+		}
 		if !configurationNode(field.Value, "mapping") {
 			return config, fmt.Errorf("%s: namespace_sharing must map role names to lists of allowed namespaces", configurationPath)
 		}

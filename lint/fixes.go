@@ -66,7 +66,7 @@ func planFixes(project *Project, diagnostics []Diagnostic, decisions *[]FixDecis
 	contents := map[string]map[Edit]bool{}
 	for _, d := range diagnostics {
 		identity := proposal{d.Path, d.Fix}
-		if !project.Selected[d.Path] || d.Fix == nil || seen[identity] || (project.Sources[d.Path] != nil && project.Sources[d.Path].Kind == Template) {
+		if !project.Selected[d.Path] || d.Fix == nil || seen[identity] || (project.Sources[d.Path] != nil && (project.Sources[d.Path].Kind == Template || project.Sources[d.Path].ExclusionReason != "")) {
 			continue
 		}
 		seen[identity] = true
@@ -475,6 +475,9 @@ func RequireWritableSelection(project *Project) error {
 	}()
 	for _, name := range names {
 		if !project.Selected[name] {
+			continue
+		}
+		if source := project.Sources[name]; source != nil && source.ExclusionReason != "" {
 			continue
 		}
 		if source := project.Sources[name]; source != nil && source.Kind == Template {

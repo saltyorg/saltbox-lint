@@ -19,7 +19,7 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 	diagnostics := slices.Clone(project.Diagnostics)
 	for _, name := range names {
 		source := project.Sources[name]
-		if source == nil {
+		if source == nil || source.ExclusionReason != "" {
 			continue
 		}
 		if len(source.parseDiagnostics) > 0 {

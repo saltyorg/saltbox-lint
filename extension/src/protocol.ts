@@ -276,11 +276,7 @@ export function analysisRecord(
       /^(?:\/|[A-Za-z]:[\\\/]|\\\\[^\\]+\\[^\\]+(?:\\|$))/.test(value.root),
   );
   digest(value.generation);
-  valid(
-    Array.isArray(value.sources) &&
-      value.sources.length > 0 &&
-      value.sources.length <= 100000,
-  );
+  valid(Array.isArray(value.sources) && value.sources.length <= 100000);
   const paths = new Set<string>();
   let count = 0;
   for (const source of value.sources) {

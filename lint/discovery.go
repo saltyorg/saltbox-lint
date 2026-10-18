@@ -18,8 +18,8 @@ import (
 )
 
 // Load reads worktree bytes for selected files and their conventional context.
-// Explicit files override Git ignores; directory selections use Git's tracked
-// and nonignored untracked files. No repository or source files are changed.
+// Saved exclusions apply to directory scans, explicit files and stdin buffers.
+// No repository or source files are changed.
 func Load(ctx context.Context, opts Options) (*Project, error) {
 	if opts.ChangedSince != "" {
 		return loadChanged(ctx, opts)
@@ -60,6 +60,7 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	l.gitRoot = gitRoot
 	if gitRoot != "" {
 		for _, name := range []string{".gitignore", ".git/info/exclude"} {
 			absolute := filepath.Join(root, filepath.FromSlash(name))
@@ -84,7 +85,8 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 		if err := preflightGitControls(ctx, root, gitRoot); err != nil {
 			return nil, err
 		}
-		// Git handles nested ignores, tracked-but-ignored files, and worktree metadata.
+		// Candidate discovery retains tracked worktree files. The shared
+		// exclusion filter also applies ignore rules to those tracked names.
 		cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 		output, err := cmd.Output()
 		if err != nil {
@@ -191,7 +193,7 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 			return nil, err
 		}
 	}
-	if len(p.Selected) == 0 && !opts.allowEmpty {
+	if len(p.Selected) == 0 && !opts.allowEmpty && !l.excludedAny && gitRoot == "" {
 		return nil, fmt.Errorf("no supported sources selected")
 	}
 	rules := Rules()
@@ -207,6 +209,13 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 	}
 	for _, file := range sortedKeys(contextFilesToRead) {
 		absolute := filepath.Join(root, filepath.FromSlash(file))
+		reasons, err := l.exclusionReasons([]string{absolute})
+		if err != nil {
+			return nil, err
+		}
+		if reasons[absolute] != "" {
+			continue
+		}
 		if _, err := l.stat(absolute); errors.Is(err, fs.ErrNotExist) {
 			continue
 		} else if err != nil {
@@ -227,11 +236,20 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 	if err := l.contextDirectories(contextDirs); err != nil {
 		return nil, err
 	}
-	if opts.referenceContext {
+	if opts.referenceContext && slices.ContainsFunc(sortedKeys(p.Selected), func(name string) bool {
+		return p.Sources[name].ExclusionReason == ""
+	}) {
 		p.referenceDirectories = referenceContextDirectories(p)
 		p.referenceFiles = []string{"inventory.yaml", "inventory.yml", "vars.yaml", "vars.yml"}
 		for _, name := range p.referenceFiles {
 			absolute := filepath.Join(root, name)
+			reasons, err := l.exclusionReasons([]string{absolute})
+			if err != nil {
+				return nil, err
+			}
+			if reasons[absolute] != "" {
+				continue
+			}
 			if _, err := l.stat(absolute); errors.Is(err, fs.ErrNotExist) {
 				continue
 			} else if err != nil {
@@ -261,10 +279,18 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 
 func (l *sourceLoader) contextDirectories(contextDirs map[string]bool) error {
 	p, root := l.project, l.project.Root
-	for _, dir := range sortedKeys(contextDirs) {
+	directories := sortedKeys(contextDirs)
+	reasons, err := l.exclusionReasons(directories)
+	if err != nil {
+		return err
+	}
+	for _, dir := range directories {
 		relative, err := relativeSource(root, dir)
 		if err != nil {
 			return err
+		}
+		if reasons[dir] != "" {
+			continue
 		}
 		referenceScope := false
 		for _, dirs := range p.referenceDirectories {
@@ -401,6 +427,9 @@ func gitAdministrativeOwner(gitRoot, administrative string) (string, error) {
 }
 
 type sourceLoader struct {
+	gitRoot            string
+	gitIgnores         map[string]bool
+	excludedAny        bool
 	statistics         *LoadStatistics
 	files              *os.Root
 	ctx                context.Context
@@ -483,9 +512,16 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if !supportedSource(relative) && !isTemplateFile(absolute) && len(l.templateSpellings[absolute]) == 0 {
 		return fmt.Errorf("unsupported source target %s", absolute)
 	}
+	reasons, err := l.exclusionReasons([]string{absolute})
+	if err != nil {
+		return err
+	}
+	if reasons[absolute] != "" && !selected {
+		return nil
+	}
 	s := l.project.Sources[relative]
 	if s == nil {
-		s, err = l.readSource(absolute, relative)
+		s, err = l.readSource(absolute, relative, reasons[absolute])
 		if err != nil {
 			return err
 		}
@@ -499,7 +535,7 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	return nil
 }
 
-func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
+func (l *sourceLoader) readSource(absolute, relative, exclusion string) (*Source, error) {
 	if err := l.ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -548,7 +584,10 @@ func (l *sourceLoader) readSource(absolute, relative string) (*Source, error) {
 		parseName = "source.j2"
 	}
 	var source *Source
-	if l.statistics == nil {
+	if exclusion != "" {
+		kind, role, rolePath := classify(parseName)
+		source = &Source{Data: data, Kind: kind, Role: role, RolePath: rolePath, ExclusionReason: exclusion, lineStarts: []int{0}}
+	} else if l.statistics == nil {
 		source, _ = parseOwnedSource(parseName, data)
 	} else {
 		start := time.Now()
@@ -712,6 +751,14 @@ func (l *sourceLoader) walkDirectory(dir string, selected bool) ([]string, error
 			if entry.Name() == ".git" {
 				return filepath.SkipDir
 			}
+			name, err := relativeSource(l.project.Root, absolute)
+			if err != nil {
+				return err
+			}
+			if l.project.configuration.excludes(name) {
+				l.excludedAny = l.excludedAny || selected
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		relative, err := relativeSource(l.project.Root, absolute)
@@ -728,6 +775,15 @@ func (l *sourceLoader) walkDirectory(dir string, selected bool) ([]string, error
 }
 
 func (l *sourceLoader) directorySources(paths []string, selected bool) error {
+	reasons, err := l.exclusionReasons(paths)
+	if err != nil {
+		return err
+	}
+	paths = slices.DeleteFunc(paths, func(absolute string) bool {
+		excluded := reasons[absolute] != ""
+		l.excludedAny = l.excludedAny || selected && excluded
+		return excluded
+	})
 	results := readSourceBatch(paths, func(absolute string) (*Source, error) {
 		// Tracked files deleted from the worktree are not source inputs.
 		if l.gitFiles != nil {
@@ -754,7 +810,7 @@ func (l *sourceLoader) directorySources(paths []string, selected bool) error {
 			}
 			return source, nil
 		}
-		source, err := l.readSource(absolute, relative)
+		source, err := l.readSource(absolute, relative, "")
 		if err != nil {
 			return nil, err
 		}
@@ -1074,7 +1130,7 @@ func directoryAdmitsSource(source *Source, selected bool) bool {
 // directoryWouldSelect combines shared parsed admission with the loader's Git
 // snapshot and the file's existence, without reading another source/project.
 func (l *sourceLoader) directoryWouldSelect(absolute string, source *Source) bool {
-	if !directoryAdmitsSource(source, true) {
+	if source.ExclusionReason != "" || !directoryAdmitsSource(source, true) {
 		return false
 	}
 	if l.gitFiles != nil {

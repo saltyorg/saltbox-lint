@@ -82,9 +82,6 @@ func wirePosition(data []byte, offset int) (line, column int) {
 
 func TestFormatCanonicalResponseStatusesAndCoordinates(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /missing/format-test\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	path := filepath.Join(root, "roles", "demo", "defaults", "main.yml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)

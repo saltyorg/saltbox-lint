@@ -14,7 +14,7 @@ func variableContextDirectory(name string) bool {
 }
 
 func variableDeclarationSource(source *Source) bool {
-	if source == nil || len(source.parseDiagnostics) > 0 || (source.Kind != Defaults && source.Kind != Vars && source.Kind != Inventory) {
+	if source == nil || source.ExclusionReason != "" || len(source.parseDiagnostics) > 0 || (source.Kind != Defaults && source.Kind != Vars && source.Kind != Inventory) {
 		return false
 	}
 	// Both the legacy root override and inventory host overrides belong to users.

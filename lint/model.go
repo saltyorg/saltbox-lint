@@ -56,6 +56,9 @@ const (
 )
 
 type Source struct {
+	// ExclusionReason marks an explicit snapshot retained only for identity and
+	// invalidation. Its bytes are never parsed, linted or used as role context.
+	ExclusionReason        string
 	Path                   string
 	Data                   []byte
 	Kind                   Kind
@@ -131,6 +134,7 @@ type Rule struct {
 	Check                                             func(*Project, *Source) []Diagnostic
 }
 type Project struct {
+	excluded             map[string]bool
 	selectionSpellings   []selectionSpelling
 	referenceDirectories map[string][]string
 	referenceFiles       []string

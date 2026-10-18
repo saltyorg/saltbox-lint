@@ -75,6 +75,36 @@ uses the same configuration and refreshes checks when it is saved. Configuration
 creation, changes and removal affect `--changed-since` selection too. Unsaved
 configuration edits are not used.
 
+### Folder and file exclusions (unreleased)
+
+Unreleased builds also accept `exclude_paths` in the same `.saltbox-lint` file:
+
+```yaml
+namespace_sharing:
+  remote:
+    - rclone
+exclude_paths:
+  - roles/legacy/
+  - tasks/generated.yml
+```
+
+Each entry names a file or an entire folder relative to the source root. Use
+forward slashes; a trailing slash is optional. Paths are literal, without globs,
+absolute paths or parent traversal. Folder names match complete path components,
+so `roles/legacy` does not exclude `roles/legacy_extra`.
+
+Exclusions always apply, including explicit CLI paths, unsaved buffers and files
+opened in the editor. Excluded files receive no diagnostics, navigation, fixes or
+formatting, and do not supply cross-file declarations. Explicit excluded buffers
+retain their byte hashes and configuration dependencies so saved policy changes
+can refresh them. Use `explain FILE` to see why a source is excluded.
+
+Git worktrees also use Git's ignore rules for tracked and untracked sources,
+including nested `.gitignore` files, negation, local excludes and global excludes.
+Explicit selection does not override these rules. A scan whose supported sources
+are all excluded succeeds with no findings. Outside a Git worktree, only the
+configured `exclude_paths` apply. This behavior is not available in v0.2.3.
+
 To ignore one YAML finding, put a trailing comment on the same physical line as
 its primary location:
 
@@ -110,8 +140,8 @@ saltbox-lint --version
 `check` defaults to `.`. Directory checks discover conventional role defaults,
 tasks, handlers and vars, shared tasks, inventory variables and playbooks;
 explicit YAML files also receive applicable generic rules. Git discovery uses
-tracked and nonignored untracked files; explicitly selected files override
-ignores. Working-tree contents are read, including local edits. The root is
+tracked and untracked files that pass Git ignore rules and configured exclusions.
+Explicit files also respect exclusions. Working-tree contents are read, including local edits. The root is
 inferred from the first target's nearest Saltbox/Sandbox project marker or Git
 root; `--root` selects it explicitly. All targets belong to one root. Relative
 targets resolve from the working directory. Selected files may require extra
@@ -301,8 +331,9 @@ apply to that kind. Dependency completeness describes the observations, includin
 negative lookups; parse errors appear separately for each loaded source.
 
 Directory admission uses the same Git snapshot and conventional source-kind
-predicate as checking. Explicit ignored files and nested generic YAML can be
-checked even when directory discovery would omit them. Unsaved stdin identities
+predicate as checking. Explicit nested generic YAML can be checked even when
+directory discovery would omit it; exclusions still apply. Excluded sources have
+parse state `excluded`, an exclusion reason and no applicable policies. Unsaved stdin identities
 can describe files that do not yet exist. Templates, including conventional
 `.yaml` or extensionless templates, support explicit read-only checking and
 static navigation. Directory and changed-file discovery retain YAML primary
@@ -515,8 +546,9 @@ semantics require manual edits. `defaults-sections` remains diagnostic-only:
 reordering declarations changes the mapping iteration order retained by Ansible.
 Section comments are never relabeled over existing values to satisfy ordering.
 `examples.yaml` is an optional, gitignored local scratch file for cases that
-should fail. Check it explicitly when needed and test fixes on copies. Automated
-tests use committed regression fixtures in `lint/testdata` and do not require it.
+should fail. To inspect these cases, check an unignored copy and test fixes on
+copies. The original remains ignored. Automated tests use committed regression
+fixtures in `lint/testdata` and do not require it.
 
 `section-spacing` requires at least one blank line between a three-line section
 banner and its variables in defaults, vars, inventory variables and explicitly

@@ -145,6 +145,9 @@ func referenceContextDirectories(p *Project) map[string][]string {
 	result := map[string][]string{}
 	for name := range p.Selected {
 		source := p.Sources[name]
+		if source.ExclusionReason != "" {
+			continue
+		}
 		dirs := map[string]bool{"group_vars": true, "host_vars": true, "inventory": true, "inventories": true}
 		roles := map[string]bool{}
 		if source.RolePath != "" {

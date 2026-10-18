@@ -56,6 +56,9 @@ type DependencyDirectory struct {
 }
 
 func contextRequirements(s *Source, rules []Rule) []ContextRequirement {
+	if s.ExclusionReason != "" {
+		return nil
+	}
 	needs := map[ContextRequirement]bool{}
 	for _, rule := range rules {
 		if len(rule.Kinds) > 0 && !slices.Contains(rule.Kinds, s.Kind) {
@@ -146,14 +149,21 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 			files[p.configuration.observation.Path] = true
 		}
 		for _, file := range contextFiles(source, rules) {
-			files[file] = true
+			if !p.excluded[file] && !p.configuration.excludes(file) {
+				files[file] = true
+			}
 		}
 		for _, file := range p.referenceFiles {
-			files[file] = true
+			if source.ExclusionReason == "" && !p.excluded[file] && !p.configuration.excludes(file) {
+				files[file] = true
+			}
 		}
 		dirs := append(contextDirectories(source, rules), p.referenceDirectories[name]...)
 		slices.Sort(dirs)
 		for _, dir := range slices.Compact(dirs) {
+			if p.excluded[dir] || p.configuration.excludes(dir) {
+				continue
+			}
 			variablesOnly := variableContextDirectory(dir) && !slices.Contains(p.referenceDirectories[name], dir)
 			directoryMembers := members[dir]
 			if p.referenceDirectories != nil || variableContextDirectory(dir) {
@@ -240,6 +250,21 @@ func dependencyRecord(p *Project, rules []Rule) *AnalysisRecord {
 	}
 	// Ordered records include selection, negative targets and primary bytes.
 	_ = json.NewEncoder(generation).Encode(result.Sources)
+	excluded := map[string]string{}
+	for _, name := range sortedKeys(p.Selected) {
+		if reason := p.Sources[name].ExclusionReason; reason != "" {
+			excluded[name] = reason
+		}
+	}
+	if len(excluded) > 0 {
+		// Opaque ancestor or administrative Git rules can change admission
+		// without changing any source-root control bytes.
+		_ = json.NewEncoder(generation).Encode(excluded)
+	}
+	if len(result.Sources) == 0 {
+		_ = json.NewEncoder(generation).Encode(p.configuration.observation)
+		_ = json.NewEncoder(generation).Encode(p.discovery)
+	}
 	result.Generation = fmt.Sprintf("%x", generation.Sum(nil))
 	return result
 }

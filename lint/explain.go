@@ -72,7 +72,13 @@ func Explain(ctx context.Context, opts Options) (Explanation, error) {
 		result.Input = "stdin"
 	}
 	result.DirectoryWouldSelect = project.discoverable[source.Path]
-	result.ExplicitSelection = "selected; explicit files override directory admission and Git ignores"
+	result.ExplicitSelection = "selected; explicit files override source-kind directory admission"
+	if source.ExclusionReason != "" {
+		result.ExplicitSelection = source.ExclusionReason
+		result.Unsupported = append(result.Unsupported, source.ExclusionReason)
+		result.Dependencies = project.Dependencies
+		return result, ctx.Err()
+	}
 	if source.Kind == Template {
 		result.ExplicitSelection = "selected; template checking and navigation are read-only"
 		result.Unsupported = append(result.Unsupported, "template formatting, fixes, completion edits, rename and runtime evaluation are unavailable")
@@ -102,6 +108,10 @@ func Explain(ctx context.Context, opts Options) (Explanation, error) {
 }
 func observedSource(source *Source) ObservedSource {
 	result := ObservedSource{Path: source.Path, Kind: source.Kind, ParseState: "parsed", ParseDiagnostics: []string{}}
+	if source.ExclusionReason != "" {
+		result.ParseState = "excluded"
+		return result
+	}
 	if source.Kind == Template {
 		result.ParseState = "static-template"
 		scan := scanTemplate(source)

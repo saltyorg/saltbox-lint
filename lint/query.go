@@ -62,7 +62,7 @@ type queryArgument struct {
 
 // Query reuses the same admitted reads and declaration resolver as References.
 // Full discovery supplies cross-role reads and role-name completion; explicit
-// primary admission preserves ignored and unsaved-buffer inspection.
+// primary admission preserves unsaved-buffer inspection and exclusion state.
 func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 	result := QueryReport{SchemaVersion: 1, Operation: request.Operation, Offset: request.Offset, State: "none", Reasons: []string{}, TargetHashes: map[string]string{}, Locations: []QueryLocation{}, Declarations: []RoleDeclaration{}, Completions: []QueryCompletion{}, Coverage: QueryCoverage{Reasons: []string{"static-reads-only", "runtime-precedence-and-providers-unmodeled", "template-runtime-and-unselected-template-reads-unmodeled", "directory-discovery-excludes-ignored-sources"}}}
 	if !slices.Contains([]string{"definition", "completion", "hover", "references"}, request.Operation) {
@@ -76,13 +76,28 @@ func Query(ctx context.Context, request QueryRequest) (QueryReport, error) {
 		return result, err
 	}
 	result.Root, result.Path, result.SourceSHA256 = identity.Root, identity.Path, fmt.Sprintf("%x", sha256.Sum256(request.Source))
-	p, err := Load(ctx, Options{Root: identity.Root, Paths: []string{identity.Root}, StdinFilename: request.Filename, StdinSourceFilename: request.SourceFilename, Stdin: request.Source, IncludeAnalysis: true, referenceContext: true})
+	exclusion, err := SourceExclusion(ctx, identity)
+	if err != nil {
+		return result, err
+	}
+	options := Options{Root: identity.Root, StdinFilename: request.Filename, StdinSourceFilename: request.SourceFilename, Stdin: request.Source, IncludeAnalysis: true}
+	if exclusion == "" {
+		options.Paths = []string{identity.Root}
+		options.referenceContext = true
+	}
+	p, err := Load(ctx, options)
 	if err != nil {
 		return result, err
 	}
 	source := p.Sources[identity.Path]
 	if source == nil || !p.Selected[identity.Path] {
 		return result, fmt.Errorf("query requires a selected source")
+	}
+	if source.ExclusionReason != "" {
+		result.State = "unavailable"
+		result.Reasons = append(result.Reasons, "source-excluded")
+		result.Dependencies = p.Dependencies
+		return result, ctx.Err()
 	}
 	// Collapse full discovery observations to the primary owner. Every read byte
 	// remains a dependency, including negative context and discovery decisions.

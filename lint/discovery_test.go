@@ -106,8 +106,8 @@ func selectedPaths(p *Project) []string {
 	return paths
 }
 
-// A directory check must honor Git ignores without losing tracked modifications
-// or ordinary untracked YAML. Explicit files intentionally override ignore rules.
+// Git ignores apply to tracked and untracked files, including explicit inputs.
+// Unignored tracked modifications still use worktree bytes.
 func TestLoadGitSelection(t *testing.T) {
 	root := t.TempDir()
 	gitTest(t, root, "init", "-q")
@@ -115,6 +115,9 @@ func TestLoadGitSelection(t *testing.T) {
 	putFile(t, root, "tasks/tracked.yml", "value: old\n")
 	gitTest(t, root, "add", "-f", "tasks/tracked.yml")
 	putFile(t, root, "tasks/tracked.yml", "value: modified\n")
+	putFile(t, root, "tasks/visible.yml", "value: old\n")
+	gitTest(t, root, "add", "tasks/visible.yml")
+	putFile(t, root, "tasks/visible.yml", "value: modified\n")
 	putFile(t, root, "tasks/new.yaml", "value: new\n")
 	ignored := putFile(t, root, "tasks/ignored.yml", "value: private\n")
 	putFile(t, root, "notes.txt", "not YAML")
@@ -122,15 +125,18 @@ func TestLoadGitSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := selectedPaths(p); !slices.Equal(got, []string{"tasks/new.yaml", "tasks/tracked.yml"}) {
+	if got := selectedPaths(p); !slices.Equal(got, []string{"tasks/new.yaml", "tasks/visible.yml"}) {
 		t.Fatalf("selected=%v", got)
 	}
-	if p.Sources["tasks/tracked.yml"].Documents[0].Get("value").Value != "modified" {
+	if p.Sources["tasks/visible.yml"].Documents[0].Get("value").Value != "modified" {
 		t.Fatal("read index instead of worktree")
 	}
 	p, err = Load(t.Context(), Options{Paths: []string{ignored}})
-	if err != nil || !p.Selected["tasks/ignored.yml"] {
-		t.Fatalf("explicit ignore override: %v %#v", err, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Selected["tasks/ignored.yml"] || p.Sources["tasks/ignored.yml"].ExclusionReason == "" || len(Analyze(p, Rules())) != 0 {
+		t.Fatal("explicit ignored input was checked")
 	}
 }
 

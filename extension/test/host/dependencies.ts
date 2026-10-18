@@ -24,7 +24,7 @@ import { diagnosticSourceFacts } from "../support/diagnostic-source-facts.ts";
 import * as vscode from "vscode";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   mkdir,
@@ -141,6 +141,30 @@ export async function runDependencies(
 
 async function dependencies(resources: TestResources): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
+  const firstOpenName = "roles/example/tasks/first-open/first.yml";
+  for (const root of roots) {
+    const path = join(root.uri.fsPath, ".git/info/exclude");
+    const original = await readFile(path);
+    resources.defer("first-open administrative ignore", () =>
+      writeFile(path, original),
+    );
+  }
+  const admitFirstOpen = async (root: vscode.WorkspaceFolder) => {
+    const path = join(root.uri.fsPath, ".git/info/exclude");
+    const current = await readFile(path, "utf8");
+    assert.ok(current.includes(firstOpenName + "\n"));
+    const args = [
+      "-C",
+      root.uri.fsPath,
+      "check-ignore",
+      "--no-index",
+      "--",
+      firstOpenName,
+    ];
+    assert.equal(spawnSync("git", args, { timeout: 15000 }).status, 0);
+    await writeFile(path, current.replace(firstOpenName + "\n", ""));
+    assert.equal(spawnSync("git", args, { timeout: 15000 }).status, 1);
+  };
   const task = vscode.Uri.joinPath(
     roots[0].uri,
     "roles/example/tasks/main.yml",
@@ -227,16 +251,13 @@ async function dependencies(resources: TestResources): Promise<void> {
   const good = await readFile(template.fsPath, "utf8"),
     defaultsGood = await readFile(defaults.fsPath, "utf8");
   const bad = "http:\n  routers: {}\n";
-  const firstOpen = vscode.Uri.joinPath(
-    roots[0].uri,
-    "roles/example/tasks/first-open/ignored.yml",
-  );
+  const firstOpen = vscode.Uri.joinPath(roots[0].uri, firstOpenName);
   const aliasParent = await workspaceFixtureDirectory(
     roots[0].uri.fsPath,
     "saltbox-pending-status-",
   );
   const aliasDirectory = vscode.Uri.file(join(aliasParent, "alias"));
-  const pendingAlias = vscode.Uri.joinPath(aliasDirectory, "ignored.yml");
+  const pendingAlias = vscode.Uri.joinPath(aliasDirectory, "first.yml");
   // Prepare the closed alias before this editor watches the fixture root.
   await symlink(
     dirname(firstOpen.fsPath),
@@ -1006,15 +1027,12 @@ async function dependencies(resources: TestResources): Promise<void> {
       "dirty dependent findings remain visible and stale actions cannot apply",
     );
 
-    // An ignored explicit selection must retain its dependencies too.
+    // An explicitly selected source retains its context dependencies.
     const ignored = vscode.Uri.joinPath(
       roots[0].uri,
-      "roles/example/tasks/ignored.yml",
+      "roles/example/tasks/selected.yml",
     );
-    await writeFile(
-      join(roots[0].uri.fsPath, ".gitignore"),
-      "ignored.yml\nroles/example/tasks/ignored.yml\n",
-    );
+    await writeFile(join(roots[0].uri.fsPath, ".gitignore"), "ignored.yml\n");
     await writeFile(ignored.fsPath, await readFile(task.fsPath, "utf8"));
     const ignoredDocument = await vscode.workspace.openTextDocument(ignored);
     await vscode.window.showTextDocument(ignoredDocument, { preview: false });
@@ -1022,11 +1040,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     await writeFile(template.fsPath, bad);
     await waitFor(
       () => renderer(ignored),
-      "ignored explicitly checked primary must refresh on context events",
+      "explicitly checked primary must refresh on context events",
     );
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(ignored), "ignored primary recovery");
-    success("ignored explicit selections participate in dependency refresh");
+    await waitFor(() => !renderer(ignored), "explicit primary recovery");
+    success("explicit selections participate in dependency refresh");
 
     // An ignore control changes the admitted source set without any YAML edit.
     const newlyAdmitted = vscode.Uri.joinPath(
@@ -1056,15 +1074,15 @@ async function dependencies(resources: TestResources): Promise<void> {
     await writeFile(template.fsPath, bad);
     await waitFor(
       () => renderer(ignored),
-      "membership reconciliation must retain explicitly checked ignored dependencies",
+      "membership reconciliation must retain explicitly checked dependencies",
     );
     await writeFile(template.fsPath, good);
     await waitFor(
       () => !renderer(ignored),
-      "ignored primary recovery after membership reconciliation",
+      "explicit primary recovery after membership reconciliation",
     );
     success(
-      "Git ignore changes reconcile coverage and retain ignored explicit dependencies",
+      "Git ignore changes reconcile coverage and retain visible explicit dependencies",
     );
 
     if (process.platform !== "win32") {
@@ -1280,10 +1298,8 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     success("watcher bursts coalesce without full-root rescans");
 
-    const queuedUri = vscode.Uri.joinPath(
-      roots[1].uri,
-      "roles/example/tasks/first-open/ignored.yml",
-    );
+    await admitFirstOpen(roots[1]);
+    const queuedUri = vscode.Uri.joinPath(roots[1].uri, firstOpenName);
     await editor.join();
     const blockerDocument =
       await vscode.workspace.openTextDocument(unrelatedUri);
@@ -1418,6 +1434,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     }
 
     await editor.join();
+    await admitFirstOpen(roots[0]);
     const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
     await vscode.window.showTextDocument(firstDocument, { preview: false });
     assert.equal(

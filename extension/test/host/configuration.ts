@@ -117,4 +117,50 @@ export async function runConfiguration(
   console.log(
     "PASS saved directional namespace configuration and dirty inline rule ignore",
   );
+  await resources.operation("saved folder exclusion", (signal) =>
+    diagnosticTransition({
+      signal,
+      subscribe: (observe) =>
+        vscode.languages.onDidChangeDiagnostics(() => observe()),
+      ready: () =>
+        findings(consumer).length === 0 &&
+        findings(owner).some(
+          (finding) => diagnosticCode(finding) === "jinja-layout",
+        ),
+      trigger: async () => {
+        await writeFile(
+          marker.fsPath,
+          "exclude_paths: [roles/namespace_consumer]\n",
+        );
+        await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
+      },
+    }),
+  );
+  await vscode.window.showTextDocument(document, { preview: false });
+  const excludedText = document.getText();
+  await vscode.commands.executeCommand("saltboxLint.checkDocument");
+  assert.equal(findings(consumer).length, 0);
+  const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
+    "vscode.executeFormatDocumentProvider",
+    document.uri,
+    { tabSize: 2, insertSpaces: true },
+  );
+  assert.equal(edits?.length ?? 0, 0);
+  await vscode.commands.executeCommand("saltboxLint.fixAll");
+  assert.equal(document.getText(), excludedText);
+  await writeFile(marker.fsPath, "exclude_paths: [roles, resources]\n");
+  await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
+  assert.equal(findings(consumer).length, 0);
+  assert.equal(findings(owner).length, 0);
+  await expectPrefix(resources, owner, 1, async () => {
+    await writeFile(marker.fsPath, original);
+    await vscode.commands.executeCommand("saltboxLint.checkWorkspace");
+  });
+  await expectPrefix(resources, consumer, 0, () =>
+    vscode.commands.executeCommand("saltboxLint.checkDocument"),
+  );
+  assert.equal(document.getText(), excludedText);
+  console.log(
+    "PASS saved folder exclusions skip dirty documents, formatting and fixes and recover after an empty workspace scan",
+  );
 }

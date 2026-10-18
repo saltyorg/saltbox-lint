@@ -38,7 +38,7 @@ its root or marker, or unloading the extension cancels its typing work. Commands
 - **Saltbox Lint: Check Document** checks the current buffer, including unsaved edits.
 - **Saltbox Lint: Check Workspace** checks each marked source root on disk.
   Clean open documents are rechecked too; dirty buffers retain their displayed
-  findings until saved or explicitly checked, including opened ignored files.
+  findings until saved or explicitly checked. Excluded files receive no findings.
 - **Saltbox Lint: Fix All in Document** requests verified conservative lint fixes.
 
 Each marked root also receives one saved-workspace scan on startup or first
@@ -222,6 +222,9 @@ gates; `make snapshot` builds the eight local VSIXs and corresponding source.
 
 Version v0.2.3 and newer allow YAML `namespace_sharing` in `.saltbox-lint`
 and trailing `# saltbox-lint ignore RULE_ID` comments on individual findings.
+Unreleased builds also accept `exclude_paths` for source-root-relative files and
+folders, and apply Git ignore rules to tracked files, explicit checks and opened
+buffers. Excluded sources are omitted from linting, navigation and edit planning.
 See [configuration and inline ignores](https://github.com/saltyorg/saltbox-lint/blob/main/README.md#project-configuration-and-inline-ignores)
 for syntax and scope. Empty marker files stay valid; saved configuration changes
 refresh checks. These features are unavailable in v0.2.0.

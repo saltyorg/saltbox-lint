@@ -101,6 +101,13 @@ func runFormat(command *cobra.Command, selection string, opts formatOptions) err
 }
 
 func planFormat(ctx context.Context, mode string, identity lint.SourceIdentity, data []byte) (plannedFormat, error) {
+	exclusion, err := lint.SourceExclusion(ctx, identity)
+	if err != nil {
+		return plannedFormat{}, err
+	}
+	if exclusion != "" {
+		return plannedFormat{status: "skipped", reason: exclusion}, nil
+	}
 	if identity.IsTemplate() {
 		source, _ := lint.Parse("source.j2", data)
 		source.Path = identity.Path

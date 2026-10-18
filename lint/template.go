@@ -60,6 +60,11 @@ func scanTemplate(s *Source) templateScan {
 
 func scanProjectTemplate(p *Project, s *Source) templateScan {
 	result := templateScan{}
+	if s.ExclusionReason != "" {
+		result.configurationUnavailable = true
+		result.reasons = []templateReason{{message: "source-excluded"}}
+		return result
+	}
 	if reasons := templateTaskConfigurationReasons(p, s); len(reasons) > 0 {
 		for _, reason := range reasons {
 			result.reasons = append(result.reasons, templateReason{message: reason})

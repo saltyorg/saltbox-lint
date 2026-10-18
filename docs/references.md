@@ -17,6 +17,10 @@ selected sources emit references. Extra context supplies candidates and dependen
 observations. Exit status is 0 for a generated query, including unresolved reads,
 and 2 for usage, loading or reporting failures.
 
+Unreleased builds always apply configured exclusions and Git ignore rules, even
+to explicit paths and buffers. Excluded sources have no references or declarations;
+editor queries return `unavailable` with reason `source-excluded`.
+
 ## What resolution means
 
 A resolved reference locates one declaration candidate for each requested suffix.
