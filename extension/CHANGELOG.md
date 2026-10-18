@@ -1,9 +1,14 @@
 # Changelog
 
-## 0.2.2 (2026-10-18)
+## 0.2.3 (2026-10-18)
 
-Version 0.2.1 was not published after release qualification failed.
+Versions 0.2.1 and 0.2.2 were not published after release qualification failed.
 
+- Preserve formatting when a delayed deletion notification refers to an already
+  verified, unchanged root marker. Keep revocation for actual marker removal,
+  replacement and rewrites.
+- Join native groups separately from lifetime sockets in guardian crash tests.
+  Retain the group-disappearance assertions and existing deadlines.
 - Wait for the current root owner and marker probe before reporting readiness,
   including probes that replace pending work. Preserve edited-model rejection.
 - Terminate the owned child before sweeping its descendants after native exit.

@@ -210,13 +210,15 @@ export class MarkedRoots implements vscode.Disposable {
         watcher,
       };
       const refresh = () => {
+        // A deletion notification can arrive after the current marker was
+        // already observed. Preserve that owner only while its identity matches.
         if (this.roots.get(key) !== root || this.unchangedMarker(root)) return;
         this.startProbe(key, root);
       };
       const acquired: vscode.Disposable[] = [watcher];
       try {
         acquired.push(watcher.onDidCreate(refresh));
-        acquired.push(watcher.onDidDelete(() => this.startProbe(key, root)));
+        acquired.push(watcher.onDidDelete(refresh));
         acquired.push(watcher.onDidChange(refresh));
         root.watcher = combineDisposables(acquired);
       } catch (error) {

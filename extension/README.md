@@ -8,7 +8,7 @@ Untrusted and virtual workspaces are unsupported.
 Create an empty regular file named `.saltbox-lint` in each source root to opt
 that root in. The source root is the workspace folder by default, or the path
 selected by `saltboxLint.root`. Empty markers use the default policy. Version
-v0.2.2 and newer also read optional configuration from this file, as described
+v0.2.3 and newer also read optional configuration from this file, as described
 below. A directory or symlink with that name does not opt in. The same requirement applies on native
 and remote workspace hosts. The extension never creates markers automatically.
 
@@ -220,7 +220,7 @@ gates; `make snapshot` builds the eight local VSIXs and corresponding source.
 
 ## Project configuration and individual ignores
 
-Version v0.2.2 and newer allow YAML `namespace_sharing` in `.saltbox-lint`
+Version v0.2.3 and newer allow YAML `namespace_sharing` in `.saltbox-lint`
 and trailing `# saltbox-lint ignore RULE_ID` comments on individual findings.
 See [configuration and inline ignores](https://github.com/saltyorg/saltbox-lint/blob/main/README.md#project-configuration-and-inline-ignores)
 for syntax and scope. Empty marker files stay valid; saved configuration changes

@@ -248,13 +248,25 @@ for (const replaceOwner of [false, true]) {
     });
     let pending: Promise<void> | undefined;
     let settled = false;
+    const admitted = (entered: Promise<void>) =>
+      Promise.race([
+        entered,
+        roots.ready().then(() => {
+          assert.fail(
+            "marker event settled without admitting its controlled probe",
+          );
+        }),
+      ]);
     try {
       roots.configure();
       await roots.ready();
       assert.equal(roots.get("root"), root);
       held = true;
+      // A verified unchanged marker ignores delayed watcher echoes. Start the
+      // overlapping probes from a real metadata change to the current marker.
+      await writeFile(join(root, ".saltbox-lint"), "{}\n");
       changed();
-      await entered[0].promise;
+      await admitted(entered[0].promise);
       pending = roots.ready().then(() => {
         settled = true;
       });
@@ -262,7 +274,7 @@ for (const replaceOwner of [false, true]) {
         configuredRoot = "replacement";
         roots.configure();
       } else changed();
-      await entered[1].promise;
+      await admitted(entered[1].promise);
       gates[0].resolve();
       await new Promise<void>((resolve) => setImmediate(resolve));
       assert.equal(roots.get("root"), undefined);

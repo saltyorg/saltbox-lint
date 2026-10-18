@@ -111,6 +111,9 @@ exit/status remains separate from guardian exit. Joining includes control writes
 native exit, pipe closure, IPC disconnection and read-only group disappearance.
 The guard remains alive after payload completion so termination never depends
 on a reused numeric process identifier.
+The crash regression joins lifetime sockets and native groups separately.
+A real payload can close its socket while remaining live behind a control gate;
+that control must not report release until native group disappearance is observed.
 The native regression reproduces a Node 24.20 IPC write failure where the
 composite child close event is missing despite native exit, closed output
 streams and disconnected IPC. Those actual public receipts and joined writes
@@ -493,7 +496,10 @@ joins the current root owner and its current probe, including a replacement
 admitted while an older probe was pending.
 [`root-readiness.test.ts`](../extension/test/unit/root-readiness.test.ts)
 controls that ordering through the real editor adapter and verifies the first
-format request and the edited-model rejection without retries. The installed
+format request and the edited-model rejection without retries. It also delivers
+a delayed deletion notification after the current marker is already verified.
+Unchanged native marker identity preserves the admitted formatter; actual
+removal, replacement and rewrites still revoke that request. The installed
 marker assertion retains its original single formatting call and records
 bounded document, diagnostic and editor-event facts if it fails. Those public
 facts do not expose provider invocation or cancellation internals.

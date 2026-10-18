@@ -2,7 +2,7 @@
   "name": "saltbox-lint",
   "displayName": "Saltbox Lint",
   "description": "Saltbox and Sandbox YAML diagnostics, verified fixes and formatting.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "saltyorg",
   "license": "GPL-3.0-only",
   "engines": {
