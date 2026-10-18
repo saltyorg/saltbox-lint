@@ -201,7 +201,10 @@ func TestGitIgnoresTrackedFilesNestedRulesAndExplicitBuffers(t *testing.T) {
 }
 
 func TestGitIgnoreNulRecordsDoNotRequireWorktreeFiles(t *testing.T) {
-	root := t.TempDir()
+	root, err := canonicalDirectory(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	gitTest(t, root, "init", "-q")
 	putFile(t, root, ".gitignore", "tasks/*.yml\n")
 	if err := os.Mkdir(filepath.Join(root, "tasks"), 0755); err != nil {
