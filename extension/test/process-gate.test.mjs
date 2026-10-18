@@ -55,12 +55,14 @@ test("fixture failures identify their stage without disclosing process inputs", 
     const cases = [
       {
         stage: "instance-open",
+        stdin: "ignore",
         errorClass: "errno",
         args: ["format", privateMarker],
         env: { SALTBOX_TEST_PROCESS_INSTANCES: privateDirectory },
       },
       {
         stage: "process-log-open",
+        stdin: "ignore",
         errorClass: "errno",
         args: ["check", privateMarker],
         env: { SALTBOX_TEST_PROCESS_LOG: privateDirectory },
@@ -113,7 +115,10 @@ test("fixture failures identify their stage without disclosing process inputs", 
           ...scenario.env,
           SALTBOX_TEST_PROCESS_FAILURE_LOG: failureLog,
         },
-        input: privateMarker,
+        // These two setup failures precede the fixture's stdin read. Supplying
+        // a writer would race its intended early exit and add a parent EPIPE.
+        stdio: [scenario.stdin ?? "pipe", "pipe", "pipe"],
+        ...(scenario.stdin === "ignore" ? {} : { input: privateMarker }),
         encoding: "utf8",
         timeout: 10000,
       });
