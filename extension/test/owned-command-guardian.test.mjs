@@ -6,12 +6,14 @@ import { createServer } from "node:net";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { ownedCommand } from "../scripts/owned-command.mjs";
 import { groupHasLiveMembers } from "../scripts/owned-group.mjs";
 import {
   createHostProfile,
   cleanupHostProfile,
 } from "../scripts/host-fixture.mjs";
+import { withTestResources } from "./support/test-resources.ts";
 
 /** @typedef {{socket: import('node:net').Socket, closed: Promise<unknown>, group?: number}} Peer */
 
@@ -24,6 +26,11 @@ async function lifetime(t, expectedPeers) {
   /** @type {Peer[]} */
   const peers = [];
   let admitted = 0;
+  /** @type {() => void} */
+  let reportReady = () => {};
+  const ready = new Promise((resolveReady) => {
+    reportReady = () => resolveReady(undefined);
+  });
   let sealed = false;
   const server = createServer((socket) => {
     /** @type {Peer} */
@@ -49,8 +56,10 @@ async function lifetime(t, expectedPeers) {
       assert.ok(typeof message.group === "number" && message.group > 1);
       peer.group = message.group;
       socket.removeAllListeners("data");
-      if (++admitted === expectedPeers)
+      if (++admitted === expectedPeers) {
         writeFileSync(join(profile.root, "ready"), "ready");
+        reportReady();
+      }
     });
   });
   t.after(async () => {
@@ -99,7 +108,7 @@ async function lifetime(t, expectedPeers) {
   );
   const address = server.address();
   assert.ok(address && typeof address !== "string");
-  return { profile, peers, token, port: address.port };
+  return { profile, peers, token, port: address.port, ready };
 }
 
 /** @param {Peer[]} peers @param {AbortSignal} signal */
@@ -111,12 +120,91 @@ async function joinedPeers(peers, signal) {
   if (signal.aborted) cancel();
   try {
     await Promise.all(peers.map((peer) => peer.closed));
-    if (signal.aborted)
-      throw new Error("guardian lifetime observation cancelled");
+    signal.throwIfAborted();
+    for (const group of new Set(peers.map((peer) => peer.group))) {
+      assert.ok(group, "native lifetime must have an identified group");
+      while (await groupHasLiveMembers(group, signal))
+        await delay(10, undefined, { signal });
+    }
   } finally {
     signal.removeEventListener("abort", cancel);
   }
 }
+
+test(
+  "closed lifetime sockets cannot report release while their native group remains live",
+  { timeout: 15000 },
+  async (t) => {
+    if (process.platform === "win32") return;
+    await withTestResources(
+      { cleanupTimeoutMs: 5000, operationSignal: t.signal },
+      async (resources) => {
+        const owner = await lifetime(t, 1);
+        const payload = `
+const {watch}=require('node:fs');
+const {connect}=require('node:net');
+const {execFileSync}=require('node:child_process');
+const configuration=JSON.parse(process.env.SALTBOX_GUARDIAN_LIFETIME);
+const watcher=watch(configuration.root,(_event,name)=>{if(name==='release')watcher.close();});
+const group=Number(execFileSync('/bin/ps',['-p',String(process.pid),'-o','pgid=']).toString().trim());
+const socket=connect({host:'127.0.0.1',port:configuration.port},()=>socket.end(JSON.stringify({token:configuration.token,group})+'\\n'));
+socket.on('error',error=>{throw error;});
+`;
+        const work = resources.operation("held native guardian lifetime", () =>
+          ownedCommand(process.execPath, ["-e", payload], {
+            phase: "closed socket with live native owner",
+            timeoutMs: 10000,
+            signal: resources.signal,
+            env: {
+              ...process.env,
+              SALTBOX_GUARDIAN_LIFETIME: JSON.stringify({
+                root: owner.profile.root,
+                token: owner.token,
+                port: owner.port,
+              }),
+            },
+          }),
+        );
+        await Promise.race([
+          owner.ready,
+          work.then(() => {
+            throw new Error("native payload exited before readiness");
+          }),
+        ]);
+        assert.equal(owner.peers.length, 1);
+        await owner.peers[0].closed;
+        const group = owner.peers[0].group;
+        assert.ok(group);
+        assert.equal(await groupHasLiveMembers(group), true);
+        let joined = false;
+        const joining = resources.operation(
+          "join peer and native lifetimes",
+          async () => {
+            await joinedPeers(owner.peers, resources.signal);
+            joined = true;
+          },
+        );
+        await new Promise((resolveTurn) => setImmediate(resolveTurn));
+        assert.equal(
+          joined,
+          false,
+          "socket close must not establish native group release",
+        );
+        const cancellation = new Error("independent lifetime join canceled");
+        await assert.rejects(
+          joinedPeers(owner.peers, AbortSignal.abort(cancellation)),
+          (error) => error === cancellation,
+        );
+        assert.equal(await groupHasLiveMembers(group), true);
+        assert.equal(joined, false);
+        writeFileSync(join(owner.profile.root, "release"), "release");
+        await work;
+        await joining;
+        assert.equal(await groupHasLiveMembers(group), false);
+      },
+    );
+  },
+);
 
 const payloadProgram = `
 const {spawn,execFileSync}=require('node:child_process');
