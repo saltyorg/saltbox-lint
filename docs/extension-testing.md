@@ -500,6 +500,10 @@ format request and the edited-model rejection without retries. It also delivers
 a delayed deletion notification after the current marker is already verified.
 Unchanged native marker identity preserves the admitted formatter; actual
 removal, replacement and rewrites still revoke that request. The installed
+marker-event control also holds a real formatter through duplicate create,
+change and delete notifications, then verifies that recreating the actual
+marker with a different native identity still revokes ownership synchronously.
+The installed
 marker assertion retains its original single formatting call and records
 bounded document, diagnostic and editor-event facts if it fails. Those public
 facts do not expose provider invocation or cancellation internals.

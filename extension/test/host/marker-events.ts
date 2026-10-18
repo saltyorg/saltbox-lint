@@ -181,6 +181,7 @@ export async function checkMarkerEvents(
         );
         events.create();
         events.change();
+        events.delete();
         assert.ok(
           ownsDocument(),
           "identical notifications preserve verified ownership synchronously",
@@ -205,9 +206,20 @@ export async function checkMarkerEvents(
         await pending;
       }
       console.log(
-        "PASS duplicate marker create/change preserve pending real formatting",
+        "PASS duplicate marker create/change/delete preserve pending real formatting",
       );
 
+      const removedMarker = marker.fsPath + ".deleted";
+      resources.defer("remove deleted marker backup", () =>
+        rm(removedMarker, { force: true }),
+      );
+      const beforeDeletion = await lstat(marker.fsPath, { bigint: true });
+      await rename(marker.fsPath, removedMarker);
+      await writeFile(marker.fsPath, markerBytes);
+      assert.notEqual(
+        (await lstat(marker.fsPath, { bigint: true })).ino,
+        beforeDeletion.ino,
+      );
       events.delete();
       assert.equal(
         ownsDocument(),
