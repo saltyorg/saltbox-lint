@@ -142,13 +142,21 @@ export async function runDependencies(
 async function dependencies(resources: TestResources): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
   const firstOpenName = "roles/example/tasks/first-open/first.yml";
+  const administrativeIgnores = new Map<string, Buffer>();
   for (const root of roots) {
     const path = join(root.uri.fsPath, ".git/info/exclude");
     const original = await readFile(path);
+    administrativeIgnores.set(path, original);
     resources.defer("first-open administrative ignore", () =>
       writeFile(path, original),
     );
   }
+  const restoreFirstOpen = async (root: vscode.WorkspaceFolder) => {
+    const path = join(root.uri.fsPath, ".git/info/exclude");
+    const original = administrativeIgnores.get(path);
+    assert.ok(original);
+    await writeFile(path, original);
+  };
   const admitFirstOpen = async (root: vscode.WorkspaceFolder) => {
     const path = join(root.uri.fsPath, ".git/info/exclude");
     const current = await readFile(path, "utf8");
@@ -1028,22 +1036,24 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
 
     // An explicitly selected source retains its context dependencies.
-    const ignored = vscode.Uri.joinPath(
+    // The role contract reports its first renderer. This temporary source must
+    // sort before main.yml, then leave the role before later renderer cases.
+    const explicit = vscode.Uri.joinPath(
       roots[0].uri,
-      "roles/example/tasks/selected.yml",
+      "roles/example/tasks/a_explicit.yml",
     );
     await writeFile(join(roots[0].uri.fsPath, ".gitignore"), "ignored.yml\n");
-    await writeFile(ignored.fsPath, await readFile(task.fsPath, "utf8"));
-    const ignoredDocument = await vscode.workspace.openTextDocument(ignored);
-    await vscode.window.showTextDocument(ignoredDocument, { preview: false });
-    await editor.check(ignoredDocument, true);
+    await writeFile(explicit.fsPath, await readFile(task.fsPath, "utf8"));
+    const explicitDocument = await vscode.workspace.openTextDocument(explicit);
+    await vscode.window.showTextDocument(explicitDocument, { preview: false });
+    await editor.check(explicitDocument, true);
     await writeFile(template.fsPath, bad);
     await waitFor(
-      () => renderer(ignored),
+      () => renderer(explicit),
       "explicitly checked primary must refresh on context events",
     );
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(ignored), "explicit primary recovery");
+    await waitFor(() => !renderer(explicit), "explicit primary recovery");
     success("explicit selections participate in dependency refresh");
 
     // An ignore control changes the admitted source set without any YAML edit.
@@ -1073,17 +1083,34 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     await writeFile(template.fsPath, bad);
     await waitFor(
-      () => renderer(ignored),
+      () => renderer(explicit),
       "membership reconciliation must retain explicitly checked dependencies",
     );
     await writeFile(template.fsPath, good);
     await waitFor(
-      () => !renderer(ignored),
+      () => !renderer(explicit),
       "explicit primary recovery after membership reconciliation",
     );
     success(
       "Git ignore changes reconcile coverage and retain visible explicit dependencies",
     );
+    await vscode.window.showTextDocument(explicitDocument, { preview: false });
+    await vscode.commands.executeCommand(
+      "workbench.action.revertAndCloseActiveEditor",
+    );
+    // Intentional source deletion verifies that renderer ownership returns to
+    // the original primary, rather than retaining this case's role context.
+    await rm(explicit.fsPath);
+    editor.removeFile(explicit);
+    await editor.join();
+    await writeFile(template.fsPath, bad);
+    await waitFor(
+      () => renderer(savedTask),
+      "deleting the explicit first renderer restores the original primary",
+    );
+    await writeFile(template.fsPath, good);
+    await waitFor(() => !renderer(savedTask), "original renderer recovery");
+    success("deleting an explicit renderer restores original role ownership");
 
     if (process.platform !== "win32") {
       const alias = vscode.Uri.joinPath(roots[0].uri, "task-alias.yml");
@@ -1433,6 +1460,8 @@ async function dependencies(resources: TestResources): Promise<void> {
       await rm(queuedGate, { force: true });
     }
 
+    await restoreFirstOpen(roots[1]);
+    await editor.checkWorkspace();
     await editor.join();
     await admitFirstOpen(roots[0]);
     const firstDocument = await vscode.workspace.openTextDocument(firstOpen);
@@ -1583,6 +1612,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     success(
       "alias admission displays public pending status and supersession, cancellation and disposal release exact child ownership",
     );
+    await restoreFirstOpen(roots[0]);
 
     // Hold an already-computed full scan, then change unknown context before its
     // first result is accepted. Cancellation must preserve eventual full coverage.
