@@ -75,9 +75,9 @@ uses the same configuration and refreshes checks when it is saved. Configuration
 creation, changes and removal affect `--changed-since` selection too. Unsaved
 configuration edits are not used.
 
-### Folder and file exclusions (unreleased)
+### Folder and file exclusions
 
-Unreleased builds also accept `exclude_paths` in the same `.saltbox-lint` file:
+Version v0.2.4 and newer accept `exclude_paths` in the same `.saltbox-lint` file:
 
 ```yaml
 namespace_sharing:
@@ -103,7 +103,7 @@ Git worktrees also use Git's ignore rules for tracked and untracked sources,
 including nested `.gitignore` files, negation, local excludes and global excludes.
 Explicit selection does not override these rules. A scan whose supported sources
 are all excluded succeeds with no findings. Outside a Git worktree, only the
-configured `exclude_paths` apply. This behavior is not available in v0.2.3.
+configured `exclude_paths` apply. This behavior requires v0.2.4 or newer.
 
 To ignore one YAML finding, put a trailing comment on the same physical line as
 its primary location:

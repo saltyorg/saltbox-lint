@@ -222,7 +222,7 @@ gates; `make snapshot` builds the eight local VSIXs and corresponding source.
 
 Version v0.2.3 and newer allow YAML `namespace_sharing` in `.saltbox-lint`
 and trailing `# saltbox-lint ignore RULE_ID` comments on individual findings.
-Unreleased builds also accept `exclude_paths` for source-root-relative files and
+Version v0.2.4 and newer accept `exclude_paths` for source-root-relative files and
 folders, and apply Git ignore rules to tracked files, explicit checks and opened
 buffers. Excluded sources are omitted from linting, navigation and edit planning.
 See [configuration and inline ignores](https://github.com/saltyorg/saltbox-lint/blob/main/README.md#project-configuration-and-inline-ignores)

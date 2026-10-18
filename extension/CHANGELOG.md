@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.4 (2026-10-19)
 
 - Add `exclude_paths` to `.saltbox-lint` for source-root-relative files and folders.
 - Apply configuration and Git exclusions to directory scans, tracked files,
