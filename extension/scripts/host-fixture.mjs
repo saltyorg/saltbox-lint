@@ -130,15 +130,33 @@ export async function populateHostFixture(
   { env, extensionDirectory, command },
 ) {
   const root = profile.workspaceRoot;
-  for (const name of ["one", "two"]) {
-    mkdirSync(resolve(root, name, "roles/example/defaults"), {
-      recursive: true,
-    });
-    await command("git", ["init", "-q", resolve(root, name)], {
+  const enclosingRepository = env.SALTBOX_TEST_DEPENDENCIES === "1";
+  if (enclosingRepository) {
+    mkdirSync(root, { recursive: true });
+    await command("git", ["init", "-q", root], {
       phase: "fixture git initialization",
       timeoutMs: 15000,
       stdio: "inherit",
     });
+    // Administrative policy outside each source root is intentionally opaque
+    // to its watchers. The first-open controls admit these files explicitly.
+    writeFileSync(
+      resolve(root, ".git/info/exclude"),
+      ["one", "two"]
+        .map((name) => `${name}/roles/example/tasks/first-open/first.yml\n`)
+        .join(""),
+    );
+  }
+  for (const name of ["one", "two"]) {
+    mkdirSync(resolve(root, name, "roles/example/defaults"), {
+      recursive: true,
+    });
+    if (!enclosingRepository)
+      await command("git", ["init", "-q", resolve(root, name)], {
+        phase: "fixture git initialization",
+        timeoutMs: 15000,
+        stdio: "inherit",
+      });
     if (env.SALTBOX_TEST_MARKERS !== "1")
       writeFileSync(resolve(root, name, ".saltbox-lint"), "");
     writeFileSync(
@@ -380,12 +398,6 @@ export async function populateHostFixture(
       writeFileSync(
         resolve(root, name, "roles/example/tasks/first-open/first.yml"),
         readFileSync(resolve(root, name, "roles/example/tasks/main.yml")),
-      );
-      // This case later removes an opaque administrative ignore before its
-      // first explicit check. Saved coverage must not already own the source.
-      writeFileSync(
-        resolve(root, name, ".git/info/exclude"),
-        "roles/example/tasks/first-open/first.yml\n",
       );
       writeFileSync(
         resolve(root, name, "roles/example/templates/router.conf"),

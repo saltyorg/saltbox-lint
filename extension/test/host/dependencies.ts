@@ -35,7 +35,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { EditorIntegration } from "../../src/editor.ts";
 import { hash, parseCheck } from "../../src/protocol.ts";
 import {
@@ -142,25 +142,20 @@ export async function runDependencies(
 async function dependencies(resources: TestResources): Promise<void> {
   const roots = vscode.workspace.workspaceFolders!;
   const firstOpenName = "roles/example/tasks/first-open/first.yml";
-  const administrativeIgnores = new Map<string, Buffer>();
-  for (const root of roots) {
-    const path = join(root.uri.fsPath, ".git/info/exclude");
-    const original = await readFile(path);
-    administrativeIgnores.set(path, original);
-    resources.defer("first-open administrative ignore", () =>
-      writeFile(path, original),
-    );
-  }
-  const restoreFirstOpen = async (root: vscode.WorkspaceFolder) => {
-    const path = join(root.uri.fsPath, ".git/info/exclude");
-    const original = administrativeIgnores.get(path);
-    assert.ok(original);
-    await writeFile(path, original);
-  };
+  const administrativeIgnore = join(
+    dirname(roots[0].uri.fsPath),
+    ".git/info/exclude",
+  );
+  const originalAdministrativeIgnore = await readFile(administrativeIgnore);
+  resources.defer("first-open administrative ignore", () =>
+    writeFile(administrativeIgnore, originalAdministrativeIgnore),
+  );
+  const restoreFirstOpen = () =>
+    writeFile(administrativeIgnore, originalAdministrativeIgnore);
   const admitFirstOpen = async (root: vscode.WorkspaceFolder) => {
-    const path = join(root.uri.fsPath, ".git/info/exclude");
-    const current = await readFile(path, "utf8");
-    assert.ok(current.includes(firstOpenName + "\n"));
+    const current = await readFile(administrativeIgnore, "utf8");
+    const pattern = `${basename(root.uri.fsPath)}/${firstOpenName}\n`;
+    assert.ok(current.includes(pattern));
     const args = [
       "-C",
       root.uri.fsPath,
@@ -170,7 +165,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       firstOpenName,
     ];
     assert.equal(spawnSync("git", args, { timeout: 15000 }).status, 0);
-    await writeFile(path, current.replace(firstOpenName + "\n", ""));
+    await writeFile(administrativeIgnore, current.replace(pattern, ""));
     assert.equal(spawnSync("git", args, { timeout: 15000 }).status, 1);
   };
   const task = vscode.Uri.joinPath(
@@ -1460,7 +1455,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       await rm(queuedGate, { force: true });
     }
 
-    await restoreFirstOpen(roots[1]);
+    await restoreFirstOpen();
     await editor.checkWorkspace();
     await editor.join();
     await admitFirstOpen(roots[0]);
@@ -1612,7 +1607,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     success(
       "alias admission displays public pending status and supersession, cancellation and disposal release exact child ownership",
     );
-    await restoreFirstOpen(roots[0]);
+    await restoreFirstOpen();
 
     // Hold an already-computed full scan, then change unknown context before its
     // first result is accepted. Cancellation must preserve eventual full coverage.
