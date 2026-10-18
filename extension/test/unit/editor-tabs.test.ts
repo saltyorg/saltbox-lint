@@ -149,6 +149,7 @@ async function tabHost(dirty = false) {
             tab.input instanceof TextInput && tab.input.uri === document.uri,
         );
         for (const listener of activeListeners) listener();
+        return { document };
       },
     },
     commands: {
@@ -199,7 +200,10 @@ async function tabHost(dirty = false) {
     module,
     exports: module.exports,
     require: createRequire(import.meta.url),
-    console: { log: (line: string) => receipts.push(line) },
+    console: {
+      log: (line: string) => receipts.push(line),
+      error: () => {},
+    },
     process,
     Buffer,
     setTimeout,

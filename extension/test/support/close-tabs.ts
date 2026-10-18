@@ -11,7 +11,7 @@ export interface TabCleanupAdapter<Tab, Document> {
   onChange(listener: (event: TabCleanupChange<Tab>) => void): {
     dispose(): void;
   };
-  showDocument(document: Document, tab: Tab): PromiseLike<unknown>;
+  showDocument(document: Document, tab: Tab): PromiseLike<Document>;
   discardActive(): PromiseLike<unknown>;
   closeClean(tab: Tab): PromiseLike<boolean>;
 }
@@ -78,14 +78,15 @@ export async function closeTabs<Tab extends object, Document>(
       // its current public tab only after activation, rather than reusing the
       // original diff or a saved group snapshot.
       let shown = false;
+      let activated: Document = dirty;
       const active = observe<Tab, Tab>(
         adapter,
-        () => (shown ? adapter.activeDocumentTab(dirty) : undefined),
+        () => (shown ? adapter.activeDocumentTab(activated) : undefined),
         signal,
       );
       try {
         if (signal?.aborted) throw signal.reason;
-        await adapter.showDocument(dirty, tab);
+        activated = await adapter.showDocument(dirty, tab);
         shown = true;
         active.check();
         target = (await active.wait()).value;

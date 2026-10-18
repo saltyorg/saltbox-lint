@@ -68,6 +68,7 @@ class TabsFixture {
           this.tabs.push(this.active);
         }
         this.emit({ closed: [] });
+        return document;
       },
       discardActive: async () => {
         assert.ok(
@@ -230,6 +231,7 @@ test("discard can close the existing diff when showTextDocument reuses its edito
     fixture.active = tab;
     fixture.calls.push("show modified");
     fixture.emit({ closed: [] });
+    return document;
   };
   fixture.adapter.activeDocumentTab = (candidate) =>
     fixture.active?.documents.includes(candidate) ? fixture.active : undefined;
@@ -267,9 +269,10 @@ test("public activation state can arrive after the show promise", async () => {
   const tab = text("dirty", true);
   const fixture = new TabsFixture([tab]);
   const entered = deferred<void>();
-  fixture.adapter.showDocument = async () => {
+  fixture.adapter.showDocument = async (document) => {
     fixture.calls.push("show dirty");
     entered.resolve();
+    return document;
   };
   const pending = closeTabs(fixture.adapter);
   await entered.promise;
@@ -283,6 +286,62 @@ test("public activation state can arrive after the show promise", async () => {
     await pending;
   }
   assert.deepEqual(fixture.calls, ["show dirty", "discard dirty"]);
+  assert.equal(fixture.listeners.size, 0);
+});
+
+test("dirty activation follows the actual returned document model", async () => {
+  const original = { name: "same-uri", isDirty: true };
+  const actual = { name: "same-uri", isDirty: true };
+  const tab: Tab = { name: "dirty", kind: "text", documents: [original] };
+  const fixture = new TabsFixture([tab]);
+  const inspected = deferred<void>();
+  fixture.adapter.showDocument = async () => {
+    tab.documents = [actual];
+    fixture.active = tab;
+    fixture.emit({ closed: [] });
+    return actual;
+  };
+  fixture.adapter.activeDocumentTab = (document) => {
+    inspected.resolve();
+    return document === actual ? tab : undefined;
+  };
+  const controller = new AbortController();
+  let joined = false;
+  let operationFailure: unknown;
+  const pending = closeTabs(fixture.adapter, controller.signal).then(
+    () => {
+      joined = true;
+    },
+    (error: unknown) => {
+      operationFailure = error;
+    },
+  );
+  await inspected.promise;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const failures: unknown[] = [];
+  try {
+    if (operationFailure) throw operationFailure;
+    assert.equal(
+      joined,
+      true,
+      "a retained model cannot block actual editor closure",
+    );
+    assert.deepEqual(fixture.calls, ["discard dirty"]);
+    assert.equal(actual.isDirty, false);
+    assert.equal(fixture.tabs.length, 0);
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    controller.abort(new Error("model activation regression cleanup"));
+    await pending;
+  }
+  if (operationFailure && operationFailure !== controller.signal.reason)
+    failures.push(operationFailure);
+  if (failures.length)
+    throw new AggregateError(
+      [...new Set(failures)],
+      "actual model cleanup regression",
+    );
   assert.equal(fixture.listeners.size, 0);
 });
 
@@ -372,7 +431,11 @@ for (const phase of ["show", "discard", "close"] as const) {
       entered.resolve();
       return completed.promise;
     };
-    if (phase === "show") fixture.adapter.showDocument = pendingCommand;
+    if (phase === "show")
+      fixture.adapter.showDocument = async (document) => {
+        await pendingCommand();
+        return document;
+      };
     else if (phase === "discard")
       fixture.adapter.discardActive = pendingCommand;
     else fixture.adapter.closeClean = pendingCommand;

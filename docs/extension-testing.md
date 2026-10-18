@@ -176,6 +176,11 @@ Tab cleanup reads fresh public snapshots and matches resource identity using
 public input/URI/view-column data. The minimum editor can report final tab
 removal through a group-model update without a separate closed-tab event;
 current absence is the completion condition after the close command settles.
+Dirty activation follows the document model actually returned by
+`showTextDocument`, including replacement models for the same URI. Scoped cleanup
+rejects a returned resource outside its owned URI set. The imported helper and
+SDK-adapter tests retain original errors, command joining and listener disposal;
+bounded failure records preserve the cleanup stage and public tab/model identities.
 
 Editor, help, provider and root-watcher setup own each successful acquisition
 immediately. A later setup failure rolls back every acquired resource and
