@@ -3,6 +3,12 @@ import * as path from "node:path";
 import type { EditorIntegration } from "./editor.ts";
 import { combineDisposables, rollbackResources } from "./disposables.ts";
 
+// Temporary boundary trace for the cold native SDK cancellation investigation.
+function trace(event: Record<string, unknown>): void {
+  if (process.env.SALTBOX_LINT_TRACE_CODE_ACTIONS === "1")
+    console.error("SALTBOX_PROVIDER_TRACE " + JSON.stringify(event));
+}
+
 export interface ProviderRegistration {
   language: string;
   writable: boolean;
@@ -33,6 +39,7 @@ export function updateProviders(
       editor.writable(document) === registration.writable
     )
       continue;
+    trace({ phase: "dispose", uri: key });
     registration.disposable.dispose();
     providers.delete(key);
   }
@@ -49,6 +56,8 @@ export function updateProviders(
       },
     ];
     const writable = editor.writable(document);
+    trace({ phase: "register", uri: key, selector, writable });
+    let observations = 0;
     const acquired: vscode.Disposable[] = [];
     const own = (registration: vscode.Disposable) =>
       acquired.push(registration);
@@ -57,8 +66,44 @@ export function updateProviders(
         vscode.languages.registerCodeActionsProvider(
           selector,
           {
-            provideCodeActions: (document, range) =>
-              editor.actions(document, range),
+            provideCodeActions: (document, range, context, token) => {
+              const observe =
+                process.env.SALTBOX_LINT_TRACE_CODE_ACTIONS === "1" &&
+                observations++ < 32;
+              if (observe)
+                trace({
+                  phase: "enter",
+                  uri: document.uri.toString(),
+                  version: document.version,
+                  language: document.languageId,
+                  range: { start: range.start, end: range.end },
+                  trigger: context.triggerKind,
+                  cancelled: token.isCancellationRequested,
+                });
+              try {
+                const actions = editor.actions(document, range);
+                if (observe)
+                  trace({
+                    phase: "return",
+                    uri: document.uri.toString(),
+                    range: { start: range.start, end: range.end },
+                    cancelled: token.isCancellationRequested,
+                    actions: actions.map((action) => ({
+                      title: action.title,
+                      command: action.command?.command,
+                    })),
+                  });
+                return actions;
+              } catch (error) {
+                if (observe)
+                  trace({
+                    phase: "throw",
+                    uri: document.uri.toString(),
+                    error: String(error),
+                  });
+                throw error;
+              }
+            },
           },
           {
             providedCodeActionKinds: [
