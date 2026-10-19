@@ -27,6 +27,7 @@ async function fixture(t: TestContext) {
     (event: vscode.WorkspaceFoldersChangeEvent) => void
   >();
   let update = () => true;
+  let disposalError: Error | undefined;
   let calls = 0;
   const emit = (
     added: vscode.WorkspaceFolder[],
@@ -50,7 +51,12 @@ async function fixture(t: TestContext) {
       listener: (event: vscode.WorkspaceFoldersChangeEvent) => void,
     ) {
       listeners.add(listener);
-      return { dispose: () => listeners.delete(listener) };
+      return {
+        dispose() {
+          listeners.delete(listener);
+          if (disposalError) throw disposalError;
+        },
+      };
     },
     updateWorkspaceFolders() {
       calls++;
@@ -81,6 +87,9 @@ async function fixture(t: TestContext) {
     change: module.exports.changeWorkspace,
     setUpdate(value: () => boolean) {
       update = value;
+    },
+    setDisposalError(error: Error) {
+      disposalError = error;
     },
     calls: () => calls,
     targetEvent: (remove = false) =>
@@ -178,4 +187,61 @@ test("workspace removal waits for the matching removal event", async (t) => {
   f.targetEvent(true);
   await pending;
   assert.equal(f.listeners.size, 0);
+});
+
+test("workspace mutation retains its original error alongside listener disposal failure", async (t) => {
+  const f = await fixture(t),
+    original = new Error("native mutation failed"),
+    cleanup = new Error("listener release failed");
+  f.setUpdate(() => {
+    throw original;
+  });
+  f.setDisposalError(cleanup);
+  await assert.rejects(
+    f.change(1, 0, f.target, new AbortController().signal),
+    (failure) => {
+      assert.ok(failure && typeof failure === "object");
+      assert.equal(Reflect.get(failure, "cause"), original);
+      const errors: unknown = Reflect.get(failure, "errors");
+      assert.ok(Array.isArray(errors));
+      assert.equal(errors[0], original);
+      assert.equal(errors[1], cleanup);
+      return true;
+    },
+  );
+});
+
+test("workspace completion rejects disposal failure without throwing through the event dispatcher", async (t) => {
+  const f = await fixture(t),
+    cleanup = new Error("listener release failed");
+  f.setDisposalError(cleanup);
+  const pending = assert.rejects(
+    f.change(1, 0, f.target, new AbortController().signal),
+    (failure) => failure === cleanup,
+  );
+  assert.doesNotThrow(() => f.targetEvent());
+  await pending;
+});
+
+test("cancelled workspace receipt preserves cancellation and listener disposal errors", async (t) => {
+  const f = await fixture(t),
+    controller = new AbortController(),
+    original = new Error("owner cancelled"),
+    cleanup = new Error("listener release failed");
+  f.setDisposalError(cleanup);
+  const pending = assert.rejects(
+    f.change(1, 0, f.target, controller.signal),
+    (failure) => {
+      assert.ok(failure && typeof failure === "object");
+      assert.equal(Reflect.get(failure, "cause"), original);
+      const errors: unknown = Reflect.get(failure, "errors");
+      assert.ok(Array.isArray(errors));
+      assert.equal(errors[0], original);
+      assert.equal(errors[1], cleanup);
+      return true;
+    },
+  );
+  controller.abort(original);
+  f.targetEvent();
+  await pending;
 });

@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 import { withTestResources } from "../support/test-resources.ts";
 import { workspaceFixtureDirectory } from "../support/workspace-fixture.ts";
 import { closeEditorTabs } from "../support/editor-tabs.ts";
+import { rollbackResources } from "../../src/disposables.ts";
 
 export function changeWorkspace(
   index: number,
@@ -16,17 +17,27 @@ export function changeWorkspace(
   const expected = uri ?? vscode.workspace.workspaceFolders?.[index]?.uri;
   assert.ok(expected, "workspace mutation identifies its target");
   return new Promise((resolve, reject) => {
+    let finished = false;
+    const finish = (failure?: { error: unknown }) => {
+      if (finished) return;
+      finished = true;
+      try {
+        if (failure) rollbackResources(failure.error, [listener]);
+        listener.dispose();
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    };
     const listener = vscode.workspace.onDidChangeWorkspaceFolders((event) => {
       const changed = uri ? event.added : event.removed;
       if (
         !changed.some((folder) => folder.uri.toString() === expected.toString())
       )
         return;
-      listener.dispose();
       // Accepted workspace mutations have no cancellation API. Join their
       // actual event before reporting cancellation to the resource owner.
-      if (signal.aborted) reject(signal.reason);
-      else resolve();
+      finish(signal.aborted ? { error: signal.reason } : undefined);
     });
     try {
       if (
@@ -37,11 +48,9 @@ export function changeWorkspace(
         )
       )
         return;
-      listener.dispose();
-      reject(new Error("workspace change refused"));
+      finish({ error: new Error("workspace change refused") });
     } catch (error) {
-      listener.dispose();
-      reject(error);
+      finish({ error });
     }
   });
 }

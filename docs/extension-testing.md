@@ -666,3 +666,16 @@ add an unmarked child workspace, then enable its marker before allowing a fresh
 check. Parent results must remain retired on both addition and removal. The
 installed marker profile records distinct SDK resource and native source paths
 and verifies formatting and restored parent checks through the same alias.
+
+Native query overflow controls build the existing Go process fixture before
+query admission and run it through the real `execFile` output limit. A paired
+negative control blocks the Node fixture on its owned stdin pipe. The query
+deadline remains one second, the cap remains 4 MiB, and every child closes before
+its private build directory is removed. This separates runtime bootstrap from
+the native overflow contract without weakening either failure assertion.
+
+Template action failures retain the original assertion plus bounded public
+model identity, diagnostic-code links, active resource and source status. The
+provider lookup and assertions remain unchanged; evidence collection adds no
+retry or readiness delay. Earlier template-action failure evidence remains
+open until its specific cause is reproduced and corrected.

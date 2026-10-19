@@ -87,6 +87,10 @@ export async function runTemplates(parentSignal?: AbortSignal): Promise<void> {
       } catch {
         // Identity comparison is evidence only.
       }
+      console.log(
+        "SALTBOX_TEMPLATE_WORKSPACE_IDENTITY " +
+          JSON.stringify({ publicRoot: root.fsPath, nativeRoot: observedRoot }),
+      );
       await checkPendingWritableOwnership(executable, root, resources.signal);
       const retainedDocuments = new Map<string, vscode.TextDocument>();
       // Exercise the first extensionless alias before any conventional template
@@ -467,6 +471,24 @@ export async function runTemplates(parentSignal?: AbortSignal): Promise<void> {
             (item) => diagnosticCode(item) === "jinja-layout",
           ),
         );
+        const actionModel = () => {
+          const current = vscode.workspace.textDocuments.find(
+            (candidate) => candidate.uri.toString() === document.uri.toString(),
+          );
+          return {
+            uri: document.uri.toString(),
+            version: document.version,
+            language: document.languageId,
+            closed: document.isClosed,
+            sameCurrentModel: current === document,
+            currentVersion: current?.version,
+            currentLanguage: current?.languageId,
+            diagnosticCodes: findings(document)
+              .map((item) => item.code)
+              .slice(0, 12),
+          };
+        };
+        const beforeActions = actionModel();
         const actions = await vscode.commands.executeCommand<
           vscode.CodeAction[]
         >(
@@ -475,11 +497,44 @@ export async function runTemplates(parentSignal?: AbortSignal): Promise<void> {
           new vscode.Range(0, 0, document.lineCount, 0),
         );
         await assertPreserved();
-        assert.ok(
-          actions.some(
-            (action) => action.command?.command === "saltboxLint.explainRule",
-          ),
-        );
+        try {
+          assert.ok(
+            actions.some(
+              (action) => action.command?.command === "saltboxLint.explainRule",
+            ),
+          );
+        } catch (error) {
+          try {
+            const afterActions = actionModel();
+            const active =
+              vscode.window.activeTextEditor?.document.uri.toString();
+            const status = await vscode.commands.executeCommand(
+              "saltboxLint.showStatus",
+            );
+            console.error(
+              "SALTBOX_TEMPLATE_ACTION_FAILURE " +
+                JSON.stringify({
+                  beforeActions,
+                  afterActions,
+                  requestedUri: uri.toString(),
+                  active,
+                  status,
+                  publicRoot: root.fsPath,
+                  nativeRoot: observedRoot,
+                  commands: actions
+                    .slice(0, 20)
+                    .map((action) => action.command?.command),
+                }),
+            );
+          } catch (evidenceError) {
+            throw new AggregateError(
+              [error, evidenceError],
+              "Template action failure and its evidence failed",
+              { cause: error },
+            );
+          }
+          throw error;
+        }
         assert.ok(
           !actions.some(
             (action) =>

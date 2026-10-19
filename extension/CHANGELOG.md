@@ -10,6 +10,8 @@
 - Accept an empty successful workspace report when all sources are excluded.
 - Invalidate cached parent results when a nested workspace uses an aliased
   directory, preserving fresh diagnostics and formatting after ownership changes.
+- Keep native query overflow tests independent of JavaScript fixture startup
+  while preserving the query deadline, output cap and cleanup assertions.
 
 ## 0.2.3 (2026-10-18)
 
