@@ -44,6 +44,7 @@ import {
   hostModes,
   hostVersions,
   profileEnvironment,
+  runColdDiagnostics,
   runNativeHosts,
 } from "../scripts/native-hosts.mjs";
 
@@ -338,6 +339,103 @@ test("native parent uses the owned command for both SDKs and every original mode
         .map((call) => call.env.SALTBOX_TEST_HOST_MODE),
       hostModes,
     );
+});
+
+test("cold diagnostics uses fresh joined owners and separate immutable sample results", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results");
+  /** @type {NodeJS.ProcessEnv[]} */
+  const calls = [];
+  await runColdDiagnostics(
+    {
+      samples: 2,
+      resultsFile,
+      env: { ...resultEnvironment, SALTBOX_TEST_WORKSPACE_BASE: workspaceBase },
+    },
+    {
+      download: async (version) => `/sdk/${version}`,
+      command: async (_command, _args, options) => {
+        for (const previous of calls)
+          assert.equal(existsSync(profileRoot(previous)), false);
+        const env = commandEnvironment(options);
+        assert.ok(existsSync(profileRoot(env)));
+        calls.push(env);
+      },
+      report() {},
+    },
+  );
+  assert.equal(calls.length, 4);
+  assert.equal(new Set(calls.map(profileRoot)).size, 4);
+  assert.deepEqual(
+    calls.map((env) => [
+      env.SALTBOX_TEST_EXPECTED_VSCODE_VERSION,
+      env.SALTBOX_TEST_HOST_MODE,
+    ]),
+    [
+      ["1.100.0", "diagnostics"],
+      ["1.137.0", "diagnostics"],
+      ["1.100.0", "diagnostics"],
+      ["1.137.0", "diagnostics"],
+    ],
+  );
+  for (const env of calls) assert.equal(existsSync(profileRoot(env)), false);
+  for (const sample of [1, 2]) {
+    const result = readHostResults(`${resultsFile}.cold-${sample}.json`);
+    assert.equal(result.status, "passed");
+    assert.equal(result.commit, resultEnvironment.GITHUB_SHA);
+    assert.deepEqual(
+      result.profiles.map((entry) => entry.status),
+      ["passed", "passed"],
+    );
+  }
+});
+
+test("cold diagnostics preserves the first failure and admits no replacement samples", async (t) => {
+  const evidence = profileFor(t);
+  const resultsFile = join(evidence.root, "results");
+  const failure = releasedError("controlled missing action");
+  /** @type {NodeJS.ProcessEnv[]} */
+  const calls = [];
+  await assert.rejects(
+    runColdDiagnostics(
+      {
+        samples: 3,
+        resultsFile,
+        env: { SALTBOX_TEST_WORKSPACE_BASE: workspaceBase },
+      },
+      {
+        download: async () => "/sdk",
+        command: async (_command, _args, options) => {
+          calls.push(commandEnvironment(options));
+          if (calls.length === 3) throw failure;
+        },
+        report() {},
+      },
+    ),
+    (error) => containsFailure(error, failure),
+  );
+  assert.equal(calls.length, 3);
+  for (const env of calls) assert.equal(existsSync(profileRoot(env)), false);
+  assert.equal(readHostResults(`${resultsFile}.cold-1.json`).status, "passed");
+  const failed = readHostResults(`${resultsFile}.cold-2.json`);
+  assert.equal(failed.status, "failed");
+  assert.deepEqual(
+    failed.profiles.map((entry) => entry.status),
+    ["failed", "not_run"],
+  );
+  assert.equal(existsSync(`${resultsFile}.cold-3.json`), false);
+});
+
+test("cold diagnostics rejects invalid sample bounds before admission", async () => {
+  for (const samples of [0, -1, 1.5, 101, Number.NaN])
+    await assert.rejects(
+      runColdDiagnostics({ samples, resultsFile: "/unused" }),
+      /samples must/,
+    );
+  await assert.rejects(
+    runColdDiagnostics({ resultsFile: "" }),
+    /requires a results file/,
+  );
 });
 
 for (const mode of hostModes) {

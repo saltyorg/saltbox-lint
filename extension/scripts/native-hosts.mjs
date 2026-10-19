@@ -205,3 +205,31 @@ export async function runNativeHosts(
   result.status = "passed";
   record(result);
 }
+
+/**
+ * Reproduce cold diagnostics in fresh, joined profiles. A failed sample is
+ * terminal; later samples must never replace its verdict or evidence.
+ * @param {{resultsFile: string, samples?: number} & Parameters<typeof runNativeHosts>[0]} configuration
+ * @param {Parameters<typeof runNativeHosts>[1]} [dependencies]
+ */
+export async function runColdDiagnostics(
+  { samples = 20, resultsFile, ...configuration },
+  dependencies,
+) {
+  if (!Number.isSafeInteger(samples) || samples < 1 || samples > 100)
+    throw new Error(
+      "Cold diagnostics samples must be an integer from 1 to 100",
+    );
+  if (!resultsFile) throw new Error("Cold diagnostics requires a results file");
+  for (let sample = 1; sample <= samples; sample++) {
+    console.log(`SALTBOX_COLD_DIAGNOSTICS ${sample}/${samples}`);
+    await runNativeHosts(
+      {
+        ...configuration,
+        modes: ["diagnostics"],
+        resultsFile: `${resultsFile}.cold-${sample}.json`,
+      },
+      dependencies,
+    );
+  }
+}

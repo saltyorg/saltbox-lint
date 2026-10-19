@@ -631,6 +631,14 @@ cd extension
 node scripts/test-native-hosts.mjs
 ```
 
+For the intermittent cold diagnostics action investigation, macOS acceptance
+also runs `node scripts/test-native-hosts.mjs --cold-diagnostics`. This exercises
+the unchanged diagnostics case twenty times in fresh profiles at each configured
+editor version, before the full matrix. Each sample joins its owners before the
+next starts, records a separate `.cold-N.json` checkpoint next to
+`SALTBOX_TEST_HOST_RESULTS_FILE`, and stops immediately on failure. These samples
+are additional reproduction work, not retries or a replacement for full coverage.
+
 Before accepting a test change, record its trigger, exact failing condition,
 observable completion, resource owner and real-platform check. Qualify shared
 ownership helpers with partial setup/readiness failure, cancellation before and
