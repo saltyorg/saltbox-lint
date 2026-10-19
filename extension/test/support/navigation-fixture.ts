@@ -1,9 +1,16 @@
 import { build } from "esbuild";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type * as vscode from "vscode";
 import type { EditorIntegration, EditorAdapters } from "../../src/editor.ts";
 import type { ProcessRequest } from "../../src/process.ts";
@@ -184,6 +191,7 @@ export interface NavigationFixture {
   formatter(): vscode.DocumentFormattingEditProvider | undefined;
   focus(document: FixtureDocument): void;
   removeWorkspace(): void;
+  setWorkspaceFolders(paths: readonly string[]): void;
 }
 
 /** The only replaced import is the editor-provided vscode module. */
@@ -193,6 +201,7 @@ export async function withNavigationFixture<T>(
   options: {
     acceptedOperations?: readonly string[];
     waitForReady?: boolean;
+    workspaceAlias?: boolean;
   } = {},
 ): Promise<T> {
   return withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
@@ -202,7 +211,18 @@ export async function withNavigationFixture<T>(
     resources.defer("navigation files", () =>
       rm(directory, { recursive: true, force: true }),
     );
-    const root = await realpath(directory);
+    let root = await realpath(directory);
+    if (options.workspaceAlias) {
+      const native = join(root, "native");
+      const publicPath = join(root, "public");
+      await mkdir(native);
+      await symlink(
+        native,
+        publicPath,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      root = publicPath;
+    }
     const source = join(root, "roles/source/tasks/main.yml");
     const target = join(root, "roles/target/defaults/main.yml");
     await mkdir(join(source, ".."), { recursive: true });
@@ -220,6 +240,8 @@ export async function withNavigationFixture<T>(
     );
     const documents = [document.asDocument(), targetDocument.asDocument()];
     const folder = { uri: URI.file(root) };
+    let folders = [folder];
+    let explicitFolders = false;
     let workspaceVisible = true;
     const lines: string[] = [],
       notices: string[] = [];
@@ -268,10 +290,23 @@ export async function withNavigationFixture<T>(
       workspace: {
         isTrusted: true,
         get workspaceFolders() {
-          return workspaceVisible ? [folder] : [];
+          return workspaceVisible ? folders : [];
         },
         textDocuments: documents,
-        getWorkspaceFolder: () => (workspaceVisible ? folder : undefined),
+        getWorkspaceFolder: (uri: URI) => {
+          if (!workspaceVisible) return undefined;
+          if (!explicitFolders) return folder;
+          return folders
+            .filter((candidate) => {
+              const path = relative(candidate.uri.fsPath, uri.fsPath);
+              return (
+                path !== ".." &&
+                !path.startsWith(`..${sep}`) &&
+                !isAbsolute(path)
+              );
+            })
+            .sort((a, b) => b.uri.fsPath.length - a.uri.fsPath.length)[0];
+        },
         getConfiguration: () => ({
           get: (_key: string, fallback: unknown) => fallback,
         }),
@@ -462,6 +497,22 @@ export async function withNavigationFixture<T>(
       removeWorkspace() {
         workspaceVisible = false;
         editor.configureRoots();
+      },
+      setWorkspaceFolders(paths) {
+        const previous = folders;
+        folders = paths.map((path) => ({ uri: URI.file(path) }));
+        explicitFolders = true;
+        const changed = [...previous, ...folders].filter(
+          (candidate) =>
+            previous.some(
+              (before) => before.uri.toString() === candidate.uri.toString(),
+            ) !==
+            folders.some(
+              (after) => after.uri.toString() === candidate.uri.toString(),
+            ),
+        );
+        editor.configureRoots();
+        editor.refresh(changed.map(({ uri }) => uri as vscode.Uri));
       },
     });
   });

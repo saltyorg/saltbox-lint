@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { lstat, rm, writeFile } from "node:fs/promises";
+import { lstat, realpath, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import type * as vscode from "vscode";
 import { hash, parseFormat } from "../../src/protocol.ts";
 import type { ProcessRequest } from "../../src/process.ts";
+import { checkWire } from "../support/check-wire.ts";
 import {
   deferred,
   fixtureUri,
@@ -41,6 +42,124 @@ function formattingWire(request: ProcessRequest): string {
     text,
   );
   return wire;
+}
+
+for (const workspaceAlias of [false, true]) {
+  test(`pending parent formatter declines ${workspaceAlias ? "aliased" : "native"} nested workspace handoff`, async () => {
+    let paths!: { root: string; source: string; target: string };
+    const entered = deferred<void>(),
+      released = deferred<void>();
+    await withNavigationFixture(
+      {
+        schedule: () => () => {},
+        runProcess: async (request) => {
+          if (request.args[0] !== "format")
+            return checkWire(request, { ...paths, root: request.cwd });
+          entered.resolve();
+          await released.promise;
+          return formattingWire(request);
+        },
+      },
+      async (f) => {
+        paths = {
+          root: await realpath(f.root),
+          source: await realpath(f.source),
+          target: await realpath(f.target),
+        };
+        await f.editor.check(f.document.asDocument(), true);
+        const nested = join(f.root, "roles/source");
+        await writeFile(join(nested, ".saltbox-lint"), "");
+        const pending = f.resources.operation(
+          "parent formatter crossing workspace handoff",
+          () => f.editor.format(f.document.asDocument(), "canonical"),
+        );
+        try {
+          await Promise.race([
+            entered.promise,
+            pending.then(() => {
+              throw new Error(
+                "formatter settled before controlled response gate",
+              );
+            }),
+          ]);
+          f.setWorkspaceFolders([f.root, nested]);
+          await f.editor.ready();
+          released.resolve();
+          assert.equal(
+            (await pending).length,
+            0,
+            "an already marked nested owner must revoke the previous parent formatter",
+          );
+        } finally {
+          released.resolve();
+          await Promise.allSettled([pending]);
+        }
+      },
+      { workspaceAlias, acceptedOperations: ["check", "rules", "format"] },
+    );
+  });
+
+  test(`nested workspace retires parent results through ${workspaceAlias ? "an aliased" : "a native"} workspace path`, async () => {
+    let paths!: { root: string; source: string; target: string };
+    await withNavigationFixture(
+      {
+        schedule: () => () => {},
+        runProcess: (request) =>
+          request.args[0] === "format"
+            ? Promise.resolve(formattingWire(request))
+            : checkWire(request, { ...paths, root: request.cwd }),
+      },
+      async (f) => {
+        paths = {
+          root: await realpath(f.root),
+          source: await realpath(f.source),
+          target: await realpath(f.target),
+        };
+        await f.editor.check(f.document.asDocument(), true);
+        assert.equal(f.editor.status(f.document.asDocument()).state, "current");
+        const nested = join(f.root, "roles/source");
+        f.setWorkspaceFolders([f.root, nested]);
+        await f.editor.ready();
+        assert.equal(
+          f.editor.status(f.document.asDocument()).state,
+          "missing-marker",
+        );
+        await writeFile(join(nested, ".saltbox-lint"), "");
+        await f.editor.check(
+          f.document.asDocument(),
+          true,
+          undefined,
+          false,
+          AbortSignal.abort(),
+        );
+        assert.equal(
+          f.editor.status(f.document.asDocument()).state,
+          "eligible",
+          "enabling a nested marker cannot republish a parent-owned buffer result as current",
+        );
+        await f.editor.check(f.document.asDocument(), true);
+        assert.equal(f.editor.status(f.document.asDocument()).state, "current");
+        assert.equal(
+          (await f.editor.format(f.document.asDocument(), "canonical")).length,
+          1,
+        );
+        f.setWorkspaceFolders([f.root]);
+        await f.editor.ready();
+        assert.equal(
+          f.editor.status(f.document.asDocument()).state,
+          "eligible",
+          "removing the nested owner retires its result before restoring the parent",
+        );
+        await f.editor.check(f.document.asDocument(), true);
+        assert.equal(f.editor.status(f.document.asDocument()).state, "current");
+        assert.equal(
+          (await f.editor.format(f.document.asDocument(), "canonical")).length,
+          1,
+        );
+      },
+      { workspaceAlias, acceptedOperations: ["check", "rules", "format"] },
+    );
+  });
 }
 
 for (const changed of [false, true]) {

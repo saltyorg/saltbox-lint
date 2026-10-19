@@ -19,6 +19,7 @@ import { observeRootFormatting } from "./root-observations.ts";
 import { checkMarkerEvents } from "./marker-events.ts";
 import { checkFormatReadiness } from "./format-readiness.ts";
 import { gateFormatterSource } from "./formatter-source-gate.ts";
+import { checkNestedWorkspaceAlias } from "./nested-workspace.ts";
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const diagnostics = (uri: vscode.Uri) =>
@@ -652,6 +653,7 @@ export async function runMarkers(parentSignal?: AbortSignal): Promise<void> {
         document,
         resources.signal,
       );
+      await checkNestedWorkspaceAlias(document, resources.signal);
     },
   );
 }

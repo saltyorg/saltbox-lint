@@ -2465,8 +2465,16 @@ export class EditorIntegration implements vscode.Disposable {
         if (folder) affected.add(folder.uri.toString());
         if (this.rootRevisions.has(uri.toString()))
           affected.add(uri.toString());
+        let filename = uri.fsPath;
+        try {
+          // Workspace events retain the public spelling; cached roots use the
+          // native identity. A nested owner must invalidate its canonical parent.
+          filename = realpathSync.native(filename);
+        } catch {
+          // Removed paths still retain their known workspace and root keys.
+        }
         for (const [key, root] of this.canonicalRoots) {
-          const relative = path.relative(root, uri.fsPath);
+          const relative = path.relative(root, filename);
           if (
             relative === "" ||
             (!relative.startsWith(`..${path.sep}`) &&

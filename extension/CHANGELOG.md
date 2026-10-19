@@ -8,6 +8,8 @@
 - Omit excluded declarations from cross-file context and explain excluded
   sources without parsing them. Refresh checks when saved policy changes.
 - Accept an empty successful workspace report when all sources are excluded.
+- Invalidate cached parent results when a nested workspace uses an aliased
+  directory, preserving fresh diagnostics and formatting after ownership changes.
 
 ## 0.2.3 (2026-10-18)
 
