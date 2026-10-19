@@ -4,8 +4,14 @@ import type { EditorIntegration } from "./editor.ts";
 import { combineDisposables, rollbackResources } from "./disposables.ts";
 
 // Temporary boundary trace for the cold native SDK cancellation investigation.
+const traceRecords: Record<string, unknown>[] = [];
 function trace(event: Record<string, unknown>): void {
-  if (process.env.SALTBOX_LINT_TRACE_CODE_ACTIONS === "1")
+  if (process.env.SALTBOX_LINT_TRACE_CODE_ACTIONS !== "1") return;
+  if (traceRecords.length === 64) traceRecords.shift();
+  traceRecords.push(event);
+}
+export function flushProviderTrace(): void {
+  for (const event of traceRecords.splice(0))
     console.error("SALTBOX_PROVIDER_TRACE " + JSON.stringify(event));
 }
 
@@ -69,6 +75,7 @@ export function updateProviders(
             provideCodeActions: (document, range, context, token) => {
               const observe =
                 process.env.SALTBOX_LINT_TRACE_CODE_ACTIONS === "1" &&
+                context.triggerKind === vscode.CodeActionTriggerKind.Invoke &&
                 observations++ < 32;
               if (observe)
                 trace({

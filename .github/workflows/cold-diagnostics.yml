@@ -28,25 +28,43 @@ jobs:
           npm --prefix extension run build
           npm --prefix extension run stage:binary
           npm --prefix extension run stage:test-fixture
-      - name: Reproduce cold diagnostics without waiting for release packaging
+      - name: Package the native diagnostic build
+        working-directory: extension
+        run: |
+          node --input-type=module <<'JS'
+          import {createVSIX} from '@vscode/vsce';
+          import {cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+          import {tmpdir} from 'node:os';
+          import {join, resolve} from 'node:path';
+          import {manifest} from './scripts/release-inputs.mjs';
+          const stage = mkdtempSync(join(tmpdir(), 'saltbox-diagnostic-vsix-'));
+          try {
+            mkdirSync(join(stage, 'bin'));
+            mkdirSync(join(stage, 'dist'));
+            cpSync('bin/saltbox-lint', join(stage, 'bin/saltbox-lint'));
+            cpSync('dist/extension.js', join(stage, 'dist/extension.js'));
+            cpSync('README.md', join(stage, 'README.md'));
+            cpSync('../LICENSE', join(stage, 'LICENSE'));
+            const {scripts, devDependencies, packageManager, ...runtime} = manifest;
+            delete runtime.engines.node;
+            runtime.files = ['bin/saltbox-lint', 'dist/extension.js', 'README.md', 'LICENSE'];
+            writeFileSync(join(stage, 'package.json'), JSON.stringify(runtime));
+            mkdirSync('../dist', {recursive: true});
+            await createVSIX({cwd: stage, packagePath: resolve('../dist', `saltbox-lint-${manifest.version}-darwin-arm64.vsix`), target: 'darwin-arm64', dependencies: false, githubBranch: 'main'});
+          } finally {
+            rmSync(stage, {recursive: true, force: true});
+          }
+          JS
+      - name: Reproduce installed cold diagnostics without waiting for release packaging
         working-directory: extension
         env:
           SALTBOX_LINT_TRACE_CODE_ACTIONS: "1"
           SALTBOX_TEST_HOST_RESULTS_FILE: ${{ runner.temp }}/cold-source-results
         run: |
-          node --input-type=module <<'JS'
-          import {runColdDiagnostics} from './scripts/native-hosts.mjs';
-          import {runHostProfile} from './scripts/host-launcher.mjs';
-          await runColdDiagnostics({resultsFile: process.env.SALTBOX_TEST_HOST_RESULTS_FILE}, {
-            profile: (configuration, dependencies) => runHostProfile({
-              ...configuration,
-              env: {...configuration.env, SALTBOX_TEST_VSIX: undefined},
-            }, dependencies),
-          });
-          JS
+          node scripts/test-native-hosts.mjs --cold-diagnostics
       - name: Write investigation summary
         if: always()
         env:
           PROBE_STATUS: ${{ job.status }}
         run: |
-          printf '## Cold diagnostics investigation\n\nResult: %s\n\nSource-mode reproduction only. This does not qualify release packages. Each sample has fresh joined editor owners; failures stop the series. See the native provider trace and per-sample records in the job log.\n' "$PROBE_STATUS" >> "$GITHUB_STEP_SUMMARY"
+          printf '## Cold diagnostics investigation\n\nResult: %s\n\nNative diagnostic VSIX only, not a release asset. This does not qualify release packages. Each sample has fresh joined editor owners; failures stop the series. See the native provider trace and per-sample records in the job log.\n' "$PROBE_STATUS" >> "$GITHUB_STEP_SUMMARY"
