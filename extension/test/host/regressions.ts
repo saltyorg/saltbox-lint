@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 import { mkdir, symlink, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { closeEditorTabs } from "../support/editor-tabs.ts";
+import { disposeResources } from "../../src/disposables.ts";
+import { initialCodeActions, sdkCancellation } from "./initial-code-actions.ts";
 import { EditorIntegration, type EditorAdapters } from "../../src/editor.ts";
 import { runProcess } from "../../src/process.ts";
 import {
@@ -63,23 +67,23 @@ async function actions(
 }
 async function waitForInitialActions(
   document: vscode.TextDocument,
+  resources: TestResources,
   evidence?: CodeActionEvidence,
 ) {
   // Local diagnostics can precede a usable main-thread code-action response
   // during editor/provider startup. Establish the observable fixture precondition;
   // post-mutation assertions below must still succeed without polling or rechecks.
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    if ((await actions(document, evidence)).length > 0) return;
-    await pause(25);
-  }
-  assert.fail(
-    `initial fixture code actions did not become available: ${JSON.stringify({
-      version: document.version,
-      language: document.languageId,
-      closed: document.isClosed,
-      diagnostics: diagnostics(document.uri),
-    })}`,
+  await initialCodeActions(
+    resources,
+    document,
+    new vscode.Range(0, 0, document.lineCount, 0),
+    (actions) =>
+      actions.some(
+        (action) =>
+          action.title.includes("this file") &&
+          action.command?.command.startsWith("saltboxLint."),
+      ),
+    { evidence },
   );
 }
 async function open(uri: vscode.Uri, text: string) {
@@ -166,6 +170,151 @@ async function regressions(resources: TestResources): Promise<void> {
     }
   };
   await run(
+    "initial SDK action setup survives in-flight matching provider registration",
+    async (owner) => {
+      const uri = vscode.Uri.joinPath(
+        roots[0].uri,
+        `sdk-initial-${randomUUID()}.yml`,
+      );
+      const restored = Buffer.from('---\nvalue: "{{ value }}"\n');
+      let resource = uri;
+      // The workspace/profile owner removes the fixture after SDK/native close.
+      owner.defer("initial action fixture", async (signal) => {
+        await closeEditorTabs(signal, [resource]);
+        await vscode.workspace.fs.writeFile(uri, restored);
+      });
+      const document = await open(uri, jinja);
+      resource = document.uri;
+      const requested = new vscode.Range(0, 0, document.lineCount - 1, 0);
+      let lateProvider: vscode.Disposable | undefined;
+      const callbacks: Promise<vscode.CodeAction[]>[] = [];
+      owner.defer("coexisting provider callbacks", async () => {
+        const outcomes = await Promise.allSettled(callbacks);
+        const failures = outcomes.filter(
+          (result) => result.status === "rejected",
+        );
+        if (failures.length)
+          throw new AggregateError(
+            failures.map((result) => result.reason),
+            "Coexisting provider callbacks failed",
+          );
+      });
+      let triggered = false;
+      const blocker = vscode.languages.registerCodeActionsProvider("*", {
+        provideCodeActions(_document, range, context, token) {
+          if (
+            triggered ||
+            context.triggerKind !== vscode.CodeActionTriggerKind.Invoke ||
+            !range.isEqual(requested)
+          )
+            return [];
+          triggered = true;
+          const pending = (async (): Promise<vscode.CodeAction[]> => {
+            let complete!: () => void;
+            let reject!: (error: unknown) => void;
+            const receipt = new Promise<void>((done, fail) => {
+              complete = done;
+              reject = fail;
+            });
+            const cancelled = token.onCancellationRequested(() => complete());
+            const abort = () => reject(owner.signal.reason);
+            owner.signal.addEventListener("abort", abort, { once: true });
+            const timeout = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Matching registration did not cancel the SDK cohort",
+                  ),
+                ),
+              10000,
+            );
+            try {
+              // The callback proves that the SDK selected this cohort. Observe
+              // cancellation before registering the new matching provider.
+              lateProvider = vscode.languages.registerCodeActionsProvider("*", {
+                provideCodeActions: () => [],
+              });
+              if (token.isCancellationRequested) complete();
+              if (owner.signal.aborted) abort();
+              await receipt;
+              return [];
+            } finally {
+              clearTimeout(timeout);
+              owner.signal.removeEventListener("abort", abort);
+              cancelled.dispose();
+            }
+          })();
+          callbacks.push(pending);
+          return pending;
+        },
+      });
+      owner.defer("coexisting action providers", () =>
+        disposeResources(lateProvider ? [lateProvider, blocker] : [blocker]),
+      );
+      const ready = (actions: readonly vscode.CodeAction[]) =>
+        actions.some(
+          (action) =>
+            action.title.includes("this file") &&
+            action.command?.command === "saltboxLint.applySharedFix",
+        );
+      let queries = 0;
+      let firstActions: vscode.CodeAction[] | undefined;
+      let firstCancelled = false;
+      const result = await initialCodeActions(
+        owner,
+        document,
+        requested,
+        ready,
+        {
+          async request() {
+            const first = ++queries === 1;
+            const pending = vscode.commands.executeCommand<vscode.CodeAction[]>(
+              "vscode.executeCodeActionProvider",
+              document.uri,
+              requested,
+            );
+            try {
+              const returned = await pending;
+              if (first) firstActions = returned;
+              return returned;
+            } catch (error) {
+              if (first && sdkCancellation(error)) firstCancelled = true;
+              throw error;
+            }
+          },
+        },
+      );
+      assert.equal(
+        triggered,
+        true,
+        "the controlled provider must join the original SDK cohort",
+      );
+      assert.ok(
+        firstCancelled || (firstActions && !ready(firstActions)),
+        "the controlled registration must invalidate the original SDK cohort",
+      );
+      assert.ok(
+        result.queries >= 2,
+        "setup must observe the invalidated cohort before the actual action",
+      );
+      assert.ok(ready(result.actions));
+      console.log(
+        "SALTBOX_INITIAL_ACTION_COHORT " +
+          JSON.stringify({
+            queries: result.queries,
+            firstCancelled,
+            firstActions: firstActions?.map((action) => ({
+              title: action.title,
+              command: action.command?.command,
+            })),
+            finalCommands: result.actions.map(
+              (action) => action.command?.command,
+            ),
+          }),
+      );
+    },
+  );
+  await run(
     "I1 unrelated edits preserve current actions and pending format",
     async (owner) => {
       const document = await open(
@@ -198,7 +347,7 @@ async function regressions(resources: TestResources): Promise<void> {
       );
       owner.defer("I1 code action evidence", () => evidence.dispose());
       try {
-        await waitForInitialActions(document, evidence);
+        await waitForInitialActions(document, owner, evidence);
       } catch (error) {
         evidence.failure("warm", error);
       }

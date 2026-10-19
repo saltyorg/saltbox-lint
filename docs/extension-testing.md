@@ -631,13 +631,26 @@ cd extension
 node scripts/test-native-hosts.mjs
 ```
 
-For the intermittent cold diagnostics action investigation, macOS acceptance
-also runs `node scripts/test-native-hosts.mjs --cold-diagnostics`. This exercises
-the unchanged diagnostics case twenty times in fresh profiles at each configured
-editor version, before the full matrix. Each sample joins its owners before the
-next starts, records a separate `.cold-N.json` checkpoint next to
-`SALTBOX_TEST_HOST_RESULTS_FILE`, and stops immediately on failure. These samples
-are additional reproduction work, not retries or a replacement for full coverage.
+For focused cold-start reproduction, optionally run
+`node scripts/test-native-hosts.mjs --cold-diagnostics` with
+`SALTBOX_TEST_HOST_RESULTS_FILE` set to a fresh path. This exercises the diagnostics
+case twenty times in fresh profiles at each configured editor version. Each sample
+joins its owners before the next starts, records a separate `.cold-N.json`
+checkpoint, and stops immediately on failure. The normal CI matrix remains
+seventeen profiles per editor version on each native target.
+
+Initial code-action fixture setup uses
+[`initial-code-actions.ts`](../extension/test/host/initial-code-actions.ts).
+At both supported editors, a matching provider registration can invalidate an
+in-flight SDK query and leave a partial response or cancellation. Setup observes
+the actual required Saltbox action within the existing ten-second readiness
+budget, while guarding the document's URI, version, language and bytes. Queries
+are awaited and joined; there are no lint rechecks or added sleeps. Unexpected
+request failures are terminal. `SALTBOX_INITIAL_ACTIONS` records the query and
+cancellation counts. Assertions after the tested mutation remain single requests.
+The regressions profile forces cancellation after a real coexisting provider
+callback proves SDK admission, then verifies initial action acquisition and joins
+the provider callbacks, listeners and deadline on every path.
 
 Before accepting a test change, record its trigger, exact failing condition,
 observable completion, resource owner and real-platform check. Qualify shared

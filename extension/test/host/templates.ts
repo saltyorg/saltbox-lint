@@ -17,6 +17,7 @@ import {
 } from "../support/test-resources.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { componentUI } from "../support/component-ui.ts";
+import { initialCodeActions } from "./initial-code-actions.ts";
 import {
   classifyClosedFileEvent,
   observeClosedFileEvent,
@@ -489,12 +490,14 @@ export async function runTemplates(parentSignal?: AbortSignal): Promise<void> {
           };
         };
         const beforeActions = actionModel();
-        const actions = await vscode.commands.executeCommand<
-          vscode.CodeAction[]
-        >(
-          "vscode.executeCodeActionProvider",
-          uri,
+        const { actions } = await initialCodeActions(
+          resources,
+          document,
           new vscode.Range(0, 0, document.lineCount, 0),
+          (actions) =>
+            actions.some(
+              (action) => action.command?.command === "saltboxLint.explainRule",
+            ),
         );
         await assertPreserved();
         try {

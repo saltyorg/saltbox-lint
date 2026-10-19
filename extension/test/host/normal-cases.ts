@@ -12,6 +12,7 @@ import type { TestResources } from "../support/test-resources.ts";
 import { diagnosticTransition } from "../support/diagnostic-transition.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { CodeActionEvidence } from "../support/code-action-evidence.ts";
+import { initialCodeActions } from "./initial-code-actions.ts";
 async function waitFor(
   predicate: () => boolean,
   message: string,
@@ -120,10 +121,16 @@ export async function runEditing(resources: TestResources): Promise<void> {
   const { extension, roots, document } = await activatedDocument();
   ownBuffer(resources, document);
   const original = document.getText();
-  const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
-    "vscode.executeCodeActionProvider",
-    document.uri,
+  const { actions } = await initialCodeActions(
+    resources,
+    document,
     new vscode.Range(0, 0, document.lineCount - 1, 100),
+    (actions) =>
+      actions.some(
+        (action) =>
+          action.command?.command.startsWith("saltboxLint.") &&
+          action.title.includes("this file"),
+      ),
   );
   const fix = actions.find(
     (a) =>
@@ -321,23 +328,18 @@ export async function runDiagnostics(resources: TestResources): Promise<void> {
   await vscode.window.showTextDocument(document);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
   const requested = new vscode.Range(0, 0, 3, 0);
-  const query = actionEvidence.begin("warm", requested);
-  const returned = await (async () => {
-    try {
-      return await vscode.commands.executeCommand<vscode.CodeAction[]>(
-        "vscode.executeCodeActionProvider",
-        document.uri,
-        requested,
-      );
-    } catch (error) {
-      return actionEvidence.failure("warm", error);
-    }
-  })();
-  actionEvidence.returned(
-    query,
-    returned,
-    returned.filter((a) => a.title.includes("this file")),
-  );
+  const { actions: returned } = await initialCodeActions(
+    resources,
+    document,
+    requested,
+    (actions) =>
+      actions.some(
+        (action) =>
+          action.command?.command.startsWith("saltboxLint.") &&
+          action.title.includes("this file"),
+      ),
+    { evidence: actionEvidence },
+  ).catch((error: unknown) => actionEvidence.failure("warm", error));
   const stale = returned.find(
     (a) =>
       a.command?.command.startsWith("saltboxLint.") &&

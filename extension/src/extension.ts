@@ -6,11 +6,7 @@ import {
   type EditorAdapters,
 } from "./editor.ts";
 import { rootMarker } from "./roots.ts";
-import {
-  flushProviderTrace,
-  updateProviders,
-  type ProviderRegistration,
-} from "./providers.ts";
+import { updateProviders, type ProviderRegistration } from "./providers.ts";
 
 let activeEditor: EditorIntegration | undefined;
 let deactivation: Promise<void> | undefined;
@@ -81,10 +77,9 @@ export function activate(
     vscode.commands.registerCommand("saltboxLint.showImpact", () =>
       editor.navigation.impact(),
     ),
-    vscode.commands.registerCommand("saltboxLint.showStatus", () => {
-      flushProviderTrace();
-      return editor.showStatus();
-    }),
+    vscode.commands.registerCommand("saltboxLint.showStatus", () =>
+      editor.showStatus(),
+    ),
     vscode.commands.registerCommand("saltboxLint.checkDocument", () => {
       const document = vscode.window.activeTextEditor?.document;
       return document && editor.check(document, true);

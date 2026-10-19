@@ -267,10 +267,6 @@ jobs:
           if [[ "$RUNNER_OS" == Linux ]]; then
             xvfb-run -a node scripts/test-native-hosts.mjs
           else
-            if [[ "$RUNNER_OS" == macOS ]]; then
-              export SALTBOX_LINT_TRACE_CODE_ACTIONS=1
-              node scripts/test-native-hosts.mjs --cold-diagnostics
-            fi
             node scripts/test-native-hosts.mjs
           fi
       - name: Native musl packaged binary acceptance
