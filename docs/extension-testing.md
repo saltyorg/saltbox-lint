@@ -679,3 +679,13 @@ model identity, diagnostic-code links, active resource and source status. The
 provider lookup and assertions remain unchanged; evidence collection adds no
 retry or readiness delay. Earlier template-action failure evidence remains
 open until its specific cause is reproduced and corrected.
+
+Generic source watchers cover both the workspace-visible source directory and
+its native root. The pinned [VS Code watcher contract](https://github.com/microsoft/vscode/blob/1.100.0/src/vscode-dts/vscode.d.ts)
+preserves supplied symbolic-link paths and workspace path casing.
+`root-readiness.test.ts` delivers a public template deletion through the actual
+watcher adapter and checks dependency invalidation, then accepts a missing-file
+result and verifies that a late native echo leaves it current. The dependency
+profile records the latest 128 watcher deliveries on failure, including the
+subscription base, pattern, event kind and delivered URI. Those observations
+leave production callbacks and the existing delivery barriers in place.

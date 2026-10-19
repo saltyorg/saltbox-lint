@@ -77,6 +77,14 @@ async function replace(document: vscode.TextDocument, text: string) {
 }
 
 function observeIgnoreDelivery(resources: TestResources) {
+  const started = performance.now();
+  const events: {
+    ms: number;
+    kind: string;
+    base: string;
+    pattern: string;
+    uri: string;
+  }[] = [];
   const delivery = observeClosedFileDeliveries((event) =>
     readFileSync(event.fsPath, "utf8"),
   );
@@ -87,12 +95,22 @@ function observeIgnoreDelivery(resources: TestResources) {
     (
       event: vscode.Event<vscode.Uri>,
       kind: "create" | "change" | "delete",
+      pattern: vscode.RelativePattern,
     ): vscode.Event<vscode.Uri> =>
     (listener, receiver, subscriptions) =>
       event(
         (uri) => {
+          if (events.length === 128) events.shift();
+          events.push({
+            ms: performance.now() - started,
+            kind,
+            base: pattern.baseUri.toString(),
+            pattern: pattern.pattern,
+            uri: uri.toString(),
+          });
           const result = Reflect.apply(listener, receiver, [uri]);
-          delivery.delivered(uri, kind);
+          if (pattern.pattern === "**/.gitignore")
+            delivery.delivered(uri, kind);
           return result;
         },
         undefined,
@@ -102,26 +120,24 @@ function observeIgnoreDelivery(resources: TestResources) {
     (...args) => {
       const watcher = vscode.workspace.createFileSystemWatcher(...args);
       const pattern = args[0];
-      if (
-        !(pattern instanceof vscode.RelativePattern) ||
-        pattern.pattern !== "**/.gitignore"
-      )
-        return watcher;
-      resources.defer("dependency native ignore watcher", () =>
-        watcher.dispose(),
-      );
+      if (!(pattern instanceof vscode.RelativePattern)) return watcher;
+      if (pattern.pattern === "**/.gitignore")
+        resources.defer("dependency native ignore watcher", () =>
+          watcher.dispose(),
+        );
       return {
         ignoreCreateEvents: watcher.ignoreCreateEvents,
         ignoreChangeEvents: watcher.ignoreChangeEvents,
         ignoreDeleteEvents: watcher.ignoreDeleteEvents,
-        onDidCreate: observe(watcher.onDidCreate, "create"),
-        onDidChange: observe(watcher.onDidChange, "change"),
-        onDidDelete: observe(watcher.onDidDelete, "delete"),
+        onDidCreate: observe(watcher.onDidCreate, "create", pattern),
+        onDidChange: observe(watcher.onDidChange, "change", pattern),
+        onDidDelete: observe(watcher.onDidDelete, "delete", pattern),
         dispose: () => watcher.dispose(),
       } satisfies vscode.FileSystemWatcher;
     };
   return {
     createFileSystemWatcher,
+    facts: () => events.slice(),
     // Capture before the write. Only a later production callback handling the
     // intended bytes satisfies this barrier; all duplicate events still run.
     next(uri: vscode.Uri, text: string) {
@@ -1758,12 +1774,18 @@ async function dependencies(resources: TestResources): Promise<void> {
             defaults,
             task,
             otherTask,
+            template,
+            vscode.Uri.joinPath(
+              roots[0].uri,
+              "roles/example/templates/router.yaml",
+            ),
             unrelatedUri,
             vscode.Uri.joinPath(
               roots[0].uri,
               "roles/invalid/defaults/main.yml",
             ),
           ]),
+          watcherDeliveries: ignoreDelivery.facts(),
           processFacts: await journalFailureEvidence(journal),
           cleanup: cleanupStatus.length ? cleanupStatus : "not yet observed",
         };

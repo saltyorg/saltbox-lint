@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { lstat, realpath, rm, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { lstat, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { test } from "node:test";
 import type * as vscode from "vscode";
 import { hash, parseFormat } from "../../src/protocol.ts";
@@ -45,6 +45,112 @@ function formattingWire(request: ProcessRequest): string {
 }
 
 for (const workspaceAlias of [false, true]) {
+  test(`template dependency deletion reaches ${workspaceAlias ? "aliased" : "native"} workspace resources`, async () => {
+    let paths!: { root: string; source: string; target: string };
+    const templatePath = "roles/source/templates/router.conf",
+      contents = "template: valid\n";
+    let templatePresent = true;
+    const watchers: {
+      base: string;
+      pattern: string;
+      active: boolean;
+      deleted?: (uri: vscode.Uri) => unknown;
+    }[] = [];
+    await withNavigationFixture(
+      {
+        schedule: () => () => {},
+        roots: {
+          createFileSystemWatcher: (pattern) => {
+            assert.equal(typeof pattern, "object");
+            if (typeof pattern === "string")
+              throw new Error("expected a relative watcher");
+            const entry: (typeof watchers)[number] = {
+              base: pattern.baseUri.fsPath,
+              pattern: pattern.pattern,
+              active: true,
+            };
+            watchers.push(entry);
+            const subscription = { dispose() {} };
+            return {
+              ignoreCreateEvents: false,
+              ignoreChangeEvents: false,
+              ignoreDeleteEvents: false,
+              onDidCreate: () => subscription,
+              onDidChange: () => subscription,
+              onDidDelete: (listener) => {
+                entry.deleted = listener;
+                return subscription;
+              },
+              dispose() {
+                entry.active = false;
+              },
+            };
+          },
+        },
+        runProcess: async (request) => {
+          const report = JSON.parse(
+            await checkWire(request, { ...paths, root: request.cwd }),
+          );
+          if (request.args[0] === "check")
+            for (const source of report.analysis.sources)
+              source.files.push(
+                templatePresent
+                  ? {
+                      path: templatePath,
+                      state: "read",
+                      sha256: hash(contents),
+                    }
+                  : { path: templatePath, state: "missing" },
+              );
+          return JSON.stringify(report);
+        },
+      },
+      async (f) => {
+        paths = {
+          root: await realpath(f.root),
+          source: await realpath(f.source),
+          target: await realpath(f.target),
+        };
+        const filename = join(f.root, templatePath);
+        await mkdir(join(filename, ".."), { recursive: true });
+        await writeFile(filename, contents);
+        await f.editor.check(f.document.asDocument(), true);
+        assert.equal(f.editor.status(f.document.asDocument()).state, "current");
+        await rm(filename);
+        templatePresent = false;
+        const emitDeletion = (uri: vscode.Uri) => {
+          for (const watcher of watchers) {
+            if (!watcher.active || watcher.pattern !== "**/templates/**")
+              continue;
+            const path = relative(watcher.base, uri.fsPath);
+            if (
+              path === ".." ||
+              path.startsWith(`..${sep}`) ||
+              isAbsolute(path)
+            )
+              continue;
+            watcher.deleted?.(uri);
+          }
+        };
+        emitDeletion(fixtureUri(filename));
+        assert.equal(
+          f.editor.status(f.document.asDocument()).state,
+          "stale",
+          "the SDK's public resource deletion must invalidate the saved template dependency",
+        );
+        await f.editor.check(f.document.asDocument(), true);
+        assert.equal(f.editor.status(f.document.asDocument()).state, "current");
+        emitDeletion(fixtureUri(join(paths.root, templatePath)));
+        assert.equal(
+          f.editor.status(f.document.asDocument()).state,
+          "current",
+          "a late native echo must preserve the fresh missing-template result",
+        );
+      },
+      { workspaceAlias, acceptedOperations: ["check", "rules"] },
+    );
+  });
+
   test(`pending parent formatter declines ${workspaceAlias ? "aliased" : "native"} nested workspace handoff`, async () => {
     let paths!: { root: string; source: string; target: string };
     const entered = deferred<void>(),

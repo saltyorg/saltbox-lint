@@ -153,12 +153,19 @@ export class MarkedRoots implements vscode.Disposable {
     for (const [key, source] of this.sourceWatchers) {
       if (!active.has(source.root)) this.forgetSource(key);
     }
+    // SDK events may retain a workspace alias while analysis uses native paths.
+    // Cover both identities just as the exact source watchers do.
+    const watched = new Set(
+      [...this.roots.values()].flatMap((root) =>
+        root.canonical ? [root.source, root.canonical] : [],
+      ),
+    );
     for (const [root, watcher] of this.fileWatchers) {
-      if (active.has(root)) continue;
+      if (watched.has(root)) continue;
       watcher.dispose();
       this.fileWatchers.delete(root);
     }
-    for (const root of active) {
+    for (const root of watched) {
       if (this.fileWatchers.has(root)) continue;
       const changed = (uri: vscode.Uri) => this.fileChanged.fire(uri);
       const acquired: vscode.Disposable[] = [];

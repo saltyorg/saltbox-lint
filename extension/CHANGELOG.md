@@ -12,6 +12,8 @@
   directory, preserving fresh diagnostics and formatting after ownership changes.
 - Keep native query overflow tests independent of JavaScript fixture startup
   while preserving the query deadline, output cap and cleanup assertions.
+- Subscribe to public workspace aliases and native source roots so dependency
+  changes can invalidate saved results under either resource identity.
 
 ## 0.2.3 (2026-10-18)
 
