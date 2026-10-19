@@ -5,6 +5,7 @@ import { relative } from "node:path";
 import type { ProcessRequest } from "../../src/process.ts";
 import type { AnalysisRecord } from "../../src/protocol.ts";
 import { hash } from "../../src/protocol.ts";
+import { prepareLiveBaseline } from "../support/live-controls.ts";
 import {
   deferred,
   withNavigationFixture,
@@ -85,6 +86,68 @@ async function wire(
   });
 }
 const operations = { acceptedOperations: ["check", "--version", "rules"] };
+
+test("live measurement waits for queued startup admission before capturing its zero-typing baseline", async () => {
+  const timer = clock();
+  let fixture!: NavigationFixture;
+  const requests: ProcessRequest[] = [];
+  await withNavigationFixture(
+    {
+      schedule: timer.schedule,
+      runProcess: async (request) => {
+        requests.push(request);
+        return wire(request, fixture);
+      },
+    },
+    async (f) => {
+      fixture = f;
+      assert.ok(
+        timer.active() > 0,
+        "startup producer is queued without a native request yet",
+      );
+      let captured = false;
+      const pending = prepareLiveBaseline(
+        () => f.editor.join(),
+        async () => {
+          captured = true;
+          return requests.length;
+        },
+      );
+      try {
+        await turn();
+        assert.equal(
+          captured,
+          false,
+          "closed requests alone do not establish completed startup work",
+        );
+      } finally {
+        timer.deliver();
+        await f.editor.join();
+      }
+      const baseline = await pending;
+      assert.ok(baseline > 0);
+      assert.ok(
+        requests.some(
+          (request) =>
+            request.input === undefined && request.args[0] === "check",
+        ),
+        "queued workspace checks belong to the baseline",
+      );
+      for (let index = 0; index < 5; index++) {
+        f.document.edit(`changed: ${index}\n`);
+        f.editor.change(f.document.asDocument());
+      }
+      timer.deliver();
+      await f.editor.join();
+      assert.equal(
+        requests.length,
+        baseline,
+        "default-off typing still launches zero additional requests",
+      );
+    },
+    operations,
+  );
+});
 
 for (const phase of ["saved rendering", "source synchronization"] as const) {
   test(`public join owns pending file admission and complete ${phase} after backend closure`, async () => {

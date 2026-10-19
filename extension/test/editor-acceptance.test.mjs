@@ -778,6 +778,21 @@ test("disabled live performance preserves original fixtures and registers contro
       join(profile.workspaceRoot, "one/roles/navsource/tasks/main.yml"),
     ),
   );
+  for (const path of ["live-small.yml", "roles/livecontext/tasks/main.yml"])
+    assert.equal(
+      readFileSync(join(profile.workspaceRoot, "one", path), "utf8"),
+      '# 😀é\r\nvalue: "😀 {{ value\r\n }}"\r\n',
+      "live input must exist before the SDK watches the workspace",
+    );
+  const declarations = readFileSync(
+    join(profile.workspaceRoot, "one/roles/livecontext/defaults/main.yml"),
+    "utf8",
+  )
+    .trimEnd()
+    .split("\n");
+  assert.equal(declarations.length, 4000);
+  assert.equal(declarations[0], "livecontext_role_value_0: 0");
+  assert.equal(declarations.at(-1), "livecontext_role_value_3999: 3999");
   const controller = JSON.parse(
     readFileSync(join(profile.controller, "package.json"), "utf8"),
   );

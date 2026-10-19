@@ -37,6 +37,7 @@ export const liveOperationNames = [
   "marker-removal",
   "deactivate",
   "cleanup-deactivate",
+  "baseline-join",
 ] as const;
 export type LiveOperationName = (typeof liveOperationNames)[number];
 export type LiveOperationEvent = "entered" | "completed" | "deadline";

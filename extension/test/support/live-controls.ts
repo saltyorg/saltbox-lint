@@ -29,6 +29,13 @@ export interface LiveDeadline {
   schedule?: (expire: () => void, milliseconds: number) => () => void;
   cancel?: () => void;
 }
+export async function prepareLiveBaseline(
+  join: () => PromiseLike<unknown>,
+  capture: () => PromiseLike<number>,
+): Promise<number> {
+  await join();
+  return capture();
+}
 export function createLiveBounded(adapters: LiveDeadline = {}): LiveBounded {
   return async (operation, name, evidence) => {
     noteLiveOperation(evidence, name, "entered");

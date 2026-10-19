@@ -17,6 +17,7 @@ import {
   cleanupLiveControls,
   captureLiveFailure,
   finishLiveFailure,
+  prepareLiveBaseline,
   type LiveCancelContext,
 } from "../support/live-controls.ts";
 import assert from "node:assert/strict";
@@ -26,6 +27,11 @@ import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { hash } from "../../src/protocol.ts";
 import { diagnosticCode } from "./diagnostic-code.ts";
+import {
+  liveSource as source,
+  liveContext,
+  liveTemplate,
+} from "../support/live-fixture.ts";
 import {
   quantile,
   primaryRequests,
@@ -68,9 +74,6 @@ function expected(document: vscode.TextDocument, line: number): boolean {
         diagnosticCode(finding) === "jinja-layout" &&
         finding.range.start.line === line + 1,
     );
-}
-function source(line: number): string {
-  return "# 😀é\r\n".repeat(line) + 'value: "😀 {{ value\r\n }}"\r\n';
 }
 async function diskSources(root: string): Promise<Map<string, string>> {
   const sources = new Map<string, string>();
@@ -152,31 +155,26 @@ async function livePerformance(resources: TestResources): Promise<void> {
     root,
     "roles/livecontext/defaults/main.yml",
   );
-  await vscode.workspace.fs.createDirectory(
-    vscode.Uri.joinPath(root, "roles/livecontext/tasks"),
+  const context = liveContext();
+  assert.deepEqual(
+    Buffer.from(await vscode.workspace.fs.readFile(contextURI)),
+    Buffer.from(context),
+    "context fixture is complete before SDK startup",
   );
-  await vscode.workspace.fs.createDirectory(
-    vscode.Uri.joinPath(root, "roles/livecontext/defaults"),
-  );
-  const context = Array.from(
-    { length: 4000 },
-    (_, index) => `livecontext_role_value_${index}: ${index}\n`,
-  ).join("");
-  await vscode.workspace.fs.writeFile(contextURI, Buffer.from(context));
   for (const uri of [smallURI, heavyURI])
-    await vscode.workspace.fs.writeFile(uri, Buffer.from(source(1)));
+    assert.deepEqual(
+      Buffer.from(await vscode.workspace.fs.readFile(uri)),
+      Buffer.from(source(1)),
+      "live source fixture is complete before SDK startup",
+    );
   const templateURI = vscode.Uri.joinPath(
     root,
     "roles/readonly/templates/config.yaml",
   );
-  await vscode.workspace.fs.createDirectory(
-    vscode.Uri.joinPath(root, "roles/readonly/templates"),
-  );
-  await vscode.workspace.fs.writeFile(
-    templateURI,
-    Buffer.from(
-      " \t😀\r\n{% raw -%}{{ {% unmatched{%- endraw %}\r\n{{ lookup('role_var', '_port', role='navtarget') }}  ",
-    ),
+  assert.deepEqual(
+    Buffer.from(await vscode.workspace.fs.readFile(templateURI)),
+    Buffer.from(liveTemplate),
+    "template fixture is complete before SDK startup",
   );
   const small = await vscode.workspace.openTextDocument(smallURI);
   const heavy = await vscode.workspace.openTextDocument(heavyURI);
@@ -301,10 +299,14 @@ async function livePerformance(resources: TestResources): Promise<void> {
   const failureState = { failed: false, primaryFailure: undefined as unknown };
   const cleanupFailures: unknown[] = [];
   try {
-    await pause(650);
-    await checkpoint("baseline");
+    const offBefore = await prepareLiveBaseline(
+      () => bounded(adapter.join(), "baseline-join", evidence),
+      async () => {
+        await checkpoint("baseline");
+        return invocations.length;
+      },
+    );
     // A bounded observation window proves absence while typing is disabled.
-    const offBefore = invocations.length;
     for (let index = 2; index <= 6; index++)
       await replace(small, source(index), "default-off-edit", evidence);
     await pause(650);
@@ -672,6 +674,16 @@ async function livePerformance(resources: TestResources): Promise<void> {
             ? [{ ordinal: index + 1, operation: request.operation }]
             : [],
         ),
+        details: processTracker.requests.map((request, index) => ({
+          ordinal: index + 1,
+          operation: request.operation,
+          admittedMs: request.admitted,
+          settledMs: request.settled,
+          nativeOrdinal: request.invocation
+            ? invocations.indexOf(request.invocation) + 1
+            : undefined,
+          stdinPrimary: request.invocation?.primary !== undefined,
+        })),
       }),
   );
   finishLiveFailure(failureState, cleanupFailures);

@@ -652,6 +652,15 @@ The regressions profile forces cancellation after a real coexisting provider
 callback proves SDK admission, then verifies initial action acquisition and joins
 the provider callbacks, listeners and deadline on every path.
 
+The live-performance profile creates its initial Unicode/CRLF sources, template
+and 4,000-variable context before launching the SDK. The component's public
+`join()` drains queued producers and complete background work before the baseline
+counter is captured. A list of already closed native requests alone cannot prove
+that no startup work remains queued. The default-off typing check still counts
+every native launch across its original observation window; no request kinds are
+excluded. Request operation and admission/settlement facts accompany its process
+accounting so a future failure retains the work that crossed the baseline.
+
 Before accepting a test change, record its trigger, exact failing condition,
 observable completion, resource owner and real-platform check. Qualify shared
 ownership helpers with partial setup/readiness failure, cancellation before and

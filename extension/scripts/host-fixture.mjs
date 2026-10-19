@@ -11,7 +11,12 @@ import {
   lstatSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, basename, dirname } from "node:path";
+import {
+  liveSource,
+  liveContext,
+  liveTemplate,
+} from "../test/support/live-fixture.ts";
 
 /** @typedef {import('./host-types.js').HostProfile} HostProfile */
 /** @type {WeakMap<HostProfile, {dev: number, ino: number}>} */
@@ -429,6 +434,18 @@ export async function populateHostFixture(
         resolve(root, name, "roles/unrelated/defaults/main.yml"),
         header + 'unrelated_value: "{{ other\n }}"\n',
       );
+    }
+  }
+  if (env.SALTBOX_TEST_HOST_MODE === "live-performance") {
+    for (const [relative, contents] of Object.entries({
+      "live-small.yml": liveSource(1),
+      "roles/livecontext/tasks/main.yml": liveSource(1),
+      "roles/livecontext/defaults/main.yml": liveContext(),
+      "roles/readonly/templates/config.yaml": liveTemplate,
+    })) {
+      const filename = resolve(root, "one", relative);
+      mkdirSync(dirname(filename), { recursive: true });
+      writeFileSync(filename, contents);
     }
   }
   const workspace = resolve(root, "test.code-workspace");
