@@ -49,12 +49,40 @@ const groupQueryFixture = fileURLToPath(
  * @template T
  * @param {string | readonly string[]} mode
  * @param {(fixture: GroupQueryFixture) => Promise<T>} body
- * @param {{earlyError?: QueryError, abortOnSpawn?: AbortController, missingExecutable?: boolean, platform?: NodeJS.Platform}} [control]
+ * @param {{earlyError?: QueryError, abortOnSpawn?: AbortController, missingExecutable?: boolean, platform?: NodeJS.Platform, holdBootstrap?: boolean, nodeOverflow?: boolean}} [control]
  */
 async function withGroupQuery(mode, body, control = {}) {
   return withTestResources({ cleanupTimeoutMs: 5000 }, async (resources) => {
     const modes = typeof mode === "string" ? [mode] : mode;
     assert.ok(modes.length > 0);
+    /** @type {string | undefined} */
+    let overflowBinary;
+    if (modes.includes("overflow") && !control.nodeOverflow) {
+      const directory = mkdtempSync(join(tmpdir(), "saltbox-native-query-"));
+      resources.defer("native query fixture directory", () =>
+        rmSync(directory, { recursive: true, force: true }),
+      );
+      overflowBinary = join(
+        directory,
+        "process-fixture" + (process.platform === "win32" ? ".exe" : ""),
+      );
+      await ownedCommand(
+        "go",
+        [
+          "build",
+          "-o",
+          overflowBinary,
+          fileURLToPath(
+            new URL("testdata/process_fixture.go", import.meta.url),
+          ),
+        ],
+        {
+          phase: "native query fixture build",
+          timeoutMs: 30000,
+          env: { ...process.env, CGO_ENABLED: "0" },
+        },
+      );
+    }
     /** @type {QueryRequest[]} */
     const requests = [];
     /** @type {import("node:child_process").ChildProcess[]} */
@@ -86,16 +114,31 @@ async function withGroupQuery(mode, body, control = {}) {
         const mode = modes[Math.min(requests.length, modes.length - 1)];
         requests.push({ file, args: [...args], options });
         let delivered = false;
+        let executable = process.execPath;
+        let parameters = [
+          groupQueryFixture,
+          mode,
+          control.platform === "linux" ? "123" : args[1],
+        ];
+        if (mode === "overflow" && !control.nodeOverflow) {
+          assert.ok(
+            overflowBinary,
+            "native output fixture is ready before query admission",
+          );
+          executable = overflowBinary;
+          parameters = ["query-overflow"];
+        }
         const child = execFile(
           control.missingExecutable
             ? `${groupQueryFixture}.missing-executable`
-            : process.execPath,
-          [
-            groupQueryFixture,
-            mode,
-            control.platform === "linux" ? "123" : args[1],
-          ],
-          options,
+            : executable,
+          parameters,
+          control.holdBootstrap
+            ? {
+                ...options,
+                env: { ...options.env, SALTBOX_TEST_QUERY_BOOTSTRAP_HOLD: "1" },
+              }
+            : options,
           (error, stdout, stderr) => {
             results.push({ error, stdout, stderr });
             if (!delivered) {
@@ -983,6 +1026,45 @@ test("process query failure retains bounded native timeout overflow cancellation
     },
     { missingExecutable: true },
   );
+});
+
+test("native query overflow remains independent of blocked Node fixture bootstrap", async () => {
+  for (const nodeOverflow of [true, false]) {
+    await withGroupQuery(
+      "overflow",
+      async (f) => {
+        await assert.rejects(
+          groupHasLiveMembers(123, undefined, f.dependencies),
+          (failure) => {
+            const { error, observation } = queryFailure(failure);
+            assert.equal(error.cause, f.results[0].error);
+            assert.equal(f.requests[0].options.timeout, 1000);
+            assert.equal(f.requests[0].options.maxBuffer, 4 * 1024 * 1024);
+            assert.equal(f.closes.length, 1);
+            if (nodeOverflow) {
+              assert.equal(f.children[0].spawnfile, process.execPath);
+              assert.equal(f.results[0].error?.killed, true);
+              assert.equal(observation.closeSignal, "SIGKILL");
+            } else {
+              assert.notEqual(f.children[0].spawnfile, process.execPath);
+              assert.equal(
+                f.results[0].error?.code,
+                "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+              );
+              assert.ok(
+                "code" in observation &&
+                  observation.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+              );
+              assert.ok(typeof observation.stdoutBytes === "number");
+              assert.ok(observation.stdoutBytes <= 4 * 1024 * 1024);
+            }
+            return true;
+          },
+        );
+      },
+      { holdBootstrap: true, nodeOverflow },
+    );
+  }
 });
 
 test("process query joins the exact native close after an early exit-one callback", async () => {

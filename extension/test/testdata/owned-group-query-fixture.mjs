@@ -1,5 +1,16 @@
 // @ts-check
 const [mode, group] = process.argv.slice(2);
+if (
+  mode === "overflow" &&
+  process.env.SALTBOX_TEST_QUERY_BOOTSTRAP_HOLD === "1"
+) {
+  // The negative control holds bootstrap on the owned native stdin pipe.
+  await new Promise((resolve, reject) => {
+    process.stdin.once("end", () => resolve(undefined));
+    process.stdin.once("error", reject);
+    process.stdin.resume();
+  });
+}
 switch (mode) {
   case "linux-partial":
     process.stdout.write(`${group} ${process.pid} ${process.pid} 2 Z\n`);

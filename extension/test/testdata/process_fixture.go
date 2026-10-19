@@ -74,6 +74,12 @@ func reportFailure(stage string, err error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "query-overflow" {
+		// Native query limits must not depend on a JavaScript runtime booting.
+		// The parent deliberately closes or kills this writer at its output cap.
+		_, _ = os.Stdout.Write(bytes.Repeat([]byte{'x'}, 5*1024*1024))
+		return
+	}
 	if value := os.Getenv("SALTBOX_TEST_BOOTSTRAP_CONTROL"); value != "" {
 		if err := waitForBootstrapRelease(value); err != nil {
 			reportFailure("bootstrap-control", err)
