@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { TestResources } from "../support/test-resources.ts";
 import { diagnosticTransition } from "../support/diagnostic-transition.ts";
 import { ownJoinedResource } from "../support/host-resources.ts";
+import { CodeActionEvidence } from "../support/code-action-evidence.ts";
 async function waitFor(
   predicate: () => boolean,
   message: string,
@@ -293,21 +294,87 @@ export async function runDiagnostics(resources: TestResources): Promise<void> {
     vscode.Uri.joinPath(roots[1].uri, "roles/example/defaults/main.yml"),
   );
   ownBuffer(resources, second);
+  const actionEvidence = new CodeActionEvidence(
+    [document, second].map((document, index) => ({
+      label: index === 0 ? "primary" : "second",
+      document,
+      diagnostics: () => diagnostics(document.uri),
+    })),
+    {
+      changed: vscode.workspace.onDidChangeTextDocument,
+      opened: vscode.workspace.onDidOpenTextDocument,
+      closed: vscode.workspace.onDidCloseTextDocument,
+      diagnosticsChanged: vscode.languages.onDidChangeDiagnostics,
+      write: (line) =>
+        console.error(
+          line.replace(
+            "SALTBOX_I1_ACTION_FAILURE ",
+            "SALTBOX_DIAGNOSTIC_ACTION_FAILURE ",
+          ),
+        ),
+    },
+  );
+  resources.defer("diagnostics action evidence", () =>
+    actionEvidence.dispose(),
+  );
   await replace(document, '---\nexample_value: \"{{ value\n }}\"\n');
   await vscode.window.showTextDocument(document);
   await vscode.commands.executeCommand("saltboxLint.checkDocument");
-  const stale = (
-    await vscode.commands.executeCommand<vscode.CodeAction[]>(
-      "vscode.executeCodeActionProvider",
-      document.uri,
-      new vscode.Range(0, 0, 3, 0),
-    )
-  ).find(
+  const requested = new vscode.Range(0, 0, 3, 0);
+  const query = actionEvidence.begin("warm", requested);
+  const returned = await (async () => {
+    try {
+      return await vscode.commands.executeCommand<vscode.CodeAction[]>(
+        "vscode.executeCodeActionProvider",
+        document.uri,
+        requested,
+      );
+    } catch (error) {
+      return actionEvidence.failure("warm", error);
+    }
+  })();
+  actionEvidence.returned(
+    query,
+    returned,
+    returned.filter((a) => a.title.includes("this file")),
+  );
+  const stale = returned.find(
     (a) =>
       a.command?.command.startsWith("saltboxLint.") &&
       a.title.includes("this file"),
   )!;
-  assert.ok(stale?.command);
+  try {
+    assert.ok(stale?.command);
+  } catch (error) {
+    let failure: unknown = error;
+    try {
+      const model = vscode.workspace.textDocuments.find(
+        (candidate) => candidate.uri.toString() === document.uri.toString(),
+      );
+      const beforeStatus = {
+        requested: document.uri.toString(),
+        active: vscode.window.activeTextEditor?.document.uri.toString(),
+        sameModel: model === document,
+        actualVersion: model?.version,
+        actualLanguage: model?.languageId,
+        closed: document.isClosed,
+      };
+      const refreshedStatus = await vscode.commands.executeCommand(
+        "saltboxLint.showStatus",
+      );
+      console.error(
+        "SALTBOX_DIAGNOSTIC_ACTION_STATUS " +
+          JSON.stringify({ beforeStatus, refreshedStatus }),
+      );
+    } catch (evidenceError) {
+      failure = new AggregateError(
+        [error, evidenceError],
+        "Diagnostics action assertion and status evidence failed",
+        { cause: error },
+      );
+    }
+    actionEvidence.failure("warm", failure);
+  }
   const retainedDiagnostics = diagnostics(document.uri);
   await replace(document, "---\nexample_value: untouched\n");
   await vscode.commands.executeCommand(
