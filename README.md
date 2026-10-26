@@ -152,8 +152,9 @@ and overlays that filename without writing it. Input may be empty. `--fix` and
 `--diff` reject stdin and cannot be combined. `--diff` prints a verified unified
 patch on stdout and all original findings on stderr; human/concise output is
 supported for those diagnostics. JSON/GitHub cannot be combined with `--diff`.
-Diff hunks intentionally contain whole changed files and are valid for
-`git apply`. A file without a supported safe fix can have findings with no patch.
+Each changed file gets minimal unified hunks with three lines of context; nearby
+changes share a hunk, and the patch is valid for `git apply`. A file without a
+supported safe fix can have findings with no patch.
 
 Exit status is **0** for clean input (including successful fixes leaving no
 findings), **1** for lint or YAML parse findings, and **2** for usage, loading,
