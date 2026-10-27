@@ -171,10 +171,7 @@ func buildStructuralChange(source *Source, rules []string) (Change, []structural
 			if !long[e.Span] || !e.mapped || !layoutSupported(e) {
 				continue
 			}
-			a := layoutAnalysis{source: candidate, expression: e, newline: "\n", wrapNestedConditionals: true}
-			if bytes.Contains(candidate.Data, []byte("\r\n")) {
-				a.newline = "\r\n"
-			}
+			a := layoutAnalysis{source: candidate, expression: e, wrapNestedConditionals: true}
 			a.block, a.base = pureBlock(candidate, e)
 			a.region(0, len(e.Tokens), a.column(e.Tokens[0].Span.Start), a.column(e.Span.Start), true)
 			wraps = append(wraps, a.edits...)

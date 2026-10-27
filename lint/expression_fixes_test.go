@@ -2,6 +2,7 @@ package lint
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,38 @@ func TestExpressionFixes(t *testing.T) {
 				t.Fatalf("not idempotent: %+v %v", again, err)
 			}
 		})
+	}
+}
+
+// Inserted line breaks follow the line they split. A stray CRLF elsewhere,
+// including one inside a quoted scalar, must not leak into LF lines.
+func TestFixNewlinesFollowEditedLine(t *testing.T) {
+	const task = "- name: Example\n  ansible.builtin.debug: {msg: ok}\n  when: value is defined and value | length > 0\n"
+	long := "value: \"{{ '" + strings.Repeat("x", 170) + "' if flag else 'fallback' }}\"\n"
+	for _, tc := range []struct{ name, path, input string }{
+		{"when list", "roles/demo/tasks/main.yml", "- name: Stray\r\n  ansible.builtin.debug: {msg: ok}\n" + task},
+		{"conditional wrap", "values.yml", "stray: 1\r\n" + long},
+		{"quoted scalar", "values.yml", "stray: \"a\r\n  b\"\n" + long},
+	} {
+		for _, crlf := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%v", tc.name, crlf), func(t *testing.T) {
+				input := tc.input
+				if crlf {
+					input = strings.ReplaceAll(strings.ReplaceAll(input, "\r\n", "\n"), "\n", "\r\n")
+				}
+				p := expressionFixProject(t, tc.path, input)
+				cs, err := PlanFixes(p, Analyze(p, Rules()))
+				if err != nil || len(cs) != 1 {
+					t.Fatalf("changes=%+v err=%v", cs, err)
+				}
+				after := cs[0].After
+				lines := bytes.Count(after, []byte("\n")) - strings.Count(input, "\n")
+				crlfs := bytes.Count(after, []byte("\r\n")) - strings.Count(input, "\r\n")
+				if lines == 0 || crlf && crlfs != lines || !crlf && crlfs != 0 {
+					t.Fatalf("inserted %d lines with %d CRLF: %q", lines, crlfs, after)
+				}
+			})
+		}
 	}
 }
 

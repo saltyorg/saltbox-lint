@@ -12,7 +12,6 @@ type layoutAnalysis struct {
 	expression  Expression
 	edits       []Edit
 	diagnostics []Diagnostic
-	newline     string
 	block       bool
 	base        int
 	// Only the length fixer may wrap inline conditionals inside argument regions.
@@ -42,10 +41,7 @@ func layoutFindings(s *Source) ([]Diagnostic, []Edit) {
 			ds = append(ds, Diagnostic{Path: s.Path, RuleID: "jinja-layout", Severity: "error", Span: e.Span, fixDecision: &FixDecision{State: "unsupported-syntax", Reason: "The layout checker does not support this expression syntax."}, Message: "unsupported Jinja layout syntax", Expected: "Review the expression syntax manually; no safe formatting correction is available."})
 			continue
 		}
-		a := layoutAnalysis{source: s, expression: e, newline: "\n"}
-		if bytes.Contains(s.Data, []byte("\r\n")) {
-			a.newline = "\r\n"
-		}
+		a := layoutAnalysis{source: s, expression: e}
 		if s.Position(e.Span.Start).Line == s.Position(e.Span.End-1).Line {
 			continue
 		}
@@ -80,6 +76,24 @@ func layoutFindings(s *Source) ([]Diagnostic, []Edit) {
 	}
 	return ds, edits
 }
+
+// lineNewline returns the terminator of the line containing pos, or of the
+// preceding line when that line is unterminated. Inserted breaks therefore
+// match the line they split, even when other lines or scalars use CRLF.
+func lineNewline(data []byte, pos int) string {
+	pos = min(max(pos, 0), len(data))
+	if end := bytes.IndexByte(data[pos:], '\n'); end >= 0 {
+		if pos+end > 0 && data[pos+end-1] == '\r' {
+			return "\r\n"
+		}
+		return "\n"
+	}
+	if start := bytes.LastIndexByte(data[:pos], '\n'); start > 0 && data[start-1] == '\r' {
+		return "\r\n"
+	}
+	return "\n"
+}
+
 func pureBlock(s *Source, e Expression) (bool, int) {
 	n := e.node
 	if n == nil || (n.Style != "literal" && n.Style != "folded") {
@@ -149,7 +163,7 @@ func (a *layoutAnalysis) breakBefore(i, col int, hint string) {
 	if i == 0 {
 		return
 	}
-	a.gap(ts[i-1].Span.End, ts[i].Span.Start, a.newline+strings.Repeat(" ", max(0, col)), hint)
+	a.gap(ts[i-1].Span.End, ts[i].Span.Start, lineNewline(a.source.Data, ts[i-1].Span.End)+strings.Repeat(" ", max(0, col)), hint)
 }
 
 // region owns one conditional branch or argument. Delimiters introduce child

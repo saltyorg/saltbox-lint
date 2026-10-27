@@ -103,10 +103,7 @@ func whenListFix(s *Source, e Expression, operands [][]Token) (structuralFix, bo
 	if strings.TrimSpace(string(s.Data[n.Span.End:end])) != "" {
 		return structuralFix{}, false
 	}
-	newline := "\n"
-	if bytes.Contains(s.Data, []byte("\r\n")) {
-		newline = "\r\n"
-	}
+	newline := lineNewline(s.Data, n.Span.End)
 	var items []string
 	var text strings.Builder
 	text.WriteString("when:")

@@ -93,10 +93,7 @@ func whenListPreview(s *Source, e Expression) *Preview {
 	if strings.TrimSpace(string(s.Data[n.Span.End:end])) != "" {
 		return nil
 	}
-	newline := "\n"
-	if end < len(s.Data) && end > 0 && s.Data[end-1] == '\r' || end == len(s.Data) && bytes.Contains(s.Data, []byte("\r\n")) {
-		newline = "\r\n"
-	}
+	newline := lineNewline(s.Data, n.Span.End)
 	data, err := whenListData(e)
 	if err != nil {
 		return nil
