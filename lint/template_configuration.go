@@ -12,7 +12,10 @@ import (
 // Task overrides are outside this milestone's configuration grammar. Decline
 // before scanning, even when a header supplies the same option: admitting the
 // effective combination would require validating every owner configuration.
-// An unknown task source can select any template in its owning role. No runtime
+// An unknown task source can select any template in its owning role, so it
+// limits coverage only when it could change the grammar of whichever template
+// it renders: through delimiter arguments, module defaults or arguments that
+// cannot be read statically. No runtime
 // variable, condition, module default or include is evaluated here. Defaults
 // ancestry is retained only to decline configuration that could change grammar.
 func templateTaskConfigurationReasons(p *Project, s *Source) []string {
@@ -51,7 +54,9 @@ func templateTaskConfigurationReasons(p *Project, s *Source) []string {
 				continue
 			}
 			if reason := templateTaskSourceReason(task); reason != "" {
-				reasons = append(reasons, reason)
+				if !templateTaskUsesDefaultGrammar(task) {
+					reasons = append(reasons, reason)
+				}
 				continue
 			}
 			owns, reason := templateTaskOwnsSource(p, owner, s, task.argument("src").Value)
@@ -124,6 +129,24 @@ func templateTaskSourceReason(task Task) string {
 		return "template configuration is unavailable: unsupported template task source resolution"
 	}
 	return ""
+}
+
+// templateTaskUsesDefaultGrammar reports whether a task renders its source
+// with the default delimiters, whatever that source turns out to be.
+func templateTaskUsesDefaultGrammar(task Task) bool {
+	args := task.Node.Get("args")
+	if task.unknownArguments || args != nil && args.Kind != "mapping" {
+		return false
+	}
+	if src := task.argument("src"); src == nil || src.Kind != "string" || src.Tag == "!unsafe" {
+		return false
+	}
+	for _, key := range templateDelimiterArguments {
+		if task.argument(key) != nil {
+			return false
+		}
+	}
+	return !templateModuleDefaultsUnknown(task)
 }
 
 var templateDelimiterArguments = []string{"variable_start_string", "variable_end_string", "block_start_string", "block_end_string", "comment_start_string", "comment_end_string"}

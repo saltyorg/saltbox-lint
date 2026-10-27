@@ -65,8 +65,12 @@ Comment endings do not lex expression tokens and retain their literal behavior.
 An owning template task with any explicit variable, block or comment delimiter
 argument receives partial coverage, including arguments equal to the defaults.
 The scanner does not combine task overrides with header options. Conflicting
-owners, dynamic template task sources, unknown arguments and invalid owning
-task YAML also prevent delimiter, reference and renderer-consumption claims.
+owners, unknown arguments and invalid owning task YAML also prevent delimiter,
+reference and renderer-consumption claims. A dynamic, `!unsafe` or unsupported
+task source could render any template in its role, so it prevents these claims
+only when that task carries delimiter arguments, applicable delimiter
+`module_defaults` or arguments that cannot be read statically; otherwise every
+template it might render uses the default grammar.
 These reasons appear in `explain`, reference-source records and navigation
 coverage. Task configuration is read before template tags can select cross-role
 reference context. Unrelated tasks and ordinary task variables do not supply
@@ -90,8 +94,11 @@ decline unsupported task configuration resolution. A narrowed root never reads
 the canonical role's context outside that root.
 
 Expression and statement argument validation uses a bounded static subset.
-Unsupported collections, arithmetic, imports, extension tags and other grammar
-receive partial coverage rather than fabricated syntax errors. Unknown extension
+Template expressions accept Jinja arithmetic and concatenation (`+`, `-`, `~`,
+`*`, `/`, `//`, `%`, `**` and unary `-`) with Jinja precedence; a leading `+`
+remains outside the subset because Jinja reads `{{+` as a whitespace control.
+Unsupported collections, imports, extension tags and other grammar receive
+partial coverage rather than fabricated syntax errors. Unknown extension
 grammar stops further scanning and disables block and reference claims. Limits are 16 MiB per source, 512
 tokens per tag, 32,768 total tokens, 4,096 tags, 64 KiB of lexed tag content,
 128 findings, a 4 KiB configuration header and 128 bracket/block levels. These checks are not a full Jinja
