@@ -20,7 +20,14 @@ import {
   unavailableSource,
 } from "./identity.ts";
 import type { Identity } from "./identity.ts";
-import { hash, parseCheck, parseFormat, SnapshotIndex } from "./protocol.ts";
+import {
+  editorText,
+  hash,
+  hasUTF8BOM,
+  parseCheck,
+  parseFormat,
+  SnapshotIndex,
+} from "./protocol.ts";
 import type {
   CheckReport,
   EditorEdit,
@@ -1062,6 +1069,14 @@ export class EditorIntegration implements vscode.Disposable {
             : undefined;
           if (signal.aborted || !current()) return;
           const unsupported = bytes !== undefined && !isUtf8(bytes);
+          // VS Code omits a saved UTF-8 BOM from the clean model. Analyze the
+          // exact saved bytes so dependency observations match the disk, and
+          // map the CLI's BOM-inclusive coordinates back to the model.
+          const savedBOM =
+            bytes !== undefined &&
+            !unsupported &&
+            hasUTF8BOM(bytes) &&
+            editorText(bytes) === snapshot.text;
           // Ordinary invalid YAML retains the saved-file transport. A read-only
           // template keeps its admitted spelling and exact raw bytes together.
           const savedYaml = unsupported && !this.isTemplate(document);
@@ -1096,7 +1111,7 @@ export class EditorIntegration implements vscode.Disposable {
                   ],
               input: savedYaml
                 ? undefined
-                : unsupported
+                : unsupported || savedBOM
                   ? bytes
                   : snapshot.text,
               successCodes: [0, 1],
@@ -1105,8 +1120,15 @@ export class EditorIntegration implements vscode.Disposable {
           );
           return {
             wire,
-            snapshot,
-            sourceHash: unsupported ? hash(bytes!) : snapshot.hash,
+            snapshot: savedBOM
+              ? {
+                  ...snapshot,
+                  index: new SnapshotIndex(bytes!.toString("utf8"), {
+                    savedBytes: true,
+                  }),
+                }
+              : snapshot,
+            sourceHash: unsupported || savedBOM ? hash(bytes!) : snapshot.hash,
             unsupported,
           };
         },
@@ -1381,8 +1403,9 @@ export class EditorIntegration implements vscode.Disposable {
           unsupported.add(relative);
           continue;
         }
-        const text = bytes.toString("utf8");
-        const index = new SnapshotIndex(text);
+        const index = new SnapshotIndex(bytes.toString("utf8"), {
+          savedBytes: true,
+        });
         for (const fix of report.fixes.values())
           if (fix.path === relative) index.edits(fix.edits);
         entries.set(
@@ -2294,10 +2317,7 @@ export class EditorIntegration implements vscode.Disposable {
               (version !== undefined && document.version !== version)
             )
               continue;
-            if (
-              !document.isDirty &&
-              document.getText() !== bytes.toString("utf8")
-            ) {
+            if (!document.isDirty && document.getText() !== editorText(bytes)) {
               this.pendingDiskReload.add(key);
               continue;
             }

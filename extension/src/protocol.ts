@@ -141,18 +141,46 @@ function edits(value: unknown): asserts value is SourceEdit[] {
   }
 }
 
+const utf8BOM = "﻿";
+/** True when saved bytes begin with a UTF-8 byte order mark. */
+export function hasUTF8BOM(bytes: Uint8Array): boolean {
+  return bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+}
+/**
+ * Decode saved bytes as VS Code presents their document model: exactly one
+ * leading UTF-8 BOM is encoding metadata and is absent from the text.
+ */
+export function editorText(bytes: Uint8Array): string {
+  return Buffer.from(
+    bytes.buffer,
+    bytes.byteOffset + (hasUTF8BOM(bytes) ? 3 : 0),
+    bytes.byteLength - (hasUTF8BOM(bytes) ? 3 : 0),
+  ).toString("utf8");
+}
+
 /** One pass builds byte/code-point/UTF16 boundaries for all consumers of a snapshot. */
 export class SnapshotIndex {
   private readonly lines: { byte: number; character: number }[][] = [[]];
   private readonly interiorCRLF = new Set<number>();
   readonly byteLength: number;
-  constructor(source: string) {
+  /**
+   * `savedBytes` marks text decoded from saved file bytes. The CLI counts a
+   * leading UTF-8 BOM as one column and three bytes, while the editor model
+   * omits it, so it maps to the first editor character.
+   */
+  constructor(source: string, options: { savedBytes?: boolean } = {}) {
     valid(source.isWellFormed());
     let byte = 0;
     let character = 0;
     let line = this.lines[0];
     line.push({ byte, character });
-    for (let offset = 0; offset < source.length;) {
+    let offset = 0;
+    if (options.savedBytes && source.startsWith(utf8BOM)) {
+      byte = Buffer.byteLength(utf8BOM);
+      offset = utf8BOM.length;
+      line.push({ byte, character });
+    }
+    for (; offset < source.length;) {
       const rune = String.fromCodePoint(source.codePointAt(offset)!);
       byte += Buffer.byteLength(rune);
       offset += rune.length;

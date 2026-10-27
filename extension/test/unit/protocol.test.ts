@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { SnapshotIndex, parseFormat, parseCheck } from "../../src/protocol.ts";
+import {
+  SnapshotIndex,
+  editorText,
+  parseFormat,
+  parseCheck,
+} from "../../src/protocol.ts";
 
 const source = "a: 😀é\r\nx:  1\r\n";
 const edit = {
@@ -31,6 +36,38 @@ test("code-point coordinates become UTF16 positions including CRLF and EOF", () 
     character: 0,
   });
 });
+test("saved UTF-8 BOM is encoding metadata for editor text and coordinates", () => {
+  const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  const body = "é_port: 1\n";
+  const saved = Buffer.concat([bom, Buffer.from(body)]);
+  assert.equal(editorText(saved), body);
+  assert.equal(editorText(Buffer.from(body)), body);
+  // VS Code strips exactly one BOM; a second one is document content.
+  assert.equal(editorText(Buffer.concat([bom, saved])), "﻿" + body);
+  const index = new SnapshotIndex(saved.toString("utf8"), {
+    savedBytes: true,
+  });
+  // CLI column 3 / byte 5 is "_" after the BOM and two-byte "é".
+  assert.deepEqual(
+    index.range(
+      { start: { line: 1, column: 3 }, end: { line: 1, column: 8 } },
+      { start: 5, end: 10 },
+    ),
+    { start: { line: 0, character: 1 }, end: { line: 0, character: 6 } },
+  );
+  // The BOM itself and the first editor character share character zero.
+  assert.deepEqual(index.span({ start: 0, end: 3 }), {
+    start: { line: 0, character: 0 },
+    end: { line: 0, character: 0 },
+  });
+  assert.equal(index.byteLength, saved.byteLength);
+  // Unmarked text keeps a leading U+FEFF as an ordinary editor character.
+  assert.deepEqual(
+    new SnapshotIndex("﻿" + body).position({ line: 1, column: 2 }),
+    { line: 0, character: 1 },
+  );
+});
+
 test("verified format plans retain small edits at exact UTF8 boundaries", () => {
   assert.deepEqual(parseFormat(format(), "roles/a/defaults/main.yml", source), {
     status: "ready",

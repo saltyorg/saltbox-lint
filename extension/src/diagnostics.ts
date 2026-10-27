@@ -50,6 +50,7 @@ export async function renderDiagnostics(
           uri: vscode.Uri.file(filename),
           index: new SnapshotIndex(
             await (adapters.readFile ?? readFile)(filename, "utf8"),
+            { savedBytes: true },
           ),
         };
       })().catch(() => undefined);

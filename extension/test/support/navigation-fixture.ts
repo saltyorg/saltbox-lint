@@ -145,6 +145,27 @@ class Location {
     this.range = range;
   }
 }
+class Diagnostic {
+  readonly range: Range;
+  readonly message: string;
+  readonly severity: number;
+  source?: string;
+  code?: unknown;
+  relatedInformation?: unknown[];
+  constructor(range: Range, message: string, severity: number) {
+    this.range = range;
+    this.message = message;
+    this.severity = severity;
+  }
+}
+class DiagnosticRelatedInformation {
+  readonly location: Location;
+  readonly message: string;
+  constructor(location: Location, message: string) {
+    this.location = location;
+    this.message = message;
+  }
+}
 export class FixtureDocument {
   readonly uri: vscode.Uri;
   private text: string;
@@ -185,6 +206,8 @@ export interface NavigationFixture {
   resources: TestResources;
   lines: string[];
   notices: string[];
+  /** Current diagnostic collection entries keyed by resource URI string. */
+  diagnostics: ReadonlyMap<string, readonly vscode.Diagnostic[]>;
   position: vscode.Position;
   wire(request: ProcessRequest): string;
   refreshProviders(): void;
@@ -245,6 +268,7 @@ export async function withNavigationFixture<T>(
     let workspaceVisible = true;
     const lines: string[] = [],
       notices: string[] = [];
+    const diagnostics = new Map<string, readonly vscode.Diagnostic[]>();
     const listener = () => new Disposable();
     const activeChanged = new Emitter<{ document: vscode.TextDocument }>();
     resources.defer("fixture active editor events", () =>
@@ -272,6 +296,9 @@ export async function withNavigationFixture<T>(
       Position,
       Range,
       Location,
+      Diagnostic,
+      DiagnosticRelatedInformation,
+      DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
       Disposable,
       EventEmitter: Emitter,
       CodeActionKind: { QuickFix: {}, SourceFixAll: { append: () => ({}) } },
@@ -332,10 +359,18 @@ export async function withNavigationFixture<T>(
           });
         },
         createDiagnosticCollection: () => ({
-          set() {},
-          delete() {},
-          clear() {},
-          dispose() {},
+          set(uri: URI, entries: readonly vscode.Diagnostic[]) {
+            diagnostics.set(uri.toString(), entries);
+          },
+          delete(uri: URI) {
+            diagnostics.delete(uri.toString());
+          },
+          clear() {
+            diagnostics.clear();
+          },
+          dispose() {
+            diagnostics.clear();
+          },
           forEach() {},
         }),
       },
@@ -469,6 +504,7 @@ export async function withNavigationFixture<T>(
       resources,
       lines,
       notices,
+      diagnostics,
       position: document.positionAt(sourceText.indexOf("_port") + 2),
       wire,
       refreshProviders: () =>
