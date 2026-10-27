@@ -255,6 +255,22 @@ type failWriter struct{}
 
 func (failWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+func TestHelpAndUsageWriteFailuresExitTwo(t *testing.T) {
+	for _, args := range [][]string{nil, {"--help"}, {"-h"}, {"check", "--help"}, {"help"}, {"help", "check"}, {"help", "missing-topic"}} {
+		t.Run(strings.Join(append([]string{"saltbox-lint"}, args...), " "), func(t *testing.T) {
+			var out, stderr bytes.Buffer
+			if code := Run(t.Context(), args, Streams{Out: &out, Err: &stderr}, "test"); code != 0 || !strings.Contains(out.String(), "Usage:") || stderr.Len() != 0 {
+				t.Fatalf("working help: code=%d stdout=%q stderr=%q", code, &out, &stderr)
+			}
+			stderr.Reset()
+			code := Run(t.Context(), args, Streams{Out: failWriter{}, Err: &stderr}, "test")
+			if code != 2 || stderr.String() != "saltbox-lint: "+io.ErrClosedPipe.Error()+"\n" {
+				t.Fatalf("failed help write: code=%d stderr=%q", code, &stderr)
+			}
+		})
+	}
+}
+
 func TestDiffPropagatesPatchAndDiagnosticWriteFailures(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "input.yml")
 	if err := os.WriteFile(path, []byte("v: \"{{ a\n | combine(b) }}\"\n"), 0600); err != nil {
