@@ -2045,23 +2045,8 @@ export class EditorIntegration implements vscode.Disposable {
   }
   private contextEvent(uri: vscode.Uri): void {
     if (this.disposed || uri.scheme !== "file") return;
-    // The innermost workspace folder owns this file's results, but an
-    // enclosing marked root analyzes the same tree and may depend on it.
-    const owner = this.roots.folder(uri);
-    const key = owner?.uri.toString();
-    for (const folder of [
-      ...(owner ? [owner] : []),
-      ...(vscode.workspace.workspaceFolders ?? []).filter(
-        (folder) => folder.uri.toString() !== key,
-      ),
-    ])
-      this.folderContextEvent(folder, uri);
-  }
-  private folderContextEvent(
-    folder: vscode.WorkspaceFolder,
-    uri: vscode.Uri,
-  ): void {
-    if (this.disposed) return;
+    const folder = this.roots.folder(uri);
+    if (!folder) return;
     const key = folder.uri.toString();
     const root = this.roots.get(key);
     if (!root) return;
