@@ -14,6 +14,8 @@ import (
 func TestTemplateScanner(t *testing.T) {
 	cases := []struct{ name, input, errorText, partial string }{
 		{"literal layout", " \t  literal }} %} #}\r\n\r\n  no final newline", "", ""},
+		{"collection literals", "{% set e = {'name': i.name, 'n': [1, 2,], 'm': {}} %}{% if t in ['a', 'b'] %}{{ lookup('password', '/dev/null', chars=['ascii_letters', 'digits']) }}{% endif %}{% for x in xs | default(['x']) %}{{ x }}{% endfor %}", "", ""},
+		{"malformed collection", "{{ ['a' 'b'] }}", "", "expression grammar"},
 		{"arithmetic and concatenation", "{{ path + ('/mnt/local' if remote == 'feeder' else '') }} {{ a - -b * c / d // e % f ** g ~ h }}", "", ""},
 		{"arithmetic in conditions", "{% if count + 1 > limit and name ~ '.yml' in files %}{{ total - used }}{% endif %}", "", ""},
 		{"filters bind tighter than arithmetic", "{{ size | int + extra | default(0) | int }}", "", ""},
@@ -380,8 +382,8 @@ func TestTemplateRendererUnavailableFacts(t *testing.T) {
 		{"custom supported good", "#jinja2:variable_start_string:'[[',variable_end_string:']]'\n" + strings.ReplaceAll(strings.ReplaceAll(good, "{{", "[["), "}}", "]]"), "", false},
 		{"identifier ending", "#jinja2:variable_end_string:'api'\n" + strings.ReplaceAll(good, "}}", "api"), "may split", false},
 		{"filtered capture", "{% set ignored | default(value=true) %}\n" + good + "{% endset %}\n", "statement argument grammar", true},
-		{"discarded list assignment", "{% set ignored = [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}\n", "statement argument grammar", true},
-		{"list guard", "{% if [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}literal{% endif %}\n", "statement argument grammar", true},
+		{"discarded list assignment", "{% set ignored = [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}\n", "", true},
+		{"list guard", "{% if [traefik_middleware_api, example_role_traefik_api_enabled, example_role_traefik_api_endpoint] %}literal{% endif %}\n", "", true},
 		{"unsupported assignment comprehension", "{% set ignored = [x for x in values] %}\n", "statement argument grammar", false},
 		{"unsupported guard comprehension", "{% if [x for x in values] %}literal{% endif %}\n", "statement argument grammar", false},
 		{"unsupported capture argument", "{% set ignored | default([x for x in values]) %}literal{% endset %}\n", "statement argument grammar", false},
@@ -449,10 +451,10 @@ func TestTemplateContractReasonsIgnoreDisplayWording(t *testing.T) {
 		unavailable          bool
 	}{
 		{"capture", "{% set ignored | default(value=true) %}literal{% endset %}", "statement argument grammar outside the supported static subset: set", false},
-		{"assignment", "{% set ignored = [value] %}", "statement argument grammar outside the supported static subset: set", false},
-		{"if", "{% if [value] %}literal{% endif %}", "statement argument grammar outside the supported static subset: if", false},
-		{"elif", "{% if enabled %}literal{% elif [value] %}literal{% endif %}", "statement argument grammar outside the supported static subset: elif", false},
-		{"output", "{{ [value] }}", "expression grammar outside the supported static subset", true},
+		{"assignment", "{% set ignored = [x for x in values] %}", "statement argument grammar outside the supported static subset: set", true},
+		{"if", "{% if [x for x in values] %}literal{% endif %}", "statement argument grammar outside the supported static subset: if", true},
+		{"elif", "{% if enabled %}literal{% elif [x for x in values] %}literal{% endif %}", "statement argument grammar outside the supported static subset: elif", true},
+		{"output", "{{ [x for x in values] }}", "expression grammar outside the supported static subset", true},
 		{"other statement", "{% with value=source %}literal{% endwith %}", "statement argument grammar outside the supported static subset: with", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

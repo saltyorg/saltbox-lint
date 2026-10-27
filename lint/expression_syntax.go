@@ -250,6 +250,9 @@ func (p *expressionParser) atom() parsedExpression {
 		}
 		return value
 	}
+	if p.templateSyntax && token.Kind == "punctuation" && (token.Text == "[" || token.Text == "{") {
+		return p.collection(token.Text)
+	}
 	switch token.Kind {
 	case "name":
 		switch token.Text {
@@ -263,6 +266,39 @@ func (p *expressionParser) atom() parsedExpression {
 		p.invalid = true
 		return parsedExpression{}
 	}
+}
+
+// collection parses a Jinja list or dict literal after its opening bracket.
+// Items are full expressions; a trailing comma is allowed as in Jinja.
+func (p *expressionParser) collection(open string) parsedExpression {
+	closing, kind := "]", "list"
+	if open == "{" {
+		closing, kind = "}", "dict"
+	}
+	var items []parsedExpression
+	for !p.take(closing) {
+		if p.invalid || p.pos >= len(p.tokens) {
+			p.invalid = true
+			return parsedExpression{}
+		}
+		if len(items) > 0 && !p.take(",") {
+			p.invalid = true
+			return parsedExpression{}
+		}
+		if p.take(closing) {
+			break
+		}
+		item := p.conditional()
+		if kind == "dict" {
+			if !p.take(":") {
+				p.invalid = true
+				return parsedExpression{}
+			}
+			item = expressionTree("pair", false, item, p.conditional())
+		}
+		items = append(items, item)
+	}
+	return expressionTree(kind, false, items...)
 }
 func (p *expressionParser) arguments() []parsedExpression {
 	if !p.take("(") {

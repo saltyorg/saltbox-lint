@@ -97,8 +97,10 @@ Expression and statement argument validation uses a bounded static subset.
 Template expressions accept Jinja arithmetic and concatenation (`+`, `-`, `~`,
 `*`, `/`, `//`, `%`, `**` and unary `-`) with Jinja precedence; a leading `+`
 remains outside the subset because Jinja reads `{{+` as a whitespace control.
-Unsupported collections, imports, extension tags and other grammar receive
-partial coverage rather than fabricated syntax errors. Unknown extension
+List and dict literals, including empty and trailing-comma forms, are accepted
+anywhere an expression is. Comprehensions, imports, extension tags and other
+unsupported grammar receive partial coverage rather than fabricated syntax
+errors. Unknown extension
 grammar stops further scanning and disables block and reference claims. Limits are 16 MiB per source, 512
 tokens per tag, 32,768 total tokens, 4,096 tags, 64 KiB of lexed tag content,
 128 findings, a 4 KiB configuration header and 128 bracket/block levels. These checks are not a full Jinja
