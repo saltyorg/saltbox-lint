@@ -29,9 +29,12 @@ const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
 /**
  * Deliver admitted timers until the editor's public join observes quiescence.
  * Each round also awaits the editor's public context barrier, so asynchronous
- * context observations complete rather than consuming the round budget.
- * A producer that keeps re-queueing work fails instead of hanging; fixture
- * disposal then seals producers and its cleanup still owns that join.
+ * context observations complete before the next delivery.
+ * A producer that keeps re-queueing work exhausts the delivery budget and fails
+ * instead of hanging. Rounds that deliver nothing only wait for admitted file
+ * I/O, whose duration depends on host load, so they are bounded by an idle
+ * deadline rather than counted against that budget. Fixture disposal then seals
+ * producers and its cleanup still owns the join.
  */
 export async function settleFiles(
   editor: { join(): Promise<void>; settleContext?(): Promise<void> },
@@ -41,14 +44,27 @@ export async function settleFiles(
   const pending = editor.join().then(() => {
     joined = true;
   });
-  for (let round = 0; round < 2000 && !joined; round++) {
-    timer.deliver();
+  let deliveries = 0;
+  let idleSince = Date.now();
+  let failure = "";
+  while (!joined) {
+    if (timer.deliver() > 0) {
+      idleSince = Date.now();
+      if (++deliveries > 2000) {
+        failure = "background file work kept re-queueing timers";
+        break;
+      }
+    }
     await editor.settleContext?.();
     await turn();
+    if (!joined && Date.now() - idleSince > 10_000) {
+      failure = "background file work did not become quiescent within 10s";
+      break;
+    }
   }
-  if (!joined) {
+  if (failure) {
     pending.catch(() => undefined);
-    assert.fail("background file work did not become quiescent");
+    assert.fail(failure);
   }
   await pending;
 }
