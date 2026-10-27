@@ -295,6 +295,24 @@ export class Dependencies {
       state.sources.get(source)!.revision = revision;
     return affected;
   }
+  // Whether this folder's dependency graph observes a root-relative path
+  // through a recorded file or a watched directory.
+  tracks(folder: string, file: string): boolean {
+    const state = this.states.get(folder);
+    if (!state) return false;
+    const candidates = new Set(state.files.get(file));
+    for (const [directory, sources] of state.directories)
+      if (
+        observesDirectory(
+          { path: directory, state: "directory", members: [] },
+          file,
+        )
+      )
+        for (const source of sources) candidates.add(source);
+    return [...candidates].some((source) =>
+      observes(state.sources.get(source)!.record, file),
+    );
+  }
   private withdraw(state: State, event: DependencyEvent | undefined): void {
     if (!event) return;
     const index = state.events.indexOf(event);

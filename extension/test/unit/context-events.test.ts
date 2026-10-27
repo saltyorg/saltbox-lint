@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { ContextFileSystem } from "../../src/editor.ts";
 import type { ProcessRequest } from "../../src/process.ts";
@@ -16,7 +16,8 @@ import { fileClock, settleFiles } from "../support/file-clock.ts";
 // Context events reach the editor through its public save and watcher entry
 // points. Each instance owns its scripted backend, timers and context reader.
 // The source analysis reads the target declaration, so the source result
-// depends on the target file.
+// depends on a file below roles/target, which the nested cases also open as
+// its own workspace folder.
 async function wire(
   request: ProcessRequest,
   f: NavigationFixture,
@@ -96,6 +97,14 @@ const checks = (
         request.args.includes(relative(root, filename).replaceAll("\\", "/"))),
   ).length;
 
+/** Writes the open target buffer to disk and delivers the editor's save. */
+async function save(f: NavigationFixture, text: string): Promise<void> {
+  f.targetDocument.edit(text);
+  await writeFile(f.target, text);
+  f.targetDocument.isDirty = false;
+  f.editor.saved(f.targetDocument.asDocument());
+}
+
 /** A context reader whose reads of one file can be held by the test. */
 function heldReads(filename: () => string) {
   const holds: {
@@ -129,6 +138,137 @@ function heldReads(filename: () => string) {
     },
   };
 }
+
+for (const marked of [false, true]) {
+  test(
+    `a ${marked ? "marked" : "unmarked"} nested workspace folder still invalidates the enclosing root's dependency results`,
+    { timeout: 30000 },
+    async () => {
+      const timer = fileClock();
+      const requests: ProcessRequest[] = [];
+      let fixture!: NavigationFixture;
+      await withNavigationFixture(
+        {
+          schedule: timer.schedule,
+          runProcess: async (request) => {
+            requests.push(request);
+            return wire(request, fixture);
+          },
+        },
+        async (f) => {
+          fixture = f;
+          const nested = join(f.root, "roles", "target");
+          if (marked) await writeFile(join(nested, ".saltbox-lint"), "");
+          f.setWorkspaceFolders([f.root, nested]);
+          await f.editor.ready();
+          await settleFiles(f.editor, timer);
+          const source = f.document.asDocument();
+          await f.editor.check(source, true);
+          await settleFiles(f.editor, timer);
+          assert.equal(f.editor.status(source).state, "current");
+          const sourceBefore = checks(requests, f.root, f.source);
+          const ownerBefore = checks(requests, nested, f.target);
+          const parentTargetBefore = checks(requests, f.root, f.target);
+          await save(f, "target_role_port: 43\n");
+          await f.editor.settleContext();
+          assert.equal(
+            f.editor.status(source).state,
+            "stale",
+            "the enclosing root's result depends on the nested file",
+          );
+          await settleFiles(f.editor, timer);
+          assert.equal(
+            checks(requests, f.root, f.source),
+            sourceBefore + 1,
+            "the enclosing root rechecks its dependent source once",
+          );
+          assert.equal(f.editor.status(source).state, "current");
+          assert.equal(
+            checks(requests, f.root, f.target),
+            parentTargetBefore,
+            "the enclosing root never checks a file owned by the nested folder",
+          );
+          assert.equal(
+            checks(requests, nested, f.target),
+            ownerBefore + (marked ? 1 : 0),
+            "only a marked owner checks its own saved file, exactly once",
+          );
+          // A watcher echo of the same bytes reaches both roots and coalesces.
+          const settled = requests.length;
+          f.editor.removeFile(f.targetDocument.uri);
+          await f.editor.settleContext();
+          await settleFiles(f.editor, timer);
+          assert.equal(requests.length, settled, "echoes must coalesce");
+          assert.equal(f.editor.status(source).state, "current");
+        },
+        operations,
+      );
+    },
+  );
+}
+
+test(
+  "an enclosing root dependency event leaves a marked nested owner's peer alone",
+  { timeout: 30000 },
+  async () => {
+    const timer = fileClock();
+    const requests: ProcessRequest[] = [];
+    let fixture!: NavigationFixture;
+    let peer!: string;
+    await withNavigationFixture(
+      {
+        schedule: timer.schedule,
+        runProcess: async (request) => {
+          requests.push(request);
+          return wire(request, fixture, peer);
+        },
+      },
+      async (f) => {
+        fixture = f;
+        const nested = join(f.root, "roles", "target");
+        // A closed peer owned by the nested root. Only the enclosing root's
+        // analysis of the peer reads the target declaration.
+        peer = join(nested, "tasks", "main.yml");
+        await mkdir(join(peer, ".."), { recursive: true });
+        await writeFile(peer, "- debug: {}\n");
+        await writeFile(join(nested, ".saltbox-lint"), "");
+        f.setWorkspaceFolders([f.root, nested]);
+        await f.editor.ready();
+        await settleFiles(f.editor, timer);
+        await f.editor.check(f.document.asDocument(), true);
+        await f.editor.checkWorkspace();
+        await settleFiles(f.editor, timer);
+        assert.ok(
+          requests.some(
+            (request) =>
+              request.args[request.args.indexOf("--root") + 1] === f.root &&
+              request.args.at(-1) === ".",
+          ),
+          "the enclosing root's coverage records the nested peer",
+        );
+        const peerChecks = () =>
+          checks(requests, nested, peer) + checks(requests, f.root, peer);
+        const before = {
+          source: checks(requests, f.root, f.source),
+          owner: checks(requests, nested, f.target),
+          peer: peerChecks(),
+        };
+        await save(f, "target_role_port: 43\n");
+        await f.editor.settleContext();
+        await settleFiles(f.editor, timer);
+        assert.equal(checks(requests, f.root, f.source), before.source + 1);
+        assert.equal(checks(requests, nested, f.target), before.owner + 1);
+        assert.equal(
+          peerChecks(),
+          before.peer,
+          "the nested owner's peer is not re-queued by the enclosing root",
+        );
+        assert.equal(f.editor.status(f.document.asDocument()).state, "current");
+      },
+      operations,
+    );
+  },
+);
 
 test(
   "rapid context events complete in order and the last observation wins",

@@ -430,3 +430,16 @@ test("a pending event survives graph replacement", () => {
     "the completed event applies to the replacement graph",
   );
 });
+
+test("tracks reports only paths observed by a folder's accepted analysis", () => {
+  const a = source("a");
+  const graph = new Dependencies();
+  graph.accept("one", report(a), graph.begin(), true);
+  assert.equal(graph.tracks("one", "roles/a/tasks/main.yml"), true);
+  assert.equal(graph.tracks("one", "roles/a/templates/missing.conf"), true);
+  assert.equal(graph.tracks("one", "roles/a/templates/new.conf"), true);
+  assert.equal(graph.tracks("one", "roles/b/tasks/main.yml"), false);
+  assert.equal(graph.tracks("two", "roles/a/tasks/main.yml"), false);
+  graph.remove("one", a.path);
+  assert.equal(graph.tracks("one", "roles/a/tasks/main.yml"), false);
+});

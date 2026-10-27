@@ -126,6 +126,7 @@ interface ContextTarget {
   relative: string;
   known?: SourceOwner;
   kind: "read" | "metadata" | undefined;
+  dependent: boolean;
 }
 interface Snapshot extends Identity {
   logical?: LogicalSource;
@@ -2131,10 +2132,37 @@ export class EditorIntegration implements vscode.Disposable {
   settleContext(): Promise<void> {
     return this.contextQueue ?? Promise.resolve();
   }
+  // The most specific active root that contains a file owns its event, even
+  // when the innermost workspace folder is unmarked. Other active roots are
+  // notified only when their recorded analysis observes the path, and only
+  // for the sources they own; the owner's own requests are left in place.
   private contextTargets(uri: vscode.Uri): ContextTarget[] {
     const owner = this.roots.folder(uri);
-    const target = owner && this.contextTarget(owner, uri);
-    return target ? [target] : [];
+    if (!owner) return [];
+    const ownerKey = owner.uri.toString();
+    // An unmarked folder's own addition or removal is a root refresh, not a
+    // file event for an enclosing root.
+    if (!this.roots.get(ownerKey) && uri.toString() === ownerKey) return [];
+    const candidates: ContextTarget[] = [];
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      const target = this.contextTarget(folder, uri);
+      if (target) candidates.push(target);
+    }
+    const primary = this.roots.get(ownerKey)
+      ? (candidates.find((target) => target.key === ownerKey) ??
+        this.contextTarget(owner, uri))
+      : candidates.sort((a, b) => b.root.length - a.root.length)[0];
+    if (!primary) return [];
+    return [
+      primary,
+      ...candidates
+        .filter(
+          (target) =>
+            target.key !== primary.key &&
+            this.dependencies.tracks(target.key, target.relative),
+        )
+        .map((target) => ({ ...target, dependent: true })),
+    ];
   }
   private contextTarget(
     folder: vscode.WorkspaceFolder,
@@ -2178,6 +2206,7 @@ export class EditorIntegration implements vscode.Disposable {
       relative,
       known: known?.root === root ? known : undefined,
       kind: this.dependencies.observationKind(key, relative),
+      dependent: false,
     };
   }
   private async contextFingerprint(
@@ -2239,9 +2268,13 @@ export class EditorIntegration implements vscode.Disposable {
   }
   private applyContextEvent(
     uri: vscode.Uri,
-    { folder, key, root, relative }: ContextTarget,
+    { folder, key, root, relative, dependent }: ContextTarget,
     affected: ReadonlySet<string>,
   ): void {
+    // A dependent root's graph holds only sources it owns, since saved scans
+    // skip files owned by other folders. It refreshes those sources and its
+    // discovery, but the changed file and startup coverage stay with the owner.
+    if (dependent && !affected.size) return;
     this.revokeQueries();
     this.updateStatus();
     const discoveryControl =
@@ -2290,6 +2323,8 @@ export class EditorIntegration implements vscode.Disposable {
       this.queueCoverage(folder);
       return;
     }
+    // The changed file itself and startup coverage belong to its owner.
+    if (dependent) return;
     if (
       (/\.ya?ml$/i.test(uri.path) &&
         !templatePath(uri.path) &&

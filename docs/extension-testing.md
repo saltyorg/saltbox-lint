@@ -742,6 +742,14 @@ batches wait for admitted observations, so watcher echoes still coalesce
 without retries. Source revisions change only when completion confirms a
 change. `EditorIntegration.settleContext()` acknowledges admitted observations;
 `join()` also owns them and any work they queue.
-[`context-events.test.ts`](../extension/test/unit/context-events.test.ts)
-covers ordering, pending rejection, disposal joining and an unavailable
-observation through the real editor constructor.
+
+Saved Go analysis does not stop at a nested `.saltbox-lint` marker, so an
+enclosing root can depend on a nested workspace folder's files. The innermost
+workspace folder owns a context event when it has an active root; an unmarked
+nested folder defers to the most specific enclosing active root. Every other
+active root is notified only when its accepted analysis observes the path. Such
+a dependent root refreshes only its own affected sources and discovery; the
+changed file, startup coverage and overlapping watcher echoes remain with the
+owner. [`context-events.test.ts`](../extension/test/unit/context-events.test.ts)
+covers nested routing, ordering, pending rejection, disposal joining and an
+unavailable observation through the real editor constructor.
