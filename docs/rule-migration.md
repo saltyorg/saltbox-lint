@@ -41,7 +41,8 @@ Action does not accept arbitrary CLI flags or apply fixes.
 
 JSON and concise findings use source-root-relative identities, such as
 `roles/example/tasks/main.yml`. GitHub annotations instead resolve source files
-relative to `GITHUB_WORKSPACE` when that variable is set. For a Sandbox checkout
+relative to `GITHUB_WORKSPACE` when that variable is set, resolving symbolic links
+in both the workspace and the source root. For a Sandbox checkout
 under `$GITHUB_WORKSPACE/sandbox`, the annotation path is
 `sandbox/roles/example/tasks/main.yml`. Without `GITHUB_WORKSPACE`, annotations
 use the source-root-relative identity.

@@ -886,6 +886,13 @@ func ResolveSourceIdentity(root, filename string) (SourceIdentity, error) {
 	return resolveSourceIdentity(root, filename, "")
 }
 
+// ResolvePath resolves symbolic links (and Windows directory junctions) in an
+// existing path the same way Load resolves Project.Root, so callers can
+// relate other directory spellings to the canonical root.
+func ResolvePath(path string) (string, error) {
+	return resolveSourcePath(path)
+}
+
 func resolveSourceIdentity(root, filename, sourceFilename string) (SourceIdentity, error) {
 	resolvedRoot, err := sourceRoot(Options{Root: root, StdinFilename: filename})
 	if err != nil {

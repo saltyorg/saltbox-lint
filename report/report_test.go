@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -77,6 +79,38 @@ func TestGitHubEscapesPathsMessagesAndSummary(t *testing.T) {
 	}
 	if strings.Contains(summary.String(), "<script>") || strings.Contains(summary.String(), "[link](x)") || !strings.Contains(summary.String(), "https://github.example/org/repo/blob/abc123/a%25%2C:%0D%0A%F0%9F%98%80.yml#L1") {
 		t.Fatal(summary.String())
+	}
+}
+
+func TestGitHubResolvesSymlinkedWorkspace(t *testing.T) {
+	parent := t.TempDir()
+	real := filepath.Join(parent, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(parent, "ws")
+	if err := os.Symlink(real, workspace); err != nil {
+		t.Skipf("directory symlinks unavailable: %v", err)
+	}
+	root, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ds := sample()
+	path := "roles/demo/defaults/main.yml"
+	p.Root = root
+	p.Sources = map[string]*lint.Source{path: p.Sources["a.yml"]}
+	ds[0].Path, ds[0].Related[0].Path = path, path
+	var out, summary bytes.Buffer
+	err = Render(&out, p, ds, Options{Format: "github", Summary: &summary, GitHub: GitHub{Workspace: workspace, RepositoryRoot: workspace, Repository: "org/repo", Commit: "abc123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "file="+path+",") || !strings.Contains(out.String(), "Related: "+path+":2:1") || strings.Contains(out.String(), "..") {
+		t.Fatalf("annotation paths are not workspace-relative: %s", &out)
+	}
+	if !strings.Contains(summary.String(), "https://github.com/org/repo/blob/abc123/"+path+"#L1") {
+		t.Fatalf("summary link is not repository-relative: %s", &summary)
 	}
 }
 

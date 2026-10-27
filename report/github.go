@@ -18,6 +18,7 @@ type GitHub struct{ Workspace, RepositoryRoot, Repository, Commit, ServerURL str
 
 func githubReport(w io.Writer, p *lint.Project, ds []Diagnostic, opts Options) error {
 	var b strings.Builder
+	workspace := resolvedDirectory(opts.GitHub.Workspace)
 	for _, d := range ds {
 		end := d.Range.Start
 		if d.Span.End > d.Span.Start {
@@ -36,13 +37,13 @@ func githubReport(w io.Writer, p *lint.Project, ds []Diagnostic, opts Options) e
 		if d.Severity == "notice" || d.Severity == "info" {
 			level = "notice"
 		}
-		path := relativeSource(opts.GitHub.Workspace, p.Root, d.Path)
+		path := relativeSource(workspace, p.Root, d.Path)
 		message := d.Message
 		if d.Expected != "" {
 			message += "\nExpected: " + d.Expected
 		}
 		for _, r := range d.Related {
-			message += fmt.Sprintf("\nRelated: %s:%d:%d: %s", relativeSource(opts.GitHub.Workspace, p.Root, r.Path), r.Range.Start.Line, r.Range.Start.Column, r.Message)
+			message += fmt.Sprintf("\nRelated: %s:%d:%d: %s", relativeSource(workspace, p.Root, r.Path), r.Range.Start.Line, r.Range.Start.Column, r.Message)
 		}
 		location := fmt.Sprintf("line=%d,endLine=%d", d.Range.Start.Line, end.Line)
 		// The runner accepts columns only for a single-line annotation.
@@ -65,6 +66,21 @@ func commandData(s string) string {
 func property(s string) string {
 	return strings.NewReplacer(",", "%2C", ":", "%3A").Replace(commandData(s))
 }
+
+// resolvedDirectory spells a workspace or repository directory the same way
+// Load resolves Project.Root, so a symlinked spelling such as
+// GITHUB_WORKSPACE=/ws with /ws -> /real still yields workspace-relative
+// paths. A directory that cannot be resolved keeps its original spelling.
+func resolvedDirectory(path string) string {
+	if path == "" {
+		return ""
+	}
+	if resolved, err := lint.ResolvePath(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
 func relativeSource(base, root, path string) string {
 	if base == "" {
 		return path
@@ -130,7 +146,7 @@ func sourceLink(p *lint.Project, d Diagnostic, gh GitHub) string {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return ""
 	}
-	root := gh.RepositoryRoot
+	root := resolvedDirectory(gh.RepositoryRoot)
 	if root == "" {
 		root = p.Root
 	}
