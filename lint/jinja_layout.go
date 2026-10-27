@@ -107,9 +107,21 @@ func pureBlock(s *Source, e Expression) (bool, int) {
 	for start+indent < len(s.Data) && s.Data[start+indent] == ' ' {
 		indent++
 	}
-	// A sequence marker contributes to the mapping's indentation.
-	if bytes.HasPrefix(s.Data[start+indent:], []byte("- ")) {
-		indent += 2
+	// Compact sequence markers place a mapping key at the column after them,
+	// but a block scalar that is itself the entry is indented from its marker.
+	pos, marker := start+indent, -1
+	for pos+1 < n.Span.Start && s.Data[pos] == '-' && (s.Data[pos+1] == ' ' || s.Data[pos+1] == '\t') {
+		marker = pos - start
+		pos++
+		for pos < n.Span.Start && (s.Data[pos] == ' ' || s.Data[pos] == '\t') {
+			pos++
+		}
+	}
+	if marker >= 0 {
+		indent = pos - start
+		if !bytes.ContainsRune(s.Data[pos:n.Span.Start], ':') {
+			indent = marker
+		}
 	}
 	increment := 2
 	headerEnd := bytes.IndexByte(s.Data[n.Span.Start:n.Span.End], '\n')
