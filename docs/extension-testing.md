@@ -103,6 +103,18 @@ through their authenticated live channels, then verify group disappearance.
 Numeric PID or group records never authorize a later signal. Windows retains
 its native Job ownership.
 
+Every production CLI spawn also receives an owner lifetime pipe at descriptor 3
+with `SALTBOX_LINT_EDITOR_LIFETIME=3`. The extension never writes or ends its
+side; the pipe reaches EOF only when the host exits, including a crash that
+skips deactivation and timeouts. The CLI then kills the POSIX group it leads, or
+exits with status 3 so its kill-on-close Job ends Windows descendants. Ordinary
+completion and cancellation still join the child, and Node's `close` event
+includes the lifetime pipe. Node passes descriptor 3 to Windows children through
+the CRT table in `STARTUPINFOW.lpReserved2`, as in libuv
+[v1.52.1](https://github.com/libuv/libuv/blob/v1.52.1/src/win/process-stdio.c)
+bundled with Node 24.20.0; the CLI reads that table because Go does not. The
+CLI marks the descriptor close-on-exec or non-inheritable so Git never holds it.
+
 The POSIX command owner also keeps its detached worker in a group led by a
 Node guardian. The guardian installs its parent-lifetime handlers before
 acknowledging readiness, admits the payload only on the live IPC channel and
@@ -573,7 +585,8 @@ stdout/stderr files; successful installs remove their temporary evidence.
 
 | Tests or adapters | Behavior and retained platform boundary | Cleanup and failure requirements |
 | --- | --- | --- |
-| [`process.test.ts`](../extension/test/unit/process.test.ts), [`process-failure.test.ts`](../extension/test/unit/process-failure.test.ts), [`process.ts`](../extension/src/process.ts) | CLI stdin/EOF, raw bytes and argv, limits, cancellation and early/nonzero exit on each native target | Observe real pipe closure and owned process absence. Test before/after readiness and retained descendant pipes; injected spawn failure must retain original error identity. |
+| [`process.test.ts`](../extension/test/unit/process.test.ts), [`process-failure.test.ts`](../extension/test/unit/process-failure.test.ts), [`process-lifetime.test.ts`](../extension/test/unit/process-lifetime.test.ts), [`process.ts`](../extension/src/process.ts) | CLI stdin/EOF, raw bytes and argv, limits, cancellation, early/nonzero exit and the owner lifetime pipe on each native target | Observe real pipe closure and owned process absence. Test before/after readiness and retained descendant pipes; injected spawn failure must retain original error identity. The lifetime end stays open until the joined child closes, and a killed host closes it. |
+| [`editor_lifetime_test.go`](../editor_lifetime_test.go), [`internal/editorprocess`](../internal/editorprocess) | Real CLI entry point with an inherited lifetime pipe: unchanged normal completion, and a hung Git descendant stopped after owner loss | The fake Git reports over loopback and ends when the test closes that connection. POSIX observes group SIGKILL; Windows starts the CLI with libuv's CRT table and observes the distinct status plus Job teardown. |
 | [`release-liveness.test.mjs`](../extension/test/release-liveness.test.mjs), [`owned-command.mjs`](../extension/scripts/owned-command.mjs), [`owned-group.mjs`](../extension/scripts/owned-group.mjs) | POSIX groups, live threads/zombies and Windows kill-on-close jobs; owned output, builder deadlines and descendant pipes | Preserve denied cleanup with ordinary/nonzero/overflow/deadline failures. Unknown group or credential observations fail conservatively. POSIX thread tests require native `cc`; do not infer Windows ownership from these probes. |
 | [`process-gate.test.mjs`](../extension/test/process-gate.test.mjs), [`process_fixture.go`](../extension/test/testdata/process_fixture.go) | Exact selected chunk, nonce-bound gate publication, existing readiness and fixed/redacted stage diagnostics | Fresh per-control gates; writers finish before reuse/removal. Before-stdin failures use ignored input so their intended exit cannot race a parent writer; later stages retain the private input payload. Missing executables and failed readiness must report exact fixed stages. |
 | [`editor-acceptance.test.mjs`](../extension/test/editor-acceptance.test.mjs), [`editor-acceptance.ts`](../extension/test/host/editor-acceptance.ts), [`host-inputs.mjs`](../extension/scripts/host-inputs.mjs) | Requested/actual SDK identity, exact native profile forwarding and dispatch, launch arguments and independent live profile failure | Replace source-controller extraction with imported dispatch/configuration modules. Preserve failure propagation for every profile. Add installed path/version/backend/profile mismatch controls. |
