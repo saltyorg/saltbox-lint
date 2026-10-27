@@ -80,9 +80,12 @@ test("the owner lifetime pipe stays open until the joined child closes", async (
       ...base,
       // A request environment cannot redirect the lifetime descriptor.
       env: { [processLifetimeEnvironment]: "4" },
+      // POSIX fstat identifies the pipe. Windows fstat does not classify pipe
+      // handles, so there the proof is net.Socket({fd}), which throws
+      // ERR_INVALID_FD_TYPE unless Node's handle probe reports a pipe or TCP.
       args: [
         "-e",
-        'const fs=require("node:fs");const kind=fs.fstatSync(3);const lifetime=new (require("node:net").Socket)({fd:3,readable:true,writable:false});let ended=false;lifetime.on("end",()=>{ended=true});lifetime.resume();process.once("message",()=>{lifetime.unref();process.stdout.write(JSON.stringify({env:process.env.SALTBOX_LINT_EDITOR_LIFETIME,pipe:kind.isFIFO()||kind.isSocket(),ended}),()=>process.disconnect());});process.send("ready");',
+        'const fs=require("node:fs");const kind=fs.fstatSync(3);const lifetime=new (require("node:net").Socket)({fd:3,readable:true,writable:false});const pipe=process.platform==="win32"||kind.isFIFO()||kind.isSocket();let ended=false;lifetime.on("end",()=>{ended=true});lifetime.resume();process.once("message",()=>{lifetime.unref();process.stdout.write(JSON.stringify({env:process.env.SALTBOX_LINT_EDITOR_LIFETIME,pipe,ended}),()=>process.disconnect());});process.send("ready");',
       ],
     },
     new AbortController().signal,
