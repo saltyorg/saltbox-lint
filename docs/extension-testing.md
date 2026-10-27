@@ -732,3 +732,16 @@ result and verifies that a late native echo leaves it current. The dependency
 profile records the latest 128 watcher deliveries on failure, including the
 subscription base, pattern, event kind and delivered URI. Those observations
 leave production callbacks and the existing delivery barriers in place.
+
+Context events from saves, watchers and analysis observations fence affected
+results synchronously, then observe the file with Node's
+[`fs/promises`](https://nodejs.org/download/release/v24.20.0/docs/api/fs.html#promises-api)
+off the extension host thread. One FIFO preserves event order. A pending event
+rejects dependency results requested before it; check acceptance and file
+batches wait for admitted observations, so watcher echoes still coalesce
+without retries. Source revisions change only when completion confirms a
+change. `EditorIntegration.settleContext()` acknowledges admitted observations;
+`join()` also owns them and any work they queue.
+[`context-events.test.ts`](../extension/test/unit/context-events.test.ts)
+covers ordering, pending rejection, disposal joining and an unavailable
+observation through the real editor constructor.

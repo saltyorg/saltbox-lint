@@ -28,11 +28,13 @@ const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /**
  * Deliver admitted timers until the editor's public join observes quiescence.
+ * Each round also awaits the editor's public context barrier, so asynchronous
+ * context observations complete rather than consuming the round budget.
  * A producer that keeps re-queueing work fails instead of hanging; fixture
  * disposal then seals producers and its cleanup still owns that join.
  */
 export async function settleFiles(
-  editor: { join(): Promise<void> },
+  editor: { join(): Promise<void>; settleContext?(): Promise<void> },
   timer: FileClock,
 ): Promise<void> {
   let joined = false;
@@ -41,6 +43,7 @@ export async function settleFiles(
   });
   for (let round = 0; round < 2000 && !joined; round++) {
     timer.deliver();
+    await editor.settleContext?.();
     await turn();
   }
   if (!joined) {

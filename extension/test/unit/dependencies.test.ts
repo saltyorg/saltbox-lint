@@ -366,3 +366,67 @@ test("logical admission revisions revoke old selected batches and ignore unchang
   graph.event("one", "/project", "roles/a/templates/changed", "bytes");
   assert.equal(graph.admissionRevision("one"), current);
 });
+
+test("a reserved event fences earlier results until completion and an echo withdraws it", () => {
+  const a = source("a");
+  const file = "roles/a/tasks/main.yml";
+  const graph = new Dependencies();
+  assert.equal(graph.accept("one", report(a), graph.begin(), true), true);
+  graph.event("one", "/project", file, "first");
+  const revision = graph.revision("one", a.path);
+  const earlier = graph.begin();
+  const observed = (fingerprint: string) => new Map([[file, fingerprint]]);
+  const fence = graph.reserve("one", "/project", file);
+  assert.equal(graph.begin(), earlier, "a pending event issues no token");
+  assert.equal(graph.revision("one", a.path), revision);
+  assert.equal(
+    graph.accept("one", report(a), earlier, false, [], observed("first")),
+    false,
+    "an earlier result cannot be accepted while its observation is pending",
+  );
+  assert.equal(graph.complete(fence, "first"), undefined, "echo");
+  assert.equal(graph.begin(), earlier);
+  assert.equal(graph.revision("one", a.path), revision);
+  assert.equal(
+    graph.accept("one", report(a), earlier, false, [], observed("first")),
+    true,
+    "a withdrawn echo leaves the earlier result acceptable",
+  );
+  const changed = graph.reserve("one", "/project", file);
+  const during = graph.begin();
+  assert.deepEqual(graph.complete(changed, "second"), new Set([a.path]));
+  assert.ok(graph.begin() > during);
+  assert.ok(graph.revision("one", a.path) > revision);
+  assert.equal(
+    graph.accept("one", report(a), during, false, [], observed("first")),
+    false,
+    "a result requested while pending that saw old bytes is rejected",
+  );
+  assert.equal(
+    graph.accept("one", report(a), during, false, [], observed("second")),
+    true,
+    "a result requested while pending that saw new bytes is accepted",
+  );
+  const before = graph.begin();
+  graph.release(graph.reserve("one", "/project", file));
+  assert.equal(
+    graph.accept("one", report(a), before, false, [], observed("second")),
+    true,
+    "a released fence no longer rejects results",
+  );
+});
+
+test("a pending event survives graph replacement", () => {
+  const a = source("a");
+  const graph = new Dependencies();
+  graph.accept("one", report(a), graph.begin(), true);
+  const token = graph.begin();
+  const fence = graph.reserve("one", "/project", "roles/a/tasks/main.yml");
+  graph.remove("one");
+  assert.deepEqual(graph.complete(fence, "changed"), new Set());
+  assert.equal(
+    graph.accept("one", report(a), token, true),
+    false,
+    "the completed event applies to the replacement graph",
+  );
+});

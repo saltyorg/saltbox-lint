@@ -11,10 +11,26 @@ interface State {
   sources: Map<string, Entry>;
   files: Map<string, Set<string>>;
   directories: Map<string, Set<string>>;
-  events: { revision: number; path: string; fingerprint?: string }[];
+  events: DependencyEvent[];
   floor: number;
   admission: number;
   fingerprints: Map<string, string>;
+}
+interface DependencyEvent {
+  revision: number;
+  path: string;
+  fingerprint?: string;
+}
+// A reserved watcher event. Callers hold it opaquely between reserve() and
+// complete() or release().
+export interface DependencyFence {
+  readonly folder: string;
+  readonly root: string;
+  readonly file: string;
+}
+interface Fence extends DependencyFence {
+  readonly state: State;
+  event?: DependencyEvent;
 }
 const contains = (directory: string, file: string) =>
   file === directory || file.startsWith(`${directory}/`);
@@ -167,6 +183,14 @@ export class Dependencies {
     file: string,
     fingerprint?: string,
   ): Set<string> | undefined {
+    return this.complete(this.reserve(folder, root, file), fingerprint);
+  }
+  // A watcher event is fenced synchronously, before its fingerprint is known.
+  // The pending event has no fingerprint, so acceptance rejects every result
+  // that observes the path and was requested before the event. Source
+  // revisions, the global token and admission change only when completion
+  // confirms a change; an echo completion withdraws the fence instead.
+  reserve(folder: string, root: string, file: string): DependencyFence {
     let state = this.states.get(folder);
     if (!state) {
       state = {
@@ -181,7 +205,40 @@ export class Dependencies {
       };
       this.states.set(folder, state);
     }
-    if (state.root !== root) return new Set();
+    const fence: Fence = { folder, root, file, state };
+    if (state.root !== root) return fence;
+    // Later than every token already issued. Tokens issued while pending are
+    // compared by fingerprint once the event completes.
+    fence.event = { revision: this.next + 0.5, path: file };
+    state.events.push(fence.event);
+    this.trim(state);
+    return fence;
+  }
+  // Releases a fence whose completion no longer applies.
+  release(handle: DependencyFence): void {
+    const fence = handle as Fence;
+    this.withdraw(fence.state, fence.event);
+    fence.event = undefined;
+  }
+  complete(
+    handle: DependencyFence,
+    fingerprint?: string,
+  ): Set<string> | undefined {
+    const fence = handle as Fence;
+    const { file, state } = fence;
+    const reserved = fence.event;
+    fence.event = undefined;
+    if (this.states.get(fence.folder) !== state) {
+      // The folder's graph was removed or replaced while pending. Apply the
+      // event to the current graph, as an unfenced event would have done.
+      this.withdraw(state, reserved);
+      if (!reserved) return new Set();
+      return this.complete(
+        this.reserve(fence.folder, fence.root, file),
+        fingerprint,
+      );
+    }
+    if (!reserved) return new Set();
     const candidates = new Set(state.files.get(file));
     for (const [directory, sources] of state.directories)
       if (
@@ -215,7 +272,10 @@ export class Dependencies {
     }
     const echo =
       fingerprint !== undefined && state.fingerprints.get(file) === fingerprint;
-    if (echo && !affected.size) return;
+    if (echo && !affected.size) {
+      this.withdraw(state, reserved);
+      return;
+    }
     if (fingerprint !== undefined) {
       state.fingerprints.set(file, fingerprint);
       if (state.fingerprints.size > 4096)
@@ -228,12 +288,21 @@ export class Dependencies {
       file === ".git/info/exclude"
     )
       state.admission = revision;
-    state.events.push({ revision, path: file, fingerprint });
-    if (state.events.length > 4096)
-      state.floor = state.events.shift()!.revision;
+    // A trimmed reservation already raised the floor above older tokens.
+    reserved.revision = revision;
+    reserved.fingerprint = fingerprint;
     for (const source of affected)
       state.sources.get(source)!.revision = revision;
     return affected;
+  }
+  private withdraw(state: State, event: DependencyEvent | undefined): void {
+    if (!event) return;
+    const index = state.events.indexOf(event);
+    if (index >= 0) state.events.splice(index, 1);
+  }
+  private trim(state: State): void {
+    if (state.events.length > 4096)
+      state.floor = state.events.shift()!.revision;
   }
   remove(folder: string, source?: string): void {
     if (source === undefined) {

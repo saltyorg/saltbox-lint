@@ -205,6 +205,7 @@ for (const phase of ["saved rendering", "source synchronization"] as const) {
         await writeFile(f.target, "target_role_port: 43\n");
         armed = true;
         f.editor.removeFile(f.targetDocument.uri);
+        await f.editor.settleContext();
         assert.ok(timer.active() > 0);
         let joined = false;
         const pending = f.editor.join().then(() => {

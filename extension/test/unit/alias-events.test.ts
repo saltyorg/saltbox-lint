@@ -10,6 +10,7 @@ import {
   writeFile,
   symlink,
   rename,
+  readFile,
 } from "node:fs/promises";
 import { unlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -112,34 +113,33 @@ for (const mode of [
       const canceled: string[] = [];
       let queryRevocations = 0;
       let retargeted = false;
-      const originalRequire = createRequire(import.meta.url);
-      const require = (id: string): unknown => {
-        if (id !== "node:fs") return originalRequire(id) as unknown;
-        const fs = originalRequire(id) as typeof import("node:fs");
-        return {
-          ...fs,
-          readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
-            const bytes = Reflect.apply(fs.readFileSync, fs, args);
-            if (mode === "retargeted during read" && !retargeted) {
-              retargeted = true;
-              unlinkSync(alias);
-              symlinkSync(alternate, alias, "file");
-            }
-            return bytes;
-          },
-        };
+      // The instance's context reader retargets the alias after reading the
+      // canonical bytes, before the fingerprint's final identity checks.
+      const contextFiles = {
+        readFile: async (filename: string) => {
+          const bytes = await readFile(filename);
+          if (mode === "retargeted during read" && !retargeted) {
+            retargeted = true;
+            unlinkSync(alias);
+            symlinkSync(alternate, alias, "file");
+          }
+          return bytes;
+        },
       };
       const module = {
         exports: {} as {
           EditorIntegration: {
-            prototype: { removeFile: (uri: unknown) => void };
+            prototype: {
+              removeFile: (uri: unknown) => void;
+              settleContext: () => Promise<void>;
+            };
           };
         },
       };
       runInNewContext(bundled.outputFiles[0].text, {
         module,
         exports: module.exports,
-        require,
+        require: createRequire(import.meta.url),
         process,
         console,
         Buffer,
@@ -163,6 +163,7 @@ for (const mode of [
             [uri(alias).toString(), { root, filename, path: source }],
           ]),
           dependencies: graph,
+          adapters: { contextFiles },
           nextRevision: 0,
           revokeQueries() {
             queryRevocations++;
@@ -192,6 +193,7 @@ for (const mode of [
       if (mode === "changed canonical bytes")
         await writeFile(filename, "- debug: {}\n");
       editor.removeFile(uri(mode === "unchanged canonical" ? filename : alias));
+      await editor.settleContext();
       if (mode === "unchanged" || mode === "unchanged canonical") {
         assert.equal(
           graph.revision(folder.uri.toString(), source),

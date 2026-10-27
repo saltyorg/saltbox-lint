@@ -8,8 +8,8 @@ import { parseQuery, type QueryOperation } from "./navigation-protocol.ts";
 import { RuleHelp } from "./help.ts";
 import * as vscode from "vscode";
 import { isUtf8 } from "node:buffer";
-import { readFile, stat } from "node:fs/promises";
-import { lstatSync, statSync, readFileSync, realpathSync } from "node:fs";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { statSync, realpathSync, type BigIntStats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import {
@@ -103,6 +103,29 @@ export interface EditorAdapters {
     priority?: number,
   ) => vscode.StatusBarItem;
   showErrorMessage: (message: string) => PromiseLike<unknown>;
+  contextFiles: Partial<ContextFileSystem>;
+}
+// Asynchronous observations of a changed context file. realpath from
+// node:fs/promises resolves through the native implementation.
+export interface ContextFileSystem {
+  lstat(path: string, options: { bigint: true }): Promise<BigIntStats>;
+  stat(path: string, options: { bigint: true }): Promise<BigIntStats>;
+  realpath(path: string): Promise<string>;
+  readFile(path: string): Promise<Uint8Array>;
+}
+const contextFiles: ContextFileSystem = {
+  lstat: (path, options) => lstat(path, options),
+  stat: (path, options) => stat(path, options),
+  realpath: (path) => realpath(path),
+  readFile: (path) => readFile(path),
+};
+interface ContextTarget {
+  folder: vscode.WorkspaceFolder;
+  key: string;
+  root: string;
+  relative: string;
+  known?: SourceOwner;
+  kind: "read" | "metadata" | undefined;
 }
 interface Snapshot extends Identity {
   logical?: LogicalSource;
@@ -188,6 +211,7 @@ export class EditorIntegration implements vscode.Disposable {
   private readonly scanRevisions = new Map<string, number>();
   private fileTimer?: () => void;
   private backgroundWork?: Set<Promise<void>>;
+  private contextQueue?: Promise<void>;
   private producerWaiters?: Set<() => void>;
   private flushingFiles = false;
   private nextRevision = 0;
@@ -1208,6 +1232,9 @@ export class EditorIntegration implements vscode.Disposable {
         this.contextEvent(
           vscode.Uri.file(path.join(snapshot.root, ...file.split("/"))),
         );
+      // Results wait for admitted fingerprints instead of being accepted, or
+      // retried, against a pending fence.
+      if (this.contextQueue) await this.contextQueue;
       if (
         !current() ||
         !this.current(document, snapshot) ||
@@ -1437,6 +1464,9 @@ export class EditorIntegration implements vscode.Disposable {
       const observed = await observeAnalysis(acceptedAnalysis);
       for (const file of observed.changed)
         this.contextEvent(vscode.Uri.file(path.join(root, ...file.split("/"))));
+      // Results wait for admitted fingerprints instead of being accepted, or
+      // retried, against a pending fence.
+      if (this.contextQueue) await this.contextQueue;
       if (!current()) return;
       if (observed.changed.size) {
         retry(root);
@@ -2043,10 +2073,73 @@ export class EditorIntegration implements vscode.Disposable {
     if (this.eligible(document))
       this.queueFile(document.uri, true, document.version);
   }
+  // Watcher, save and observation events fence affected dependency results
+  // synchronously, then observe the file off the extension host thread. One
+  // FIFO preserves the original event order, including across files, so later
+  // completions cannot overtake an earlier discovery-control or atomic event.
   private contextEvent(uri: vscode.Uri): void {
     if (this.disposed || uri.scheme !== "file") return;
-    const folder = this.roots.folder(uri);
-    if (!folder) return;
+    const targets = this.contextTargets(uri);
+    if (!targets.length) return;
+    const fenced = targets.map((target) => ({
+      ...target,
+      fence: this.dependencies.reserve(
+        target.key,
+        target.root,
+        target.relative,
+      ),
+    }));
+    const work = (this.contextQueue ?? Promise.resolve()).then(async () => {
+      let next = 0;
+      try {
+        for (; next < fenced.length; next++) {
+          const target = fenced[next];
+          if (this.disposed || this.roots.get(target.key) !== target.root) {
+            this.dependencies.release(target.fence);
+            continue;
+          }
+          const fingerprint = await this.contextFingerprint(uri, target);
+          if (this.disposed || this.roots.get(target.key) !== target.root) {
+            this.dependencies.release(target.fence);
+            continue;
+          }
+          const affected = this.dependencies.complete(
+            target.fence,
+            fingerprint,
+          );
+          if (affected) this.applyContextEvent(uri, target, affected);
+        }
+      } finally {
+        for (; next < fenced.length; next++)
+          this.dependencies.release(fenced[next].fence);
+      }
+    });
+    // The tail never rejects; background() reports this event's failure.
+    const tail: Promise<void> = work
+      .catch(() => undefined)
+      .then(() => {
+        if (this.contextQueue === tail) this.contextQueue = undefined;
+      });
+    this.contextQueue = tail;
+    this.background(work);
+  }
+  /**
+   * Resolves after every context event admitted before the call has observed
+   * its file and applied its dependency invalidation. Follow-up checks queued
+   * by those events remain owned by join().
+   */
+  settleContext(): Promise<void> {
+    return this.contextQueue ?? Promise.resolve();
+  }
+  private contextTargets(uri: vscode.Uri): ContextTarget[] {
+    const owner = this.roots.folder(uri);
+    const target = owner && this.contextTarget(owner, uri);
+    return target ? [target] : [];
+  }
+  private contextTarget(
+    folder: vscode.WorkspaceFolder,
+    uri: vscode.Uri,
+  ): ContextTarget | undefined {
     const key = folder.uri.toString();
     const root = this.roots.get(key);
     if (!root) return;
@@ -2078,29 +2171,40 @@ export class EditorIntegration implements vscode.Disposable {
       path.isAbsolute(relative)
     )
       return;
-    let fingerprint: string;
+    return {
+      folder,
+      key,
+      root,
+      relative,
+      known: known?.root === root ? known : undefined,
+      kind: this.dependencies.observationKind(key, relative),
+    };
+  }
+  private async contextFingerprint(
+    uri: vscode.Uri,
+    { root, relative, known, kind }: ContextTarget,
+  ): Promise<string> {
+    const files = { ...contextFiles, ...this.adapters?.contextFiles };
     try {
       // Known aliases share the canonical dependency key and its observation.
       // A retargeted alias must still invalidate the old owner instead of
       // borrowing an unchanged fingerprint from its previous destination.
       const filename =
-        known?.root === root &&
-        realpathSync.native(uri.fsPath) === known.filename
+        known && (await files.realpath(uri.fsPath)) === known.filename
           ? known.filename
           : uri.fsPath;
-      const stat = lstatSync(filename, { bigint: true });
+      const stat = await files.lstat(filename, { bigint: true });
       const target = stat.isSymbolicLink()
-        ? statSync(filename, { bigint: true })
+        ? await files.stat(filename, { bigint: true })
         : undefined;
-      fingerprint = observationFingerprint(stat, target);
-      const kind = this.dependencies.observationKind(key, relative);
+      let fingerprint = observationFingerprint(stat, target);
       const marker = /^(saltbox|sandbox)\.ya?ml$/.test(relative);
       if (
         (target ?? stat).isFile() &&
         kind !== "metadata" &&
         (!marker || kind === "read")
       ) {
-        const actual = path.relative(root, realpathSync.native(uri.fsPath));
+        const actual = path.relative(root, await files.realpath(uri.fsPath));
         if (
           actual === ".." ||
           actual.startsWith(`..${path.sep}`) ||
@@ -2110,12 +2214,12 @@ export class EditorIntegration implements vscode.Disposable {
         else
           fingerprint = contentFingerprint(
             stat,
-            readFileSync(filename),
+            await files.readFile(filename),
             target,
           );
-        const after = lstatSync(filename, { bigint: true });
+        const after = await files.lstat(filename, { bigint: true });
         const afterTarget = after.isSymbolicLink()
-          ? statSync(filename, { bigint: true })
+          ? await files.stat(filename, { bigint: true })
           : undefined;
         if (
           observationFingerprint(stat, target) !==
@@ -2125,14 +2229,19 @@ export class EditorIntegration implements vscode.Disposable {
       }
       if (
         filename !== uri.fsPath &&
-        realpathSync.native(uri.fsPath) !== filename
+        (await files.realpath(uri.fsPath)) !== filename
       )
         fingerprint += `:unstable:${++this.nextRevision}`;
+      return fingerprint;
     } catch {
-      fingerprint = "unavailable";
+      return "unavailable";
     }
-    const affected = this.dependencies.event(key, root, relative, fingerprint);
-    if (!affected) return;
+  }
+  private applyContextEvent(
+    uri: vscode.Uri,
+    { folder, key, root, relative }: ContextTarget,
+    affected: ReadonlySet<string>,
+  ): void {
     this.revokeQueries();
     this.updateStatus();
     const discoveryControl =
@@ -2259,6 +2368,14 @@ export class EditorIntegration implements vscode.Disposable {
   private async flushFiles(): Promise<void> {
     if (this.disposed || this.flushingFiles) return;
     this.flushingFiles = true;
+    // A batch starts after admitted context events have queued their files
+    // and updated dependency revisions, as synchronous events did. The queue
+    // tail never rejects; failures are reported by the event's own work.
+    if (this.contextQueue) await this.contextQueue;
+    if (this.disposed) {
+      this.flushingFiles = false;
+      return;
+    }
     const pending = [...this.pendingFiles.values()];
     this.pendingFiles.clear();
     const affected = new Map<string, number>();

@@ -102,6 +102,7 @@ test("canonical template events queue the clean alias after a newer saved report
   const editor = Object.assign(
     Object.create(module.exports.EditorIntegration.prototype) as {
       contextEvent(uri: unknown): void;
+      settleContext(): Promise<void>;
     },
     {
       disposed: false,
@@ -191,6 +192,7 @@ test("canonical template events queue the clean alias after a newer saved report
       true,
     );
     editor.contextEvent(uri(templateFilename));
+    await editor.settleContext();
     assert.deepEqual(
       queued,
       [{ target: document.uri.toString(), force: true }],
@@ -200,6 +202,7 @@ test("canonical template events queue the clean alias after a newer saved report
       dependencies.revision(folder.uri.toString(), primary) > aliasRevision,
     );
     editor.contextEvent(uri(templateFilename));
+    await editor.settleContext();
     assert.equal(
       queued.length,
       1,
@@ -223,6 +226,7 @@ test("canonical template events queue the clean alias after a newer saved report
       primary,
     );
     editor.contextEvent(uri(templateFilename));
+    await editor.settleContext();
     assert.ok(
       dependencies.revision(folder.uri.toString(), primary) > beforeDirtyEvent,
     );

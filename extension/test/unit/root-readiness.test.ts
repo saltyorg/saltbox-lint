@@ -133,6 +133,7 @@ for (const workspaceAlias of [false, true]) {
           }
         };
         emitDeletion(fixtureUri(filename));
+        await f.editor.settleContext();
         assert.equal(
           f.editor.status(f.document.asDocument()).state,
           "stale",
@@ -141,6 +142,7 @@ for (const workspaceAlias of [false, true]) {
         await f.editor.check(f.document.asDocument(), true);
         assert.equal(f.editor.status(f.document.asDocument()).state, "current");
         emitDeletion(fixtureUri(join(paths.root, templatePath)));
+        await f.editor.settleContext();
         assert.equal(
           f.editor.status(f.document.asDocument()).state,
           "current",
