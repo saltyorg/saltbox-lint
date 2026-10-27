@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 var variableContextDirectories = []string{"roles", "resources/roles", "group_vars", "host_vars", "inventory", "inventories"}
@@ -18,7 +19,24 @@ func variableDeclarationSource(source *Source) bool {
 		return false
 	}
 	// Both the legacy root override and inventory host overrides belong to users.
-	return source.Path != "localhost.yml" && (source.Kind != Inventory || path.Base(source.Path) != "localhost.yml")
+	return source.Path != "localhost.yml" && (source.Kind != Inventory || !localhostInventoryOverride(source.Path))
+}
+
+// localhostInventoryOverride reports user-owned localhost inventory variables.
+// Ansible reads host_vars/localhost.yml and every file below host_vars/localhost/
+// as the same host's variables, so both forms are exempt equally (and likewise
+// for the group_vars forms, whose file form was already exempt).
+func localhostInventoryOverride(name string) bool {
+	if path.Base(name) == "localhost.yml" {
+		return true
+	}
+	parts := strings.Split(name, "/")
+	for i := 0; i+2 < len(parts); i++ {
+		if (parts[i] == "host_vars" || parts[i] == "group_vars") && parts[i+1] == "localhost" {
+			return true
+		}
+	}
+	return false
 }
 
 func variableDeclarationPath(name string) bool {

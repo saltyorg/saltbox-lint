@@ -910,7 +910,7 @@ example_role_traefik_enabled: false
 
 Declare variables once
 
-Variable names are unique across defaults, vars and inventory files, including declarations with identical values and repeated declarations in separate YAML documents. Task and handler variables, nested data keys, YAML merge directives and user localhost.yml overrides are excluded. Aliases and merge values are not expanded into declarations. Inventory group and host identities are not variables. Duplicate declarations carry related source locations and have no automatic fix.
+Variable names are unique across defaults, vars and inventory files, including declarations with identical values and repeated declarations in separate YAML documents. Task and handler variables, nested data keys, YAML merge directives and user localhost.yml and host_vars/localhost/ overrides are excluded. Aliases and merge values are not expanded into declarations. Inventory group and host identities are not variables. Duplicate declarations carry related source locations and have no automatic fix.
 
 Source kinds: defaults, inventory, vars. Scope: project variable declarations. Automatic fix: false.
 

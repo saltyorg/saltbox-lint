@@ -36,6 +36,9 @@ func TestVariableDuplicatesAcrossDeclarationSources(t *testing.T) {
 		"roles/other/defaults/main.yml", "resources/roles/other/defaults/extra.yml",
 		"roles/example/defaults/extra.yml", "roles/other/vars/main.yml", "vars.yml",
 		"group_vars/all.yml", "host_vars/remote.yml", "inventories/prod/group_vars/all.yml",
+		// Other hosts' directory forms remain ordinary declarations.
+		"host_vars/remote/main.yml", "inventories/prod/host_vars/remote/main.yml",
+		"host_vars/localhost-extra/main.yml", "host_vars/remote/localhost/main.yml",
 	} {
 		t.Run(context, func(t *testing.T) {
 			const primary = "roles/example/defaults/main.yml"
@@ -63,6 +66,12 @@ func TestVariableDuplicatesExcludeTasksAndLocalhostOverrides(t *testing.T) {
 		{"localhost.yml", "shared_value: override\n"},
 		{"inventories/host_vars/localhost.yml", "shared_value: override\n"},
 		{"host_vars/localhost.yml", "shared_value: override\n"},
+		{"host_vars/localhost/main.yml", "shared_value: override\n"},
+		{"host_vars/localhost/nested/extra.yaml", "shared_value: override\n"},
+		{"inventories/host_vars/localhost/main.yml", "shared_value: override\n"},
+		{"inventories/prod/host_vars/localhost/main.yml", "shared_value: override\n"},
+		{"inventories/prod/host_vars/localhost.yml", "shared_value: override\n"},
+		{"group_vars/localhost/main.yml", "shared_value: override\n"},
 		{"roles/example/templates/data.yml.j2", "shared_value: literal\n"},
 		{"roles/other/defaults/main.yml", "other_value:\n  shared_value: nested\n"},
 	} {
@@ -70,6 +79,38 @@ func TestVariableDuplicatesExcludeTasksAndLocalhostOverrides(t *testing.T) {
 		if ds := Analyze(project, duplicateRules()); len(ds) != 0 {
 			t.Fatalf("excluded variable in %s was checked: %+v", file.name, ds)
 		}
+	}
+}
+
+func TestVariableDuplicatesExcludeLocalhostHostVarsDirectoryFromDisk(t *testing.T) {
+	// Ansible reads host_vars/localhost/<any>.yml exactly like
+	// host_vars/localhost.yml, so neither form duplicates role defaults.
+	const defaults = "roles/foo/defaults/main.yml"
+	for _, override := range []string{"host_vars/localhost/main.yml", "inventories/prod/host_vars/localhost/main.yml", "host_vars/localhost.yml"} {
+		t.Run(override, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestSource(t, filepath.Join(root, defaults), "foo_port: \"8080\"\n")
+			writeTestSource(t, filepath.Join(root, override), "foo_port: \"1\"\n")
+			for _, selected := range []string{root, filepath.Join(root, defaults), filepath.Join(root, override)} {
+				project, err := Load(t.Context(), Options{Root: root, Paths: []string{selected}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ds := Analyze(project, duplicateRules()); len(ds) != 0 {
+					t.Fatalf("selected %s: localhost override diagnosed: %+v", selected, ds)
+				}
+			}
+		})
+	}
+	root := t.TempDir()
+	writeTestSource(t, filepath.Join(root, defaults), "foo_port: \"8080\"\n")
+	writeTestSource(t, filepath.Join(root, "host_vars/remote/main.yml"), "foo_port: \"1\"\n")
+	project, err := Load(t.Context(), Options{Root: root, Paths: []string{root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := Analyze(project, duplicateRules()); len(ds) != 2 {
+		t.Fatalf("other host directory duplicate not diagnosed on both declarations: %+v", ds)
 	}
 }
 
