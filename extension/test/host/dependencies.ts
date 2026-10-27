@@ -1705,10 +1705,18 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     assert.deepEqual(findings(statusDocument.uri), statusFindings);
     await pause(600);
+    // Directory scans select templates, so the changed closed template gets its
+    // own read-only check. The dirty source that depends on it must not.
+    const statusEventRuns = invocations().slice(statusQuiet);
     assert.equal(
-      invocations().length,
-      statusQuiet,
-      "dirty dependency event must schedule no automatic check",
+      statusEventRuns.length,
+      1,
+      `only the changed closed template is checked: ${JSON.stringify(statusEventRuns)}`,
+    );
+    assert.ok(
+      statusEventRuns[0].includes("roles/status-event/templates/router.conf") &&
+        !statusEventRuns[0].includes("roles/status-event/tasks/main.yml"),
+      `dirty dependency event must schedule no automatic check of the dirty source: ${statusEventRuns[0]}`,
     );
     assert.equal(statusBar.text, "Saltbox Lint: stale");
     await writeFile(statusTemplate.fsPath, good);
@@ -1717,7 +1725,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.check(statusDocument, true);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
     success(
-      "dirty referenced-template event updates actual status bar with complete coverage and no queued check",
+      "dirty referenced-template event updates actual status bar with complete coverage and no queued check of the dirty source",
     );
 
     await rm(join(roots[0].uri.fsPath, ".saltbox-lint"));
