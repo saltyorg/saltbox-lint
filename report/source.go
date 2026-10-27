@@ -179,21 +179,36 @@ func joinClusters(clusters []displayCluster) string {
 	return b.String()
 }
 
+// controlEscape is the visible notation shared by every text renderer for
+// characters that a terminal, log viewer or bidirectional layout would
+// otherwise interpret: C0 controls, DEL, C1 controls and Unicode bidi
+// formatting controls, which can reorder displayed source (Trojan Source).
+func controlEscape(char rune) (string, bool) {
+	switch {
+	case char == '\n':
+		return "\\n", true
+	case char == '\r':
+		return "\\r", true
+	case char == '\t':
+		return "\\t", true
+	case char < ' ' || char == 0x7f:
+		return fmt.Sprintf("\\x%02x", char), true
+	case char >= 0x80 && char <= 0x9f || bidiControl(char):
+		return fmt.Sprintf("\\u%04x", char), true
+	}
+	return "", false
+}
+
+func bidiControl(char rune) bool {
+	return char == 0x061c || char == 0x200e || char == 0x200f || char >= 0x202a && char <= 0x202e || char >= 0x2066 && char <= 0x2069
+}
+
 func visibleText(text string) string {
 	var b strings.Builder
 	for _, char := range text {
-		switch {
-		case char == '\n':
-			_, _ = b.WriteString("\\n")
-		case char == '\r':
-			_, _ = b.WriteString("\\r")
-		case char == '\t':
-			_, _ = b.WriteString("\\t")
-		case char < ' ' || char == 0x7f:
-			fmt.Fprintf(&b, "\\x%02x", char)
-		case char >= 0x80 && char <= 0x9f:
-			fmt.Fprintf(&b, "\\u%04x", char)
-		default:
+		if escaped, ok := controlEscape(char); ok {
+			_, _ = b.WriteString(escaped)
+		} else {
 			b.WriteRune(char)
 		}
 	}

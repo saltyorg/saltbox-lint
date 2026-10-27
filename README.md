@@ -394,7 +394,8 @@ locations, every changed line, and every marked source line remain visible.
 Comparisons show two unchanged context lines around each hunk and label gaps;
 excerpts show one context line around marked spans. Wrapped rows use `↪` and
 blank line-number cells, keeping the `+`/`-` marker. Whitespace and grapheme
-boundaries are preserved, and fix guidance is separated from code by a blank
+boundaries are preserved; control and bidirectional formatting characters are
+shown as visible escapes. Fix guidance is separated from code by a blank
 line. Human comparisons are presentation, not patches; use `check --diff` for
 the safe formatting patch.
 

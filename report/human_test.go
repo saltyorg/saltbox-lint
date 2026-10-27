@@ -286,6 +286,28 @@ func TestHumanReportSanitizesTerminalControlsAndKeepsOrder(t *testing.T) {
 	}
 }
 
+func TestHumanReportEscapesBidirectionalControls(t *testing.T) {
+	bidi := []string{"\u061c", "\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069"}
+	path := "a\u202e.yml"
+	source := &lint.Source{Path: path, Data: []byte("value: \"" + strings.Join(bidi, "") + "ü界\"\n")}
+	project := &lint.Project{Sources: map[string]*lint.Source{path: source}}
+	diagnostics := []lint.Diagnostic{{Path: path, RuleID: "rule\u2066", Severity: "error", Message: "admin\u202e\u2066 // check", Expected: "keep\u200f", Span: lint.Span{Start: 8, End: 9}}}
+	var plain bytes.Buffer
+	if err := Render(&plain, project, diagnostics, Options{Format: "human", Human: HumanOptions{Width: 60}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, char := range bidi {
+		if strings.Contains(plain.String(), char) {
+			t.Fatalf("raw bidi control %U reached human output:\n%q", []rune(char)[0], &plain)
+		}
+	}
+	for _, want := range []string{"a\\u202e.yml:1:9", "rule\\u2066", "admin\\u202e\\u2066 // check", "\\u061c\\u200e\\u200f\\u202a", "ü界"} {
+		if !strings.Contains(plain.String(), want) {
+			t.Errorf("human output missing %q:\n%s", want, &plain)
+		}
+	}
+}
+
 func TestHumanReportPreservesLiteralTildesInProse(t *testing.T) {
 	source, _ := lint.Parse("a.yml", []byte("value: bad\n"))
 	project := &lint.Project{Sources: map[string]*lint.Source{source.Path: source}}

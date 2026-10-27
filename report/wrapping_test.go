@@ -141,6 +141,7 @@ func TestVisualRowsPreserveWhitespaceGraphemesAndCaretIntersections(t *testing.T
 		{"", "", 2},
 		{"\t", "    ", 2},
 		{"\x1b", "\\x1b", 2},
+		{"a\u202eb\u2066c\u200f", "a\\u202eb\\u2066c\\u200f", 7},
 	} {
 		var recovered strings.Builder
 		count := 0
@@ -166,6 +167,12 @@ func TestVisualRowsPreserveWhitespaceGraphemesAndCaretIntersections(t *testing.T
 	marked, start, end := markerForLine(line, Span{Start: 8, End: 9})
 	if !marked || start != 7 || end != 9 {
 		t.Fatalf("partial emoji byte span marker = %t %d..%d, want 7..9", marked, start, end)
+	}
+	// Each bidi control occupies its six visible escape cells before the caret.
+	bidi := sourceLine{text: "x\u202ey\u2067z", end: len("x\u202ey\u2067z")}
+	marked, start, end = markerForLine(bidi, Span{Start: len("x\u202ey\u2067"), End: len("x\u202ey\u2067z")})
+	if !marked || start != 14 || end != 15 {
+		t.Fatalf("bidi caret marker = %t %d..%d, want 14..15", marked, start, end)
 	}
 }
 
