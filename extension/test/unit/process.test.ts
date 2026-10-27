@@ -37,13 +37,19 @@ test("a no-input request omits the writer that rejects a closed owned child pipe
   }[] = [];
   const adapters: ProcessAdapters = {
     spawn(file, args, options) {
-      const stdio = options!.stdio as ["pipe" | "ignore", "pipe", "pipe"];
+      const stdio = options!.stdio as [
+        "pipe" | "ignore",
+        "pipe",
+        "pipe",
+        "pipe",
+      ];
       const child = spawn(file, args, {
         ...options,
         // fd0 remains open in Windows libuv even after fs.closeSync(0).
-        // This controlled peer uses fd3 so public Socket.destroy really
-        // closes it. Normal stdin UTF8 and EOF use unmodified spawn below.
-        stdio: ["ignore", stdio[1], stdio[2], "pipe", "ipc"],
+        // This controlled peer uses fd4 so public Socket.destroy really
+        // closes it; fd3 remains the owner lifetime pipe. Normal stdin UTF8
+        // and EOF use unmodified spawn below.
+        stdio: ["ignore", stdio[1], stdio[2], stdio[3], "pipe", "ipc"],
       });
       const observation: (typeof observations)[number] = {
         stdin: stdio[0],
@@ -51,7 +57,7 @@ test("a no-input request omits the writer that rejects a closed owned child pipe
         ready: false,
         forwarded: false,
       };
-      const peer = child.stdio[3];
+      const peer = child.stdio[4];
       assert.ok(peer instanceof Socket);
       child.stdin = stdio[0] === "pipe" ? peer : null;
       observations.push(observation);
@@ -111,7 +117,7 @@ test("a no-input request omits the writer that rejects a closed owned child pipe
     args: [
       "-e",
       // Initialize output and IPC before closing the dedicated owned peer.
-      'const output=process.stdout;process.on("message",()=>process.exit(0));const input=new (require("node:net").Socket)({fd:3,readable:true,writable:false});input.once("close",()=>process.send("peer-closed",(error)=>{if(error)throw error;output.write("v1\\n");}));input.destroy();',
+      'const output=process.stdout;process.on("message",()=>process.exit(0));const input=new (require("node:net").Socket)({fd:4,readable:true,writable:false});input.once("close",()=>process.send("peer-closed",(error)=>{if(error)throw error;output.write("v1\\n");}));input.destroy();',
     ],
   };
   try {

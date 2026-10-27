@@ -270,8 +270,14 @@ test("absent observer and success preserve argv, input, defaults and stream oper
     assert.equal(options.shell, false);
     assert.equal(options.windowsHide, true);
     assert.equal(options.detached, false);
-    assert.deepEqual(Array.from(options.stdio), ["pipe", "pipe", "pipe"]);
+    assert.deepEqual(Array.from(options.stdio), [
+      "pipe",
+      "pipe",
+      "pipe",
+      "pipe",
+    ]);
     assert.equal(options.env.SALTBOX_LINT_EDITOR_PROCESS, "1");
+    assert.equal(options.env.SALTBOX_LINT_EDITOR_LIFETIME, "3");
     assert.equal(options.env.HELD_ENVIRONMENT, "exact");
     assert.equal(owned.operations[2][1], request.input);
     assert.equal(owned.operations[2][2], "utf8");

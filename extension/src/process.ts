@@ -3,6 +3,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
+import { Readable } from "node:stream";
 import { groupHasLiveMembers } from "./native-group.ts";
 import {
   processSupervisorEnvironment,
@@ -12,6 +13,9 @@ import type {
   ProcessFailureCategory,
   ProcessFailureObserver,
 } from "./process-failure.ts";
+/** Inherited owner-lifetime pipe; its EOF tells the CLI that this host died. */
+export const processLifetimeEnvironment = "SALTBOX_LINT_EDITOR_LIFETIME";
+export const processLifetimeDescriptor = 3;
 export interface ProcessRequest {
   executable: string;
   args: string[];
@@ -247,8 +251,12 @@ function runOwnedProcess(
           detached: process.platform !== "win32",
           // Commands without a source snapshot need no parent-owned input pipe.
           // A fast child may close stdin before even an empty end reaches it.
+          // The fourth pipe is the CLI's owner lifetime. It is never written
+          // or ended here, so it reaches EOF only when this host exits,
+          // including a crash that leaves no timer or cleanup to stop the CLI.
           stdio: [
             request.input === undefined ? "ignore" : "pipe",
+            "pipe",
             "pipe",
             "pipe",
           ],
@@ -256,6 +264,7 @@ function runOwnedProcess(
             ...process.env,
             ...request.env,
             SALTBOX_LINT_EDITOR_PROCESS: "1",
+            [processLifetimeEnvironment]: String(processLifetimeDescriptor),
           },
         },
       );
@@ -336,6 +345,16 @@ function runOwnedProcess(
           killTree("output-limit");
         } else chunks.push(data);
       };
+      // The child never writes to its lifetime pipe. Keep the parent end
+      // flowing so its closure is joined by 'close', and never end it early.
+      const lifetime: unknown = child.stdio?.[processLifetimeDescriptor];
+      if (lifetime instanceof Readable) {
+        lifetime.on("error", (error) => {
+          failure ??= firstFailure(error, "setup");
+          killTree("setup");
+        });
+        lifetime.resume();
+      }
       child.stdout!.on("data", (data) => collect(output, data));
       child.stderr!.on("data", (data) => collect(errors, data));
       // 'exit' precedes 'close': kill remaining descendants before waiting for their pipes.
