@@ -65,7 +65,10 @@ each file's patches, in reverse patch-name order, to the vendored copy must
 reproduce its upstream hash. `provenance.lock.json` must match the go.mod module
 and version, the module checksum, the license and parser hashes, and the files
 patched by each named patch; `lint-compatibility.patch` must patch exactly the
-files listed in `COMPATIBILITY-CHANGES.json`.
+files listed in `COMPATIBILITY-CHANGES.json`. Each `LOCAL-CORRECTIONS.json` entry
+must match the hashes on either side of its named patch within that cumulative
+stack, and the lock's `localCorrectionPatchDiffs` must patch exactly the files
+the record lists.
 
 Canonical `make check` and all six native Go suites check every retained package,
 including tests, vet, lint and module tidiness. Race runs cover supported targets.

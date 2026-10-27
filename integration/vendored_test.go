@@ -70,6 +70,12 @@ func TestVendoredRecordCheckRejectsUnrecordedChanges(t *testing.T) {
 	formatRecord := func(before, after string) string {
 		return fmt.Sprintf(`{"tool":"gofmt","changes":"formatting only","files":{"b.go":{"before_sha256":%q,"after_sha256":%q}}}`, before, after)
 	}
+	corrected := strings.Replace(patched, "10", "20", 1)
+	layer := func(f fixture, before, after, named string) {
+		f.files["a.go"] = corrected
+		f.files["z.patch"] = "--- a/a.go\n+++ b/a.go\n@@ -1,3 +1,3 @@\n package p\n \n-func A() int { return 10 }\n+func A() int { return 20 }\n"
+		f.files["LOCAL-CORRECTIONS.json"] = fmt.Sprintf(`{"a.go":{"before":%q,"after":%q,"patch":%q,"reason":"layered fix"}}`, before, after, named)
+	}
 	cases := []struct {
 		name   string
 		mutate func(f fixture)
@@ -101,6 +107,10 @@ func TestVendoredRecordCheckRejectsUnrecordedChanges(t *testing.T) {
 		}, "c.go is not an upstream file"},
 		{"missing upstream file", func(f fixture) { delete(f.files, "b.go") }, "b.go"},
 		{"malformed module checksum", func(f fixture) { f.files["upstream-module-ziphash.txt"] = "h1:abc=\n" }, "upstream-module-ziphash.txt"},
+		{"layered local correction", func(f fixture) { layer(f, hash(patched), hash(corrected), "z.patch") }, ""},
+		{"local correction before hash from upstream", func(f fixture) { layer(f, hash(original), hash(corrected), "z.patch") }, "differ from z.patch's"},
+		{"local correction names another patch", func(f fixture) { layer(f, hash(patched), hash(corrected), "local.patch") }, "differ from local.patch's"},
+		{"local correction names unknown patch", func(f fixture) { layer(f, hash(patched), hash(corrected), "y.patch") }, "a.go is not changed by y.patch"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -296,6 +306,9 @@ func checkVendoredRecords(dir, module, version string) []error {
 	}
 	patchesByFile := map[string][]patchFile{}
 	patchTargets := map[string][]string{}
+	// patchStates[file][patch] records the file hashes on either side of each
+	// patch, recovered while reverse-applying the cumulative stack.
+	patchStates := map[string]map[string]changeRecord{}
 	for _, path := range patchNames {
 		name := filepath.Base(path)
 		data, err := os.ReadFile(path)
@@ -331,11 +344,14 @@ func checkVendoredRecords(dir, module, version string) []error {
 			continue // already reported against UPSTREAM-SHA256.json
 		}
 		patches := patchesByFile[name]
+		patchStates[name] = map[string]changeRecord{}
 		for i := len(patches) - 1; i >= 0; i-- {
+			after := hexHash(data)
 			if data, err = reversePatch(data, patches[i].hunks); err != nil {
 				fail("%s: %s does not reverse-apply to the vendored copy: %v", name, patches[i].patch, err)
 				break
 			}
+			patchStates[name][patches[i].patch] = changeRecord{hexHash(data), after}
 		}
 		if err == nil && hexHash(data) != upstream[name] {
 			fail("%s: reversed patches do not reproduce the upstream hash %s", name, upstream[name])
@@ -348,13 +364,39 @@ func checkVendoredRecords(dir, module, version string) []error {
 		}
 	}
 
-	errs = append(errs, checkLocalLock(dir, module, version, ziphash, upstream, current, compatibility, patchTargets)...)
+	corrections := map[string]struct {
+		Before string `json:"before"`
+		After  string `json:"after"`
+		Patch  string `json:"patch"`
+		Reason string `json:"reason"`
+	}{}
+	correctionsPath := filepath.Join(dir, "LOCAL-CORRECTIONS.json")
+	if _, err := os.Stat(correctionsPath); err == nil {
+		if err := decodeStrict(correctionsPath, &corrections); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(corrections)) {
+		entry := corrections[name]
+		if strings.TrimSpace(entry.Reason) == "" {
+			fail("LOCAL-CORRECTIONS.json: %s has no reason", name)
+		}
+		state, ok := patchStates[name][entry.Patch]
+		switch {
+		case !ok:
+			fail("LOCAL-CORRECTIONS.json: %s is not changed by %s", name, entry.Patch)
+		case entry.Before != state.before || entry.After != state.after:
+			fail("LOCAL-CORRECTIONS.json: %s hashes %s -> %s differ from %s's %s -> %s", name, entry.Before, entry.After, entry.Patch, state.before, state.after)
+		}
+	}
+
+	errs = append(errs, checkLocalLock(dir, module, version, ziphash, upstream, current, compatibility, slices.Sorted(maps.Keys(corrections)), patchTargets)...)
 	return errs
 }
 
 // checkLocalLock verifies a repository-authored provenance.lock.json. An
 // upstream-owned lock without originalInputs (Nuri's) is left to that project.
-func checkLocalLock[C any](dir, module, version, ziphash string, upstream, current map[string]string, compatibility map[string]C, patchTargets map[string][]string) []error {
+func checkLocalLock[C any](dir, module, version, ziphash string, upstream, current map[string]string, compatibility map[string]C, corrections []string, patchTargets map[string][]string) []error {
 	data, err := os.ReadFile(filepath.Join(dir, "provenance.lock.json"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -384,6 +426,10 @@ func checkLocalLock[C any](dir, module, version, ziphash string, upstream, curre
 		CompatibilityChanges   string `json:"compatibilityChanges"`
 		IntentionalPatchDiff   string `json:"intentionalPatchDiff"`
 		CompatibilityPatchDiff string `json:"compatibilityPatchDiff"`
+		// LocalCorrections names LOCAL-CORRECTIONS.json when repository-authored
+		// fixes are layered on the intentional and compatibility patches.
+		LocalCorrections          string   `json:"localCorrections"`
+		LocalCorrectionPatchDiffs []string `json:"localCorrectionPatchDiffs"`
 	}
 	if err := decodeStrict(filepath.Join(dir, "provenance.lock.json"), &lock); err != nil {
 		return []error{err}
@@ -425,6 +471,26 @@ func checkLocalLock[C any](dir, module, version, ziphash string, upstream, curre
 	targets := slices.Sorted(slices.Values(patchTargets[lock.CompatibilityPatchDiff]))
 	if want := slices.Sorted(maps.Keys(compatibility)); !slices.Equal(targets, want) {
 		fail("%s patches %v, but COMPATIBILITY-CHANGES.json records %v", lock.CompatibilityPatchDiff, targets, want)
+	}
+	if len(corrections) > 0 || lock.LocalCorrections != "" || len(lock.LocalCorrectionPatchDiffs) > 0 {
+		if lock.LocalCorrections != "LOCAL-CORRECTIONS.json" {
+			fail("references %q, want %q", lock.LocalCorrections, "LOCAL-CORRECTIONS.json")
+		}
+		var targets []string
+		for _, patch := range lock.LocalCorrectionPatchDiffs {
+			if len(patchTargets[patch]) == 0 {
+				fail("local correction patch %s changes no upstream files", patch)
+			}
+			for _, target := range patchTargets[patch] {
+				if !slices.Contains(targets, target) {
+					targets = append(targets, target)
+				}
+			}
+		}
+		slices.Sort(targets)
+		if !slices.Equal(targets, corrections) {
+			fail("%v patch %v, but LOCAL-CORRECTIONS.json records %v", lock.LocalCorrectionPatchDiffs, targets, corrections)
+		}
 	}
 	return errs
 }
