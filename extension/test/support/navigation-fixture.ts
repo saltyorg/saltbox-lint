@@ -208,6 +208,8 @@ export interface NavigationFixture {
   notices: string[];
   /** Current diagnostic collection entries keyed by resource URI string. */
   diagnostics: ReadonlyMap<string, readonly vscode.Diagnostic[]>;
+  /** Ordered `set <uri>` records of diagnostic collection writes. */
+  diagnosticWrites: readonly string[];
   position: vscode.Position;
   wire(request: ProcessRequest): string;
   refreshProviders(): void;
@@ -269,6 +271,7 @@ export async function withNavigationFixture<T>(
     const lines: string[] = [],
       notices: string[] = [];
     const diagnostics = new Map<string, readonly vscode.Diagnostic[]>();
+    const diagnosticWrites: string[] = [];
     const listener = () => new Disposable();
     const activeChanged = new Emitter<{ document: vscode.TextDocument }>();
     resources.defer("fixture active editor events", () =>
@@ -361,6 +364,7 @@ export async function withNavigationFixture<T>(
         createDiagnosticCollection: () => ({
           set(uri: URI, entries: readonly vscode.Diagnostic[]) {
             diagnostics.set(uri.toString(), entries);
+            diagnosticWrites.push(`set ${uri.toString()}`);
           },
           delete(uri: URI) {
             diagnostics.delete(uri.toString());
@@ -505,6 +509,7 @@ export async function withNavigationFixture<T>(
       lines,
       notices,
       diagnostics,
+      diagnosticWrites,
       position: document.positionAt(sourceText.indexOf("_port") + 2),
       wire,
       refreshProviders: () =>

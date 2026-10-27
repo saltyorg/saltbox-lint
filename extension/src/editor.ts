@@ -828,7 +828,12 @@ export class EditorIntegration implements vscode.Disposable {
       return false;
     }
   }
-  private publish(uri: vscode.Uri): void {
+  /**
+   * `edited` publication follows a buffer change. VS Code already holds an
+   * unchanged own result and moves its markers with the edit; setting it
+   * again would restore the result's original ranges. Status still updates.
+   */
+  private publish(uri: vscode.Uri, edited = false): void {
     this.updateStatus();
     const key = uri.toString();
     const folder = this.roots.folder(uri)?.uri.toString();
@@ -847,7 +852,7 @@ export class EditorIntegration implements vscode.Disposable {
     );
     const own = this.results.document(key);
     if (own) {
-      this.collection.set(uri, own.diagnostics);
+      if (!edited) this.collection.set(uri, own.diagnostics);
       return;
     }
     if (
@@ -1969,9 +1974,9 @@ export class EditorIntegration implements vscode.Disposable {
     this.revokeQueries();
     this.lint.cancel(key);
     this.formatting.cancel(key);
-    this.publish(document.uri);
+    this.publish(document.uri, true);
     const identity = this.sourceOwners.get(key);
-    if (identity) this.publish(vscode.Uri.file(identity.filename));
+    if (identity) this.publish(vscode.Uri.file(identity.filename), true);
     // Saved related coordinates may now point into a dirty buffer. Primary
     // snapshots and proposals in other documents remain valid.
     for (const uri of this.results.invalidateRelated())
