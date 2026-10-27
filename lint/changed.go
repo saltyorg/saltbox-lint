@@ -90,6 +90,11 @@ func loadChanged(ctx context.Context, opts Options) (*Project, error) {
 		return nil, err
 	}
 	changed = append(changed, nulNames(output)...)
+	controls, err := changedAncestorControls(ctx, root, commit)
+	if err != nil {
+		return nil, err
+	}
+	changed = append(changed, controls...)
 	slices.Sort(changed)
 	changed = slices.Compact(changed)
 	output, err = changedGit(ctx, root, "ls-files", "-v", "-z", "--cached", "--", ".")
@@ -117,6 +122,47 @@ func loadChanged(ctx context.Context, opts Options) (*Project, error) {
 		project.Dependencies = nil
 	}
 	return project, nil
+}
+
+// changedAncestorControls reports changed or new .gitignore files between the
+// Git top level and a nested source root. Discovery applies those ignores, but
+// the root-limited pathspecs never report them. Names are root-relative, such as
+// "../.gitignore", and select all current primaries as discovery policy.
+func changedAncestorControls(ctx context.Context, root, commit string) ([]string, error) {
+	output, err := changedGit(ctx, root, "rev-parse", "--show-prefix")
+	if err != nil {
+		return nil, err
+	}
+	prefix := strings.Trim(strings.TrimSuffix(string(output), "\n"), "/")
+	if prefix == "" {
+		return nil, nil
+	}
+	segments := strings.Split(prefix, "/")
+	pathspecs := make([]string, 0, len(segments))
+	for i := range segments {
+		pathspecs = append(pathspecs, ":(top,literal)"+path.Join(path.Join(segments[:i]...), ".gitignore"))
+	}
+	diff, err := changedGit(ctx, root, append([]string{"diff", "--no-relative", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", commit, "--"}, pathspecs...)...)
+	if err != nil {
+		return nil, err
+	}
+	untracked, err := changedGit(ctx, root, append([]string{"ls-files", "-z", "--full-name", "--others", "--exclude-standard", "--"}, pathspecs...)...)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, name := range append(nulNames(diff), nulNames(untracked)...) {
+		dir := path.Dir(name)
+		depth := 0
+		if dir != "." {
+			depth = strings.Count(dir, "/") + 1
+		}
+		if path.Base(name) != ".gitignore" || depth >= len(segments) || dir != "." && !strings.HasPrefix(prefix+"/", dir+"/") {
+			continue
+		}
+		names = append(names, strings.Repeat("../", len(segments)-depth)+".gitignore")
+	}
+	return names, nil
 }
 
 func validCommitID(value string) bool {
@@ -173,26 +219,25 @@ func affectedSelection(project *Project, commit string, changed, uncertain []str
 			result.Fallback = "missing context may have erased earlier dependencies; select all current primary sources"
 		}
 	}
+	// Git reports a symlinked source's changed bytes under the resolved target,
+	// while dependencies retain lexical source paths. Match both spellings.
+	aliases := map[string][]string{}
+	for name, source := range project.Sources {
+		if source.diskIdentity != nil && source.diskIdentity.path != name {
+			aliases[source.diskIdentity.path] = append(aliases[source.diskIdentity.path], name)
+		}
+	}
+	for _, names := range aliases {
+		slices.Sort(names)
+	}
 	for _, source := range project.Dependencies.Sources {
 		selected := SelectedSource{Path: source.Path, Reasons: []SelectionReason{}}
 		for _, name := range candidates {
 			kind := ""
-			switch {
-			case source.Path == name:
-				kind = "changed-primary"
-			case discoveryControl(name):
-				kind = "discovery-policy"
-			case slices.ContainsFunc(source.Files, func(file DependencyFile) bool { return file.Path == name }):
-				kind = "dependency-file"
-			case slices.ContainsFunc(source.Identity, func(file DependencyFile) bool { return file.Path == name }):
-				kind = "project-identity"
-			case slices.ContainsFunc(source.Directories, func(dir DependencyDirectory) bool {
-				if dir.VariablesOnly && !variableDeclarationPath(name) {
-					return false
+			for _, spelling := range append([]string{name}, aliases[name]...) {
+				if kind = dependencyReason(source, spelling); kind != "" {
+					break
 				}
-				return name == dir.Path || strings.HasPrefix(name, dir.Path+"/")
-			}):
-				kind = "dependency-scope"
 			}
 			if kind != "" {
 				if !slices.Contains(changed, name) {
@@ -209,6 +254,28 @@ func affectedSelection(project *Project, commit string, changed, uncertain []str
 		}
 	}
 	return result
+}
+
+// dependencyReason classifies how one changed name affects a selected source.
+func dependencyReason(source SourceDependencies, name string) string {
+	switch {
+	case source.Path == name:
+		return "changed-primary"
+	case discoveryControl(name):
+		return "discovery-policy"
+	case slices.ContainsFunc(source.Files, func(file DependencyFile) bool { return file.Path == name }):
+		return "dependency-file"
+	case slices.ContainsFunc(source.Identity, func(file DependencyFile) bool { return file.Path == name }):
+		return "project-identity"
+	case slices.ContainsFunc(source.Directories, func(dir DependencyDirectory) bool {
+		if dir.VariablesOnly && !variableDeclarationPath(name) {
+			return false
+		}
+		return name == dir.Path || strings.HasPrefix(name, dir.Path+"/")
+	}):
+		return "dependency-scope"
+	}
+	return ""
 }
 func discoveryControl(name string) bool {
 	return path.Base(name) == ".gitignore" || name == ".git/info/exclude"

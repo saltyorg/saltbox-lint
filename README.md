@@ -238,7 +238,10 @@ primaries. Removed context can erase earlier dependencies, so the command
 conservatively selects all current in-root primaries and explains that fallback.
 Changes to in-root `.gitignore` policy select all current primaries. A configured
 `--root` inside a larger checkout limits both source selection and changed names
-to that root. Git administration remains opaque discovery policy. Tracked paths marked
+to that root, except that changed `.gitignore` files in the root's ancestors up to
+the Git top level also apply to discovery; they appear as root-relative names such
+as `../.gitignore` and select all current primaries. A changed symlink target
+selects the sources that resolve to it. Git administration remains opaque discovery policy. Tracked paths marked
 `assume-unchanged` or `skip-worktree` can hide edits from Git diff. The linter
 conservatively selects their current primaries and dependents, with an explicit
 uncertainty reason, without clearing those flags. Unrelated sources stay outside

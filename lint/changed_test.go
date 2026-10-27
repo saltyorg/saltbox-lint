@@ -456,6 +456,92 @@ func TestChangedFlaggedMissingContextAndSubroot(t *testing.T) {
 		t.Fatalf("flagged name crossed source root: %+v", p.Selection)
 	}
 }
+func assertChangedDiagnostic(t *testing.T, p *Project, path, rule string) {
+	t.Helper()
+	if !slices.ContainsFunc(Analyze(p, Rules()), func(d Diagnostic) bool { return d.Path == path && d.RuleID == rule }) {
+		t.Fatalf("%s not reported for %s; selection=%+v", rule, path, p.Selection)
+	}
+}
+
+func TestChangedSymlinkTargetsSelectAliasedSources(t *testing.T) {
+	root := changedFixture(t)
+	gitTest(t, root, "config", "core.symlinks", "true")
+	putFile(t, root, "shared/common.yml", "- name: Common\n  debug: {msg: ok}\n")
+	putFile(t, root, "shared/vars.yml", "demo_shared: true\n")
+	for link, target := range map[string]string{
+		"roles/bar/tasks/main.yml":       "../../../shared/common.yml",
+		"roles/demo/defaults/shared.yml": "../../../shared/vars.yml",
+	} {
+		name := filepath.Join(root, filepath.FromSlash(link))
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.FromSlash(target), name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commitChangedFixture(t, root)
+	assertSelection(t, loadChangedTest(t, root, "HEAD"))
+
+	putFile(t, root, "shared/common.yml", "- name: Common\n  debug: {msg: ok}\n  tags: Bad_Tag\n")
+	p := loadChangedTest(t, root, "HEAD")
+	assertSelection(t, p, "roles/bar/tasks/main.yml")
+	if !slices.Equal(p.Selection.Changed, []string{"shared/common.yml"}) {
+		t.Fatalf("changed=%q", p.Selection.Changed)
+	}
+	assertChangedDiagnostic(t, p, "roles/bar/tasks/main.yml", "ansible-tag-name")
+
+	// A changed symlinked context selects the alias and its lexical dependents.
+	commitChangedFixture(t, root)
+	putFile(t, root, "shared/vars.yml", "demo_shared: false\n")
+	p = loadChangedTest(t, root, "HEAD")
+	assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/defaults/shared.yml", "roles/demo/tasks/main.yml")
+	if !slices.ContainsFunc(p.Selection.Sources, func(source SelectedSource) bool {
+		return source.Path == "roles/demo/defaults/shared.yml" && slices.Contains(source.Reasons, SelectionReason{Kind: "changed-primary", Path: "shared/vars.yml"})
+	}) {
+		t.Fatalf("aliased primary reason missing: %+v", p.Selection)
+	}
+}
+
+func TestChangedSubrootAncestorIgnoreControls(t *testing.T) {
+	root := changedFixture(t)
+	const violation = "- name: Bar\n  debug: {msg: ok}\n  tags: Bad_Tag\n"
+	putFile(t, root, "a/b/roles/bar/tasks/main.yml", violation)
+	putFile(t, root, "a/b/roles/keep/tasks/main.yml", "- name: Keep\n  debug: {msg: ok}\n")
+	putFile(t, root, "other/.gitignore", "")
+	gitTest(t, root, "add", "--all")
+	gitTest(t, root, "add", "--force", "--", "a/b/roles/bar/tasks/main.yml")
+	gitTest(t, root, "commit", "-q", "-m", "chore: add nested fixture")
+	sub := filepath.Join(root, "a", "b")
+	for _, control := range []string{".gitignore", "a/.gitignore"} {
+		t.Run(control, func(t *testing.T) {
+			// The committed ancestor ignore hides the nested role; changing it
+			// in the worktree must select what a full check now discovers.
+			putFile(t, root, control, "/a/b/roles/bar/tasks/\n")
+			gitTest(t, root, "add", "--", control)
+			gitTest(t, root, "commit", "-q", "-m", "chore: ignore nested role")
+			assertSelection(t, loadChangedTest(t, sub, "HEAD"))
+			putFile(t, root, control, "")
+			p := loadChangedTest(t, sub, "HEAD")
+			assertSelection(t, p, "roles/bar/tasks/main.yml", "roles/keep/tasks/main.yml")
+			want := "../../.gitignore"
+			if control == "a/.gitignore" {
+				want = "../.gitignore"
+			}
+			if !slices.Equal(p.Selection.Changed, []string{want}) {
+				t.Fatalf("changed=%q want %q", p.Selection.Changed, want)
+			}
+			assertChangedDiagnostic(t, p, "roles/bar/tasks/main.yml", "ansible-tag-name")
+			commitChangedFixture(t, root)
+		})
+	}
+	// Ignore files outside the root's ancestry and the root's own siblings do
+	// not affect discovery below it.
+	putFile(t, root, "other/.gitignore", "*\n")
+	putFile(t, root, "a/c/.gitignore", "*\n")
+	assertSelection(t, loadChangedTest(t, sub, "HEAD"))
+}
+
 func TestFlaggedGitNamesKeepNULIdentities(t *testing.T) {
 	output := []byte("S tasks/a\tb.yml\x00h tasks/a\nb.yml\x00H tasks/normal.yml\x00s tasks/-leading.yml\x00H broken\x00")
 	want := []string{"tasks/-leading.yml", "tasks/a\tb.yml", "tasks/a\nb.yml"}
