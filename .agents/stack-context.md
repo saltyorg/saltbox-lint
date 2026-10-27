@@ -1,7 +1,7 @@
 # Stack Context
 
 Generated: 2026-09-12
-Updated: 2026-10-17 for namespace configuration and inline finding ignores
+Updated: 2026-10-27 for directory and changed template selection
 
 ## Stack
 - Go 1.27.2; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
@@ -21,6 +21,7 @@ Updated: 2026-10-17 for namespace configuration and inline finding ignores
 - Flat cmd, lint, report, highlight and yamlindex packages separate commands, analysis, policy and display; main owns process stdin/signals.
 - Rules consume shared analysis and return metadata-backed diagnostics. Paths/spans retain source identity; renderers adapt columns for consumers.
 - Variable duplicates are checked across defaults, vars and inventories, excluding user localhost.yml and host_vars/localhost/ overrides and task/handler declarations. Declaration-only directory observations keep Go affected-file selection and editor invalidation aligned. Role namespaces require valid defaults declarations; tasks, handlers and vars alone cannot establish ownership. Optional root .saltbox-lint YAML grants directional namespace_sharing; saved configuration bytes and absence participate in dependencies. Exact inline rule ignores suppress only their YAML primary line, or every line of a multi-line flow node they directly follow, and protect those lines from automatic lint edits; ignores that suppress nothing fail as lint-directive. Role-matching companion prefixes are allowed unless literal parent-role lookups capture the variable; standalone empty Docker ports are rejected.
+- Directory and --changed-since discovery admit templates through explicit-target loader admission, honoring exclusions and Git ignores; templates stay read-only. check --fix refuses only explicitly named templates, revalidating discovered ones read-only. Editor scans publish closed-template findings and closed template events select those templates.
 - Loading uses ordered Git candidates and bounded read/parse batches. The coordinator publishes selected/context sources deterministically before sequential rule evaluation.
 - Display retains full-source semantic context in both palettes; evidence APIs honor imported theme enablement. Preview indexes are immutable and require exact source matches.
 - Each renderer retains one original semantic document; suggested variants remain ephemeral and never authorize source writes.

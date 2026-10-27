@@ -1,17 +1,34 @@
 # Read-only template checks
 
-Explicit paths and opened editor documents can check templates without changing
-any source bytes. Conventional `roles/<role>/templates/`,
-`resources/roles/<role>/templates/`, `resources/templates/` and `.j2` paths are
-recognized, including files with no extension. Narrowing the source root inside
-a template directory or opening a canonical alias never grants write eligibility.
-Role context outside a narrowed root remains unavailable. Default directory and
-`--changed-since` selection retain their existing YAML primary discovery.
+Directory checks (including the default `.`), `--changed-since`, explicit paths
+and opened editor documents check templates without changing any source bytes.
+Conventional `roles/<role>/templates/`, `resources/roles/<role>/templates/`,
+`resources/templates/` and `.j2` paths are recognized, including files with no
+extension. Narrowing the source root inside a template directory or opening a
+canonical alias never grants write eligibility. Role context outside a narrowed
+root remains unavailable.
 
 ```sh
+saltbox-lint check .
 saltbox-lint check --root . roles/example/templates/config
 saltbox-lint explain --root . roles/example/templates/config
 ```
+
+Directory discovery admits every template candidate through the same loader
+admission as a named template target, so classification, role context, findings
+and their order are identical. Configured `exclude_paths` and Git ignore rules
+apply to template candidates exactly as to YAML candidates. A root narrowed
+inside a template directory treats every discovered file as a template. A
+template-spelled directory target that aliases a YAML directory remains
+unselected, so its YAML files never become writable through that spelling.
+`explain` reports `directory_would_select: true` for a template that directory
+discovery selects.
+
+`--changed-since` selects a changed template itself, and selects existing
+templates whose recorded dependencies changed. A template depends on its owning
+role context: defaults, vars, tasks, handlers and other templates of that role,
+plus the project configuration. Changing an owning task file therefore reselects
+the role's templates, while changes in an unrelated role do not.
 
 Editor requests keep canonical response paths even when a `.j2` or conventional
 template spelling aliases YAML. `check`, `explain` and `query` accept
@@ -19,10 +36,12 @@ template spelling aliases YAML. `check`, `explain` and `query` accept
 spelling for snapshot classification. The loader requires an existing spelling
 that resolves to the same in-root owner. Missing, retargeted or escaping aliases
 fail instead of falling back to YAML policies. This option never grants writes.
-Closed template watcher events remain context changes, including roots narrowed
-inside a template directory. They do not add unopened templates to selections.
+Workspace scans publish diagnostics for closed templates. Closed template
+watcher events, including roots narrowed inside a template directory, select
+that template for a read-only saved check, as for a closed YAML source. They
+also remain context changes for their dependents.
 
-| Capability | YAML | Explicit or opened template |
+| Capability | YAML | Selected or opened template |
 |---|---|---|
 | Check and rule help | Yes | Bounded static checks |
 | Definition, hover, references and impact | Static source candidates | Supported static role reads |
@@ -110,15 +129,21 @@ Static `role_var` and `role_web` inspection reuses the YAML declaration resolver
 Dynamic calls, lexical callee bindings, missing local context and runtime
 providers remain unresolved. A supported selected template can own an existing
 Traefik renderer finding when a task names it statically. Selecting both the task
-and template reports that violation once at the template. YAML-only selections
-retain their existing contract ownership.
+and template, as directory checks do, reports that violation once at the
+template. YAML-only selections retain their existing contract ownership.
 Selecting several aliases of the same admitted template reports its renderer
 violation at the first selected path in lexical order. An unsaved template
 buffer supplies that output's admitted aliases for the current invocation.
 Equal file contents alone never establish ownership.
 
 Both `format --mode canonical` and `format --mode lint-fixes` return a skipped
-plan with no template edits. `check --fix` rejects every selection containing a
-template before writing any YAML, regardless of selection order. Read-only
-`check --diff` can show YAML fixes beside templates and never emits a template
-change. No template diagnostic carries a fix ID.
+plan with no template edits. `check --fix` rejects every selection containing an
+explicitly named template target (a file path or stdin) before writing any
+YAML, regardless of selection order. Templates selected only by directory
+discovery are checked and never written: `check --fix .` applies verified YAML
+fixes and leaves every template byte unchanged. Those templates still take part
+in the batch's identity and byte revalidation, so a template changed or
+retargeted during the run refuses the whole batch. Template findings keep the
+exit status at 1 after fixing. `--fix` cannot be combined with `--changed-since`.
+Read-only `check --diff` can show YAML fixes beside templates and never emits a
+template change. No template diagnostic carries a fix ID.
