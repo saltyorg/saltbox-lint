@@ -482,6 +482,39 @@ func TestCISummaryInputsMatchRequiredChecks(t *testing.T) {
 	}
 }
 
+// GoReleaser is pinned once in the Makefile. Packaging receives the installed
+// path from make, so the release script cannot drift to a different version.
+func TestReleasePackagingUsesMakefileGoReleaserPin(t *testing.T) {
+	makefile, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(makefile)
+	if !strings.Contains(text, "\nGORELEASER := $(TOOLS)/goreleaser-$(GORELEASER_VERSION)/goreleaser\n") {
+		t.Fatal("Makefile GoReleaser path must derive from GORELEASER_VERSION")
+	}
+	for _, target := range []string{"snapshot", "release-artifacts"} {
+		_, recipe, ok := strings.Cut(text, "\n"+target+": check\n")
+		if !ok {
+			t.Fatalf("Makefile %s target missing", target)
+		}
+		recipe, _, _ = strings.Cut(recipe, "\n\n")
+		if !strings.HasPrefix(recipe, "\tSALTBOX_GORELEASER='$(GORELEASER)' npm --prefix extension run package") {
+			t.Errorf("%s must pass the Makefile-pinned GoReleaser to packaging: %q", target, recipe)
+		}
+	}
+	script, err := os.ReadFile("../extension/scripts/release.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(script), "goreleaser-v") {
+		t.Error("release.mjs must not pin its own GoReleaser version")
+	}
+	if !strings.Contains(string(script), "process.env.SALTBOX_GORELEASER") {
+		t.Error("release.mjs must run the GoReleaser path supplied by make")
+	}
+}
+
 func readYAML(t *testing.T, path string, value any) {
 	t.Helper()
 	data, err := os.ReadFile(path)

@@ -17,6 +17,12 @@ if (process.platform !== "linux")
     "Release packaging runs on Linux to preserve ZIP executable modes",
   );
 const stable = process.argv.includes("--stable");
+// The Makefile owns the GoReleaser pin and passes its installed path.
+const goreleaser = process.env.SALTBOX_GORELEASER;
+if (!goreleaser)
+  throw new Error(
+    "SALTBOX_GORELEASER must name the Makefile-pinned GoReleaser; run make snapshot or make release-artifacts",
+  );
 if (stable) {
   if (
     run("git", ["describe", "--tags", "--exact-match"]).trim() !==
@@ -35,7 +41,7 @@ run(process.execPath, ["scripts/build.mjs"], {
 const source = await createSource();
 // GoReleaser owns dist/ and cleans it. Preserve the source outside dist until it finishes.
 run(
-  join(root, "bin/tools/goreleaser-v2.18.1/goreleaser"),
+  goreleaser,
   ["release", "--clean", ...(stable ? ["--skip=publish"] : ["--snapshot"])],
   { stdio: "inherit" },
 );

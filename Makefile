@@ -82,8 +82,8 @@ build: check
 	CGO_ENABLED=0 go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o bin/saltbox-lint .
 
 snapshot: check
-	npm --prefix extension run package
+	SALTBOX_GORELEASER='$(GORELEASER)' npm --prefix extension run package
 
 # Local artifacts only; stable tag and manifest version must agree.
 release-artifacts: check
-	npm --prefix extension run package -- --stable
+	SALTBOX_GORELEASER='$(GORELEASER)' npm --prefix extension run package -- --stable
