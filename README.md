@@ -428,7 +428,10 @@ path:line:column: error [rule-id] message
 ```
 
 Concise paths are source-root-relative, positions one-based, columns UTF-16 for
-VS Code; embedded CR/LF become visible escapes. Human columns count Unicode code
+VS Code. Control characters (C0, DEL, C1), Unicode bidirectional formatting
+controls and invalid UTF-8 bytes become the same visible escapes as human output,
+such as `\n`, `\x1b` and `\u202e`; concise paths also double backslashes so
+escapes stay unambiguous. Other Unicode remains literal. Human columns count Unicode code
 points. Clean concise output is empty. JSON schema version 2 always emits one
 object with `schema_version: 2`, a `diagnostics` array and a shared `fixes` array.
 Both arrays are empty for clean input. Each diagnostic contains `path`, `rule_id`,
@@ -478,7 +481,10 @@ positions otherwise retain their previous meaning.
 
 `--format github` emits escaped workflow-command annotations and, when
 `GITHUB_STEP_SUMMARY` is set, appends a Markdown summary. Multiline annotations
-use line ranges; single-line annotations also include columns. Summary appends
+use line ranges; single-line annotations also include columns. Annotation text
+escapes terminal and bidirectional controls like concise output while keeping
+workflow-command encoding for `%`, CR, LF, `:` and `,`. Paths without other
+controls stay exact so annotations attach. Summary appends
 are bounded to 100 findings/64 KiB and explicitly count omitted findings.
 Annotations and JSON still represent the full diagnostic set. File identity and
 cross-repository summary environment details are in [migration guidance](https://github.com/saltyorg/saltbox-lint/blob/main/docs/rule-migration.md).

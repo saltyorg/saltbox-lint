@@ -37,20 +37,20 @@ func githubReport(w io.Writer, p *lint.Project, ds []Diagnostic, opts Options) e
 		if d.Severity == "notice" || d.Severity == "info" {
 			level = "notice"
 		}
-		path := relativeSource(workspace, p.Root, d.Path)
-		message := d.Message
+		path := githubPath(relativeSource(workspace, p.Root, d.Path))
+		message := githubText(d.Message)
 		if d.Expected != "" {
-			message += "\nExpected: " + d.Expected
+			message += "\nExpected: " + githubText(d.Expected)
 		}
 		for _, r := range d.Related {
-			message += fmt.Sprintf("\nRelated: %s:%d:%d: %s", relativeSource(workspace, p.Root, r.Path), r.Range.Start.Line, r.Range.Start.Column, r.Message)
+			message += fmt.Sprintf("\nRelated: %s:%d:%d: %s", githubPath(relativeSource(workspace, p.Root, r.Path)), r.Range.Start.Line, r.Range.Start.Column, githubText(r.Message))
 		}
 		location := fmt.Sprintf("line=%d,endLine=%d", d.Range.Start.Line, end.Line)
 		// The runner accepts columns only for a single-line annotation.
 		if d.Range.Start.Line == end.Line {
 			location = fmt.Sprintf("line=%d,col=%d,endLine=%d,endColumn=%d", d.Range.Start.Line, d.Range.Start.Column, end.Line, end.Column)
 		}
-		fmt.Fprintf(&b, "::%s file=%s,%s,title=%s::%s\n", level, property(path), location, property(d.RuleID), commandData(message))
+		fmt.Fprintf(&b, "::%s file=%s,%s,title=%s::%s\n", level, property(path), location, property(githubText(d.RuleID)), commandData(message))
 	}
 	if _, err := io.WriteString(w, b.String()); err != nil {
 		return err
@@ -65,6 +65,27 @@ func commandData(s string) string {
 }
 func property(s string) string {
 	return strings.NewReplacer(",", "%2C", ":", "%3A").Replace(commandData(s))
+}
+
+// workflowEncoded identifies controls that workflow-command escaping already
+// round-trips exactly (%0D and %0A).
+func workflowEncoded(char rune) bool { return char == '\r' || char == '\n' }
+
+// githubText makes terminal, C1 and bidirectional controls visible with the
+// human-output notation. CR and LF keep their spec-defined %0D/%0A encoding.
+func githubText(s string) string { return escapeControls(s, false, workflowEncoded) }
+
+// githubPath keeps annotation paths attachable: GitHub matches file= against
+// the checkout path after decoding workflow escapes, so a path whose only
+// controls are CR/LF is emitted exactly, backslashes included. Any other
+// control cannot be written to the log raw, and its visible escape can no
+// longer match the checkout path, so such a path is escaped completely with
+// doubled backslashes like concise output, keeping its escapes unambiguous.
+func githubPath(path string) string {
+	if !needsEscape(path, workflowEncoded) {
+		return path
+	}
+	return escapeControls(path, true, workflowEncoded)
 }
 
 // resolvedDirectory spells a workspace or repository directory the same way

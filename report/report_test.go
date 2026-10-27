@@ -114,6 +114,40 @@ func TestGitHubResolvesSymlinkedWorkspace(t *testing.T) {
 	}
 }
 
+func TestGitHubEscapesTerminalControlsOutsideWorkflowEncoding(t *testing.T) {
+	p, ds := sample()
+	path := "roles/x y,z:ü\x1b[31mR\\n界/defaults/main.yml"
+	plain := "roles/a\\b,ü界.yml"
+	p.Sources = map[string]*lint.Source{path: p.Sources["a.yml"], plain: p.Sources["a.yml"]}
+	ds[0].Path, ds[0].Related[0].Path = path, plain
+	ds[0].RuleID = "rule\a"
+	ds[0].Message = "bad\x1b[2J\r\nnext\u202eevil\u009b\xff ü界"
+	ds[0].Expected = "keep\u2066"
+	second := ds[0]
+	second.Path, second.Related = plain, nil
+	var out bytes.Buffer
+	if err := Render(&out, p, append(ds, second), Options{Format: "github"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{"\x1b", "\a", "\u202e", "\u2066", "\u009b", "\xff"} {
+		if strings.Contains(out.String(), raw) {
+			t.Fatalf("raw control %q reached annotations: %q", raw, &out)
+		}
+	}
+	for _, want := range []string{
+		`file=roles/x y%2Cz%3Aü\x1b[31mR\\n界/defaults/main.yml,`,
+		`title=rule\x07::bad\x1b[2J%0D%0Anext\u202eevil\u009b\xff ü界%0AExpected: keep\u2066%0ARelated: roles/a\b,ü界.yml:2:1: context`,
+		`file=roles/a\b%2Cü界.yml,`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("annotation missing %q:\n%s", want, &out)
+		}
+	}
+	if strings.Count(out.String(), "\n") != 2 {
+		t.Fatalf("command injection: %q", &out)
+	}
+}
+
 func TestGitHubSummaryBoundedAndClean(t *testing.T) {
 	p, ds := sample()
 	var out, summary bytes.Buffer

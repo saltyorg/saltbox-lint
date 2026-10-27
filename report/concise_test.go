@@ -30,3 +30,20 @@ func TestConciseFormatPreservesStableBytesAndEmptyOutput(t *testing.T) {
 		t.Fatalf("clean concise output = %q, want empty", &out)
 	}
 }
+
+func TestConciseEscapesTerminalControlsUnambiguously(t *testing.T) {
+	path := "roles/x y,z:ü\x1b[31mR\\n\u202e界.yml"
+	source := &lint.Source{Path: path, Data: []byte("😀x\n")}
+	project := &lint.Project{Sources: map[string]*lint.Source{path: source}}
+	diagnostics := []lint.Diagnostic{{Path: path, RuleID: "rule\a", Severity: "error", Message: "bad\u009b\u2066\xff\tü界 \\n", Span: lint.Span{Start: len("😀"), End: len("😀x")}}}
+
+	var out bytes.Buffer
+	if err := Render(&out, project, diagnostics, Options{Format: "concise"}); err != nil {
+		t.Fatal(err)
+	}
+	// Paths double literal backslashes; messages keep them as prose.
+	want := "roles/x y,z:ü\\x1b[31mR\\\\n\\u202e界.yml:1:3: error [rule\\x07] bad\\u009b\\u2066\\xff\\tü界 \\n\n"
+	if out.String() != want {
+		t.Fatalf("concise controls:\n got %q\nwant %q", out.String(), want)
+	}
+}

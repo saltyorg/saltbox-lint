@@ -6,6 +6,7 @@ import (
 	"iter"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	charmansi "github.com/charmbracelet/x/ansi"
 	"github.com/frostybee/nuri"
@@ -211,6 +212,50 @@ func visibleText(text string) string {
 		} else {
 			b.WriteRune(char)
 		}
+	}
+	return b.String()
+}
+
+// needsEscape reports whether escapeControls would change text, apart from
+// backslash doubling.
+func needsEscape(text string, keep func(rune) bool) bool {
+	for i := 0; i < len(text); {
+		char, size := utf8.DecodeRuneInString(text[i:])
+		if char == utf8.RuneError && size == 1 {
+			return true
+		}
+		if _, ok := controlEscape(char); ok && (keep == nil || !keep(char)) {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
+// escapeControls applies the human-output control notation to deterministic
+// machine formats. Invalid UTF-8 bytes become \xNN instead of raw bytes that
+// 8-bit terminals may read as C1 controls. With escapeBackslash, literal
+// backslashes are doubled so escaped identities decode unambiguously. keep
+// leaves characters for the caller's own encoding.
+func escapeControls(text string, escapeBackslash bool, keep func(rune) bool) string {
+	if !needsEscape(text, keep) && (!escapeBackslash || !strings.Contains(text, "\\")) {
+		return text
+	}
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		char, size := utf8.DecodeRuneInString(text[i:])
+		escaped, ok := controlEscape(char)
+		switch {
+		case char == utf8.RuneError && size == 1:
+			fmt.Fprintf(&b, "\\x%02x", text[i])
+		case char == '\\' && escapeBackslash:
+			_, _ = b.WriteString("\\\\")
+		case ok && (keep == nil || !keep(char)):
+			_, _ = b.WriteString(escaped)
+		default:
+			_, _ = b.WriteString(text[i : i+size])
+		}
+		i += size
 	}
 	return b.String()
 }
