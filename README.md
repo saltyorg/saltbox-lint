@@ -645,7 +645,8 @@ packaged acceptance job succeed. Agents must inspect this evidence for the exact
 release commit before reporting production readiness, as required by `AGENTS.md`.
 Local Linux success alone does not
 establish Windows or macOS correctness. Source formatting, module tidiness,
-workflow/release configuration validation, and offline source rebuilding remain
+workflow/release configuration validation, and the offline source rebuild
+that byte-compares every shipped CLI binary remain
 centralized checks. The GNU/Linux Makefile harness, POSIX process/permission
 tests, and Windows-specific process tests exercise their applicable platforms;
 opt-in corpus and performance qualification are outside the ordinary CI suite.

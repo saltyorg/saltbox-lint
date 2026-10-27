@@ -381,9 +381,9 @@ func TestCISummaryInputsMatchRequiredChecks(t *testing.T) {
 	readYAML(t, "../.github/workflows/ci.yml", &ci)
 	reported := map[string]map[string]string{
 		"check": {
-			"Check, build and package local artifacts":                            "build_package",
-			"Rebuild from the matching source with dependency downloads disabled": "source_rebuild",
-			"Retain required vulnerability scan evidence":                         "vulnerability_upload",
+			"Check, build and package local artifacts":                         "build_package",
+			"Rebuild the matching source offline and compare shipped binaries": "source_rebuild",
+			"Retain required vulnerability scan evidence":                      "vulnerability_upload",
 		},
 		"native": {
 			"Verify native runner architecture":                   "architecture",
@@ -585,6 +585,112 @@ func TestWorkflowsBootstrapIntegrityVerifiedNpm(t *testing.T) {
 	}
 	if !reflect.DeepEqual(bootstraps, want) {
 		t.Errorf("verified npm bootstraps %v, want %v", bootstraps, want)
+	}
+}
+
+// Shipped binaries are built from the published source tree, and CI rebuilds
+// the published archive with the same settings and byte-compares every target.
+// Any GoReleaser option that can change binary bytes must be mirrored here.
+func TestSourceRebuildMatchesShippedBuildSettings(t *testing.T) {
+	var release struct {
+		Builds []map[string]any
+	}
+	readYAML(t, "../.goreleaser.yaml", &release)
+	if len(release.Builds) != 1 {
+		t.Fatalf("want one GoReleaser build, got %d", len(release.Builds))
+	}
+	build := release.Builds[0]
+	for key := range build {
+		if !slices.Contains([]string{"main", "dir", "binary", "env", "goos", "goarch", "flags", "ldflags"}, key) {
+			t.Errorf("GoReleaser build option %q is not reproduced by the source rebuild", key)
+		}
+	}
+	strs := func(key string) []string {
+		values, _ := build[key].([]any)
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				t.Fatalf("GoReleaser %s entries must be strings: %v", key, build[key])
+			}
+			out = append(out, text)
+		}
+		return out
+	}
+	if build["main"] != "." || build["binary"] != "saltbox-lint" {
+		t.Errorf("unexpected GoReleaser main package or binary: %v %v", build["main"], build["binary"])
+	}
+	// release.mjs creates this exact tree, then archives it as the source.
+	if build["dir"] != "bin/release-source/saltbox-lint-source" {
+		t.Errorf("GoReleaser must build the published source tree, got dir %v", build["dir"])
+	}
+	source, err := os.ReadFile("../extension/scripts/source.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`join(root, "bin/release-source")`, `join(output, "saltbox-lint-source")`, `"go", ["mod", "vendor", "-o", join(tree, "vendor")]`} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("source.mjs no longer creates the GoReleaser build tree: missing %s", want)
+		}
+	}
+	script, err := os.ReadFile("../extension/scripts/release.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := strings.Index(string(script), "await createSource()")
+	built := strings.Index(string(script), "run(\n  goreleaser,")
+	if created < 0 || built < 0 || created > built {
+		t.Error("release.mjs must create the source tree before GoReleaser builds it")
+	}
+	env, flags, ldflags := strs("env"), strs("flags"), strs("ldflags")
+	if !slices.Contains(flags, "-mod=vendor") || !slices.Contains(flags, "-buildvcs=false") ||
+		!slices.Contains(env, "GOPROXY=off") || !slices.Contains(env, "GOFLAGS=") {
+		t.Errorf("shipped builds must be offline, vendored and unstamped: env=%v flags=%v", env, flags)
+	}
+	if len(ldflags) != 1 || !strings.Contains(ldflags[0], "{{ .Version }}") {
+		t.Fatalf("want one versioned ldflags value, got %v", ldflags)
+	}
+	var ci struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				ID    string
+				Shell string
+				Run   string
+			}
+		}
+	}
+	readYAML(t, "../.github/workflows/ci.yml", &ci)
+	var rebuild string
+	for _, phase := range ci.Jobs["check"].Steps {
+		if phase.ID == "source_rebuild" {
+			if phase.Shell != "bash" {
+				t.Errorf("source rebuild requires bash: %q", phase.Shell)
+			}
+			rebuild = strings.Join(strings.Fields(strings.ReplaceAll(phase.Run, "\\\n", " ")), " ")
+		}
+	}
+	if rebuild == "" {
+		t.Fatal("check job source rebuild missing")
+	}
+	targets := []string{}
+	for _, goos := range strs("goos") {
+		for _, goarch := range strs("goarch") {
+			targets = append(targets, goos+"_"+goarch)
+		}
+	}
+	for _, want := range []string{
+		`tar -xzf "dist/saltbox-lint_${version}_source.tar.gz"`,
+		"for target in " + strings.Join(targets, " ") + "; do",
+		`cd "$rebuild/saltbox-lint-source"`,
+		"env " + strings.Join(env, " ") + ` GOOS="$goos" GOARCH="$goarch" go build ` + strings.Join(flags, " ") +
+			` -ldflags "` + strings.ReplaceAll(ldflags[0], "{{ .Version }}", "$version") + `" -o "$rebuild/rebuilt/$target/$binary" .`,
+		`unzip -q "dist/saltbox-lint_${version}_${target}.zip" "$binary"`,
+		`tar -xzf "dist/saltbox-lint_${version}_${target}.tar.gz" -C "$shipped" "$binary"`,
+		`cmp "$rebuild/rebuilt/$target/$binary" "$shipped/$binary"`,
+	} {
+		if !strings.Contains(rebuild, want) {
+			t.Errorf("source rebuild must use the shipped build settings and compare bytes: missing %q", want)
+		}
 	}
 }
 

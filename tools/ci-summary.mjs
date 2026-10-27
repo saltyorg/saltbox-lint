@@ -334,7 +334,7 @@ export function renderSummary(kind, context) {
     checks = [
       ...preparation,
       ["build_package", "Quality gate and package verification"],
-      ["source_rebuild", "Offline source rebuild"],
+      ["source_rebuild", "Offline source rebuild and binary comparison"],
       ["vulnerability_upload", "Vulnerability evidence upload"],
       ["release_upload", "Package artifact upload"],
     ];

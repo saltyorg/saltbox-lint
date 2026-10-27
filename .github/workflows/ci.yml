@@ -45,15 +45,37 @@ jobs:
           else
             make build snapshot
           fi
-      - name: Rebuild from the matching source with dependency downloads disabled
+      - name: Rebuild the matching source offline and compare shipped binaries
         id: source_rebuild
+        shell: bash
+        # These go build settings must equal the .goreleaser.yaml build settings.
         run: |
-          mkdir -p "$RUNNER_TEMP/source-rebuild"
-          tar -xzf dist/*_source.tar.gz -C "$RUNNER_TEMP/source-rebuild"
+          rebuild="$RUNNER_TEMP/source-rebuild"
+          mkdir -p "$rebuild"
           version=$(node -p 'require("./extension/package.json").version')
-          cd "$RUNNER_TEMP/source-rebuild/saltbox-lint-source"
-          CGO_ENABLED=0 GOPROXY=off GOSUMDB=off go build -mod=vendor -buildvcs=false -trimpath -ldflags "-s -w -X main.version=$version" -o saltbox-lint .
-          ./saltbox-lint --version
+          tar -xzf "dist/saltbox-lint_${version}_source.tar.gz" -C "$rebuild"
+          for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64; do
+            goos=${target%_*}
+            goarch=${target#*_}
+            binary=saltbox-lint
+            shipped="$rebuild/shipped/$target"
+            mkdir -p "$shipped"
+            if [[ "$goos" == windows ]]; then
+              binary=saltbox-lint.exe
+              unzip -q "dist/saltbox-lint_${version}_${target}.zip" "$binary" -d "$shipped"
+            else
+              tar -xzf "dist/saltbox-lint_${version}_${target}.tar.gz" -C "$shipped" "$binary"
+            fi
+            (
+              cd "$rebuild/saltbox-lint-source"
+              env CGO_ENABLED=0 GOFLAGS= GOPROXY=off GOSUMDB=off GOOS="$goos" GOARCH="$goarch" \
+                go build -mod=vendor -buildvcs=false -trimpath \
+                -ldflags "-s -w -X main.version=$version" -o "$rebuild/rebuilt/$target/$binary" .
+            )
+            sha256sum "$rebuild/rebuilt/$target/$binary" "$shipped/$binary"
+            cmp "$rebuild/rebuilt/$target/$binary" "$shipped/$binary"
+          done
+          "$rebuild/rebuilt/linux_amd64/saltbox-lint" --version
       - name: Retain required vulnerability scan evidence
         id: vulnerability_upload
         if: always()

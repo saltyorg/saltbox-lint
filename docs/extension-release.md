@@ -36,6 +36,21 @@ The release scripts verify archive/ZIP structure, binary identity and source
 hashes. The source archive includes vendored modules, modified Nuri and its WASM
 wrapper, matching Oniguruma source, license texts and build instructions.
 
+GoReleaser builds the shipped binaries from that exact source tree
+(`bin/release-source/saltbox-lint-source`, created before GoReleaser runs) with
+`CGO_ENABLED=0`, an empty `GOFLAGS`, `GOPROXY=off`, `GOSUMDB=off`,
+`-mod=vendor -buildvcs=false -trimpath` and
+`-ldflags "-s -w -X main.version=<version>"`. The CI check job extracts the
+published source archive and rebuilds all six targets offline with the same
+settings, then requires each rebuilt binary to be byte-identical (`cmp`, with
+both SHA-256 values logged) to the binary in the corresponding CLI archive.
+VSIX packaging already requires each bundled binary to equal GoReleaser's
+binary for its target. Binaries therefore carry no `vcs.*` build settings or
+module `h1:` sums in `go version -m`; the release commit, dirty-tree flag and
+input hashes are recorded in `SOURCE.json` and `SOURCE-PROVENANCE.json`.
+`integration/ci_test.go` requires `.goreleaser.yaml` and the CI rebuild to keep
+identical settings.
+
 ## Required CI coverage
 
 The [CI workflow](../.github/workflows/ci.yml) checks and packages artifacts on

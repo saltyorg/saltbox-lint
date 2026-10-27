@@ -1,10 +1,18 @@
 version: 2
 project_name: saltbox-lint
 builds:
+  # Shipped binaries are built offline from the exact tree published as the
+  # source archive (release.mjs creates it first), with vendored modules and no
+  # VCS stamp. CI rebuilds that archive with the same settings and requires
+  # byte-identical binaries; integration tests keep both definitions aligned.
   - main: .
+    dir: bin/release-source/saltbox-lint-source
     binary: saltbox-lint
     env:
       - CGO_ENABLED=0
+      - GOFLAGS=
+      - GOPROXY=off
+      - GOSUMDB=off
     goos:
       - linux
       - darwin
@@ -13,6 +21,8 @@ builds:
       - amd64
       - arm64
     flags:
+      - -mod=vendor
+      - -buildvcs=false
       - -trimpath
     ldflags:
       - -s -w -X main.version={{ .Version }}
