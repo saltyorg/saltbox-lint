@@ -213,7 +213,7 @@ func TestDeepFlowPathsRenderOnRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var paths []string
-	var node ast.Node = file.Docs[0].Body
+	node := file.Docs[0].Body
 	for node != nil {
 		paths = append(paths, node.GetPath())
 		switch n := node.(type) {
