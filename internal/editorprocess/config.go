@@ -1,5 +1,7 @@
-// Package editorprocess connects an editor CLI group to its external test owner.
-// Ordinary invocations do not enable this optional supervision protocol.
+// Package editorprocess connects an editor CLI group to its owners. Every editor
+// invocation watches an inherited lifetime pipe from the extension host. The
+// optional external test supervision protocol is not enabled for ordinary
+// invocations.
 package editorprocess
 
 import (
