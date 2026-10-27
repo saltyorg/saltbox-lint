@@ -10,13 +10,13 @@ import (
 
 func newMappingNode(ctx *context, tk *Token, isFlow bool, values ...*ast.MappingValueNode) (*ast.MappingNode, error) {
 	node := ast.Mapping(tk.RawToken(), isFlow, values...)
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	return node, nil
 }
 
 func newMappingValueNode(ctx *context, colonTk, entryTk *Token, key ast.MapKeyNode, value ast.Node) (*ast.MappingValueNode, error) {
 	node := ast.MappingValue(colonTk.RawToken(), key, value)
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	node.CollectEntry = entryTk.RawToken()
 	if key.GetToken().Position.Line == value.GetToken().Position.Line {
 		// originally key was commented, but now that null value has been added, value must be commented.
@@ -41,7 +41,7 @@ func newMappingValueNode(ctx *context, colonTk, entryTk *Token, key ast.MapKeyNo
 
 func newMappingKeyNode(ctx *context, tk *Token) (*ast.MappingKeyNode, error) {
 	node := ast.MappingKey(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func newMappingKeyNode(ctx *context, tk *Token) (*ast.MappingKeyNode, error) {
 
 func newAnchorNode(ctx *context, tk *Token) (*ast.AnchorNode, error) {
 	node := ast.Anchor(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func newAnchorNode(ctx *context, tk *Token) (*ast.AnchorNode, error) {
 
 func newAliasNode(ctx *context, tk *Token) (*ast.AliasNode, error) {
 	node := ast.Alias(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func newAliasNode(ctx *context, tk *Token) (*ast.AliasNode, error) {
 
 func newDirectiveNode(ctx *context, tk *Token) (*ast.DirectiveNode, error) {
 	node := ast.Directive(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func newDirectiveNode(ctx *context, tk *Token) (*ast.DirectiveNode, error) {
 
 func newMergeKeyNode(ctx *context, tk *Token) (*ast.MergeKeyNode, error) {
 	node := ast.MergeKey(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func newMergeKeyNode(ctx *context, tk *Token) (*ast.MergeKeyNode, error) {
 
 func newNullNode(ctx *context, tk *Token) (*ast.NullNode, error) {
 	node := ast.Null(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func newNullNode(ctx *context, tk *Token) (*ast.NullNode, error) {
 
 func newBoolNode(ctx *context, tk *Token) (*ast.BoolNode, error) {
 	node := ast.Bool(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func newBoolNode(ctx *context, tk *Token) (*ast.BoolNode, error) {
 
 func newIntegerNode(ctx *context, tk *Token) (*ast.IntegerNode, error) {
 	node := ast.Integer(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func newIntegerNode(ctx *context, tk *Token) (*ast.IntegerNode, error) {
 
 func newFloatNode(ctx *context, tk *Token) (*ast.FloatNode, error) {
 	node := ast.Float(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func newFloatNode(ctx *context, tk *Token) (*ast.FloatNode, error) {
 
 func newInfinityNode(ctx *context, tk *Token) (*ast.InfinityNode, error) {
 	node := ast.Infinity(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func newInfinityNode(ctx *context, tk *Token) (*ast.InfinityNode, error) {
 
 func newNanNode(ctx *context, tk *Token) (*ast.NanNode, error) {
 	node := ast.Nan(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func newNanNode(ctx *context, tk *Token) (*ast.NanNode, error) {
 
 func newStringNode(ctx *context, tk *Token) (*ast.StringNode, error) {
 	node := ast.String(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func newStringNode(ctx *context, tk *Token) (*ast.StringNode, error) {
 
 func newLiteralNode(ctx *context, tk *Token) (*ast.LiteralNode, error) {
 	node := ast.Literal(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func newLiteralNode(ctx *context, tk *Token) (*ast.LiteralNode, error) {
 
 func newTagNode(ctx *context, tk *Token) (*ast.TagNode, error) {
 	node := ast.Tag(tk.RawToken())
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func newTagNode(ctx *context, tk *Token) (*ast.TagNode, error) {
 
 func newSequenceNode(ctx *context, tk *Token, isFlow bool) (*ast.SequenceNode, error) {
 	node := ast.Sequence(tk.RawToken(), isFlow)
-	node.SetPath(ctx.path)
+	node.SetPathRef(ctx.path)
 	if err := setLineComment(ctx, node, tk); err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ func setLineComment(ctx *context, node ast.Node, tk *Token) error {
 		return nil
 	}
 	comment := ast.CommentGroup([]*token.Token{tk.LineComment})
-	comment.SetPath(ctx.path)
+	comment.SetPathRef(ctx.path)
 	if err := node.SetComment(comment); err != nil {
 		return err
 	}
@@ -245,13 +245,49 @@ func setHeadComment(cm *ast.CommentGroupNode, value ast.Node) error {
 	switch n := value.(type) {
 	case *ast.MappingNode:
 		if len(n.Values) != 0 && value.GetComment() == nil {
-			cm.SetPath(n.Values[0].GetPath())
+			copyPath(cm, n.Values[0])
 			return n.Values[0].SetComment(cm)
 		}
 	case *ast.MappingValueNode:
-		cm.SetPath(n.GetPath())
+		copyPath(cm, n)
 		return n.SetComment(cm)
 	}
-	cm.SetPath(value.GetPath())
+	copyPath(cm, value)
 	return value.SetComment(cm)
+}
+
+type pathRefNode interface {
+	GetPathRef() *ast.PathRef
+	SetPathRef(*ast.PathRef)
+}
+
+// setPathRef stores a lazily rendered path on nodes that support it.
+func setPathRef(dst ast.Node, ref *ast.PathRef) {
+	if d, ok := dst.(pathRefNode); ok {
+		d.SetPathRef(ref)
+		return
+	}
+	dst.SetPath(ref.String())
+}
+
+// copyPath shares src's lazily rendered path with dst instead of rendering it.
+func copyPath(dst, src ast.Node) {
+	if s, ok := src.(pathRefNode); ok {
+		if ref := s.GetPathRef(); ref != nil {
+			setPathRef(dst, ref)
+			return
+		}
+	}
+	dst.SetPath(src.GetPath())
+}
+
+// pathKey identifies a mapping key path by its shared parent and final segment
+// without rendering the complete path.
+type pathKey struct {
+	parent  *ast.PathRef
+	segment string
+}
+
+func pathKeyOf(ref *ast.PathRef) pathKey {
+	return pathKey{parent: ref.Parent(), segment: ref.Segment()}
 }

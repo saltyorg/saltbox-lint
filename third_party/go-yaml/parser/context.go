@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/goccy/go-yaml/ast"
 	"github.com/goccy/go-yaml/token"
 )
 
 // context context at parsing
 type context struct {
 	tokenRef *tokenRef
-	path     string
+	path     *ast.PathRef
 	isFlow   bool
 }
 
@@ -84,13 +85,13 @@ func (c *context) withGroup(g *TokenGroup) *context {
 
 func (c *context) withChild(path string) *context {
 	ctx := *c
-	ctx.path = c.path + "." + normalizePath(path)
+	ctx.path = c.path.Child(normalizePath(path))
 	return &ctx
 }
 
 func (c *context) withIndex(idx uint) *context {
 	ctx := *c
-	ctx.path = c.path + "[" + fmt.Sprint(idx) + "]"
+	ctx.path = c.path.Index(idx)
 	return &ctx
 }
 
@@ -102,7 +103,7 @@ func (c *context) withFlow(isFlow bool) *context {
 
 func newContext() *context {
 	return &context{
-		path: "$",
+		path: ast.RootPathRef(),
 	}
 }
 

@@ -18,6 +18,23 @@ source adaptation against frozen published-parser contracts and checks safe
 formatting preservation and idempotence. Its bounded wide-map allocation test
 rejects the original quadratic work without a wall-time assertion.
 
+`lazy-yaml-path.patch` stops copying the complete YAMLPath into every nested
+parser context and node. `ast.PathRef` stores one parent pointer and final
+segment per level; `GetPath` renders the same path string on request, and
+duplicate-key detection compares the shared parent and final key segment.
+Deeply nested flow collections therefore retain linear rather than quadratic
+memory. The patch applies to the copied originals of `ast/ast.go`,
+`parser/context.go` and `parser/node.go`, and to `parser/parser.go` after
+`iterative-mapping.patch`. Public APIs are additive (`ast.PathRef`,
+`BaseNode.GetPathRef`, `BaseNode.SetPathRef`); `SetPath` and `GetPath` keep
+their behavior, but parsed nodes leave the exported `BaseNode.Path` field empty
+because populating it would reintroduce the quadratic copies. Readers must use
+`GetPath`. The root `lint/parser_contract_test.go` deep-flow allocation test
+rejects quadratic growth and checks rendered paths.
+
+`LOCAL-CORRECTIONS.json` records each corrected file's before and after hash
+and the patch that produced it.
+
 This scoped copy retains complete production packages and public APIs, plus
 upstream ast, lexer, parser, printer and token tests and the parser's three newline
 fixtures. Upstream CI, docs, root tests and their bulk YAML conformance fixtures

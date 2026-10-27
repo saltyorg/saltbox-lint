@@ -75,7 +75,7 @@ var yamlVersionMap = map[string]YAMLVersion{
 
 type parser struct {
 	tokens                []*Token
-	pathMap               map[string]ast.Node
+	pathMap               map[pathKey]ast.Node
 	yamlVersion           YAMLVersion
 	allowDuplicateMapKey  bool
 	secondaryTagDirective *ast.DirectiveNode
@@ -101,7 +101,7 @@ func newParser(tokens token.Tokens, mode Mode, opts []Option) (*parser, error) {
 	}
 	p := &parser{
 		tokens:  tks,
-		pathMap: make(map[string]ast.Node),
+		pathMap: make(map[pathKey]ast.Node),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -126,7 +126,7 @@ func (p *parser) parseDocument(ctx *context, docGroup *TokenGroup) (*ast.Documen
 		return ast.Document(docGroup.RawToken(), nil), nil
 	}
 
-	p.pathMap = make(map[string]ast.Node)
+	p.pathMap = make(map[pathKey]ast.Node)
 
 	var (
 		tokens = docGroup.Tokens
@@ -500,10 +500,10 @@ func (p *parser) parseMap(ctx *context) (*ast.MappingNode, error) {
 				footer = p.parseFootComment(ctx, current.key.Column())
 				if len(mapNode.Values)-current.first == 1 {
 					mapNode.Values[current.first].FootComment = footer
-					footer.SetPath(mapNode.Values[current.first].Key.GetPath())
+					copyPath(footer, mapNode.Values[current.first].Key)
 					footer = nil
 				} else {
-					footer.SetPath(mapNode.GetPath())
+					copyPath(footer, mapNode)
 				}
 			}
 			if len(frames) == 1 {
@@ -636,11 +636,11 @@ func (p *parser) parseMapKey(ctx *context, g *TokenGroup) (ast.MapKeyNode, error
 		key.Value = scalar
 		keyText := p.mapKeyText(scalar)
 		keyPath := ctx.withChild(keyText).path
-		key.SetPath(keyPath)
+		setPathRef(key, keyPath)
 		if err := p.validateMapKey(ctx, key.GetToken(), keyPath, g.Last()); err != nil {
 			return nil, err
 		}
-		p.pathMap[keyPath] = key
+		p.pathMap[pathKeyOf(keyPath)] = key
 		return key, nil
 	}
 	if g.Last().Type() != token.MappingValueType {
@@ -657,17 +657,17 @@ func (p *parser) parseMapKey(ctx *context, g *TokenGroup) (ast.MapKeyNode, error
 	}
 	keyText := p.mapKeyText(key)
 	keyPath := ctx.withChild(keyText).path
-	key.SetPath(keyPath)
+	setPathRef(key, keyPath)
 	if err := p.validateMapKey(ctx, key.GetToken(), keyPath, g.Last()); err != nil {
 		return nil, err
 	}
-	p.pathMap[keyPath] = key
+	p.pathMap[pathKeyOf(keyPath)] = key
 	return key, nil
 }
 
-func (p *parser) validateMapKey(ctx *context, tk *token.Token, keyPath string, colonTk *Token) error {
+func (p *parser) validateMapKey(ctx *context, tk *token.Token, keyPath *ast.PathRef, colonTk *Token) error {
 	if !p.allowDuplicateMapKey {
-		if n, exists := p.pathMap[keyPath]; exists {
+		if n, exists := p.pathMap[pathKeyOf(keyPath)]; exists {
 			pos := n.GetToken().Position
 			return errors.ErrSyntax(
 				fmt.Sprintf("mapping key %q already defined at [%d:%d]", tk.Value, pos.Line, pos.Column),
@@ -1090,7 +1090,7 @@ func (p *parser) parseFlowSequence(ctx *context) (*ast.SequenceNode, error) {
 		if err := setLineComment(ctx, seqEntry, entryTk); err != nil {
 			return nil, err
 		}
-		seqEntry.SetPath(ctx.path)
+		seqEntry.SetPathRef(ctx.path)
 		node.Entries = append(node.Entries, seqEntry)
 
 		isFirst = false
@@ -1129,7 +1129,7 @@ func (p *parser) parseSequence(ctx *context) (*ast.SequenceNode, error) {
 		if err := setLineComment(ctx, seqEntry, seqTk); err != nil {
 			return nil, err
 		}
-		seqEntry.SetPath(ctx.path)
+		seqEntry.SetPathRef(ctx.path)
 		seqNode.ValueHeadComments = append(seqNode.ValueHeadComments, headComment)
 		seqNode.Values = append(seqNode.Values, value)
 		seqNode.Entries = append(seqNode.Entries, seqEntry)
@@ -1146,7 +1146,7 @@ func (p *parser) parseSequence(ctx *context) (*ast.SequenceNode, error) {
 			// treat it as a footer comment for the last element.
 			seqNode.FootComment = p.parseFootComment(ctx, seqTk.Column())
 			if len(seqNode.Values) != 0 {
-				seqNode.FootComment.SetPath(seqNode.Values[len(seqNode.Values)-1].GetPath())
+				copyPath(seqNode.FootComment, seqNode.Values[len(seqNode.Values)-1])
 			}
 		}
 	}

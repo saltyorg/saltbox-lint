@@ -1,0 +1,26 @@
+{
+  "ast/ast.go": {
+    "before": "ffda35a0261de33c56ca3f87cc3e4a2503bd94e7465a23e31c1457bb145acb00",
+    "after": "52a5511c0954637d2fdcf230a41daaca3f9bc70e0e136f762133d92cfb67cef1",
+    "patch": "lazy-yaml-path.patch",
+    "reason": "shared-parent YAMLPath references rendered on request"
+  },
+  "parser/context.go": {
+    "before": "eac8d66584407fa8979f038678ba2bf8be51e2e3a8b0b7e327c483dc897b3d06",
+    "after": "b49b330835607c86f2ff05a1beed0db3bbda07115133bbc5bbf934ecda45ed5b",
+    "patch": "lazy-yaml-path.patch",
+    "reason": "shared-parent YAMLPath references rendered on request"
+  },
+  "parser/node.go": {
+    "before": "bd502bb802c589318504eb5661eb748b5e20d0cae726eec4c5def2bead88b98a",
+    "after": "4b86de0262412317a7b55021587ddaf3dc07886e9edbe3e6688c876d17a18ea3",
+    "patch": "lazy-yaml-path.patch",
+    "reason": "shared-parent YAMLPath references rendered on request"
+  },
+  "parser/parser.go": {
+    "before": "94ac79c68d6f511cd744aa1e298b830c49420dcbff39694f08393be9ecc269a6",
+    "after": "ad879162eceeadb67240116b88547367b6ad0a8d7115159ac1b7f0ddc361357a",
+    "patch": "lazy-yaml-path.patch",
+    "reason": "shared-parent YAMLPath references rendered on request; before is the iterative-mapping.patch result"
+  }
+}

@@ -13,5 +13,9 @@
   "maintenance": "Remove the replacement when a published upstream release provides equivalent iterative sibling accumulation and passes the preservation and allocation regressions. Compare every upstream update against the recorded original source inventory and this patch.",
   "compatibilityChanges": "COMPATIBILITY-CHANGES.json",
   "intentionalPatchDiff": "iterative-mapping.patch",
-  "compatibilityPatchDiff": "lint-compatibility.patch"
+  "compatibilityPatchDiff": "lint-compatibility.patch",
+  "localCorrections": "LOCAL-CORRECTIONS.json",
+  "localCorrectionPatchDiffs": [
+    "lazy-yaml-path.patch"
+  ]
 }

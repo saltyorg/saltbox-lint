@@ -175,3 +175,66 @@ func TestWideMapAllocationBound(t *testing.T) {
 		t.Fatalf("wide mapping allocated %d bytes, exceeds linear budget %d", allocated, entries*bytesPerEntry)
 	}
 }
+
+func deepFlowSource(depth int) []byte {
+	return []byte("---\nfoo_x: " + strings.Repeat("[", depth) + strings.Repeat("]", depth) + "\n")
+}
+
+func TestDeepFlowAllocationBound(t *testing.T) {
+	// The published parser copied the complete YAMLPath into every nested
+	// context and node, so doubling flow depth quadrupled allocation. Shared
+	// parent path segments keep the real lint entry point linear.
+	measure := func(depth int) uint64 {
+		data := deepFlowSource(depth)
+		runtime.GC()
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		source, ds := Parse("roles/foo/defaults/main.yml", data)
+		runtime.ReadMemStats(&after)
+		if len(ds) != 0 || len(source.Documents) != 1 {
+			t.Fatalf("deep flow depth %d: %v", depth, ds)
+		}
+		runtime.KeepAlive(source)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	small, large := measure(4000), measure(8000)
+	if float64(large) > 2.6*float64(small) {
+		t.Fatalf("deep flow allocation grew superlinearly: depth 4000 = %d bytes, depth 8000 = %d bytes", small, large)
+	}
+	const bytesPerLevel = 4000
+	if large > 8000*bytesPerLevel {
+		t.Fatalf("deep flow depth 8000 allocated %d bytes, exceeds linear budget %d", large, 8000*bytesPerLevel)
+	}
+}
+
+func TestDeepFlowPathsRenderOnRequest(t *testing.T) {
+	file, err := parser.ParseBytes(deepFlowSource(3), parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	var node ast.Node = file.Docs[0].Body
+	for node != nil {
+		paths = append(paths, node.GetPath())
+		switch n := node.(type) {
+		case *ast.MappingNode:
+			node = n.Values[0]
+		case *ast.MappingValueNode:
+			paths = append(paths, n.Key.GetPath())
+			node = n.Value
+		case *ast.SequenceNode:
+			if len(n.Values) == 0 {
+				node = nil
+				continue
+			}
+			paths = append(paths, n.Entries[0].GetPath())
+			node = n.Values[0]
+		default:
+			node = nil
+		}
+	}
+	want := []string{"$", "$.foo_x", "$.foo_x", "$.foo_x", "$.foo_x[0]", "$.foo_x[0]", "$.foo_x[0][0]", "$.foo_x[0][0]"}
+	if strings.Join(paths, " ") != strings.Join(want, " ") {
+		t.Fatalf("paths = %q, want %q", paths, want)
+	}
+}

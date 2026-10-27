@@ -217,6 +217,95 @@ type BaseNode struct {
 	Path    string
 	Comment *CommentGroupNode
 	read    int
+	pathRef *PathRef
+}
+
+// PathRef is an immutable YAMLPath built from shared parent segments. Parsed
+// nodes keep a reference instead of a rendered path so nested values retain
+// linear memory; GetPath renders the full path only on request.
+type PathRef struct {
+	parent  *PathRef
+	segment string
+	index   uint
+	isIndex bool
+}
+
+// RootPathRef returns the YAMLPath root ("$").
+func RootPathRef() *PathRef {
+	return &PathRef{segment: "$"}
+}
+
+// Child returns the path of a mapping child. segment is appended after a dot
+// exactly as supplied.
+func (r *PathRef) Child(segment string) *PathRef {
+	return &PathRef{parent: r, segment: "." + segment}
+}
+
+// Index returns the path of a sequence entry.
+func (r *PathRef) Index(idx uint) *PathRef {
+	return &PathRef{parent: r, index: idx, isIndex: true}
+}
+
+// Parent returns the enclosing path, or nil for the root.
+func (r *PathRef) Parent() *PathRef {
+	if r == nil {
+		return nil
+	}
+	return r.parent
+}
+
+// Segment renders only the final path segment, such as "$", ".key" or "[0]".
+func (r *PathRef) Segment() string {
+	if r == nil {
+		return ""
+	}
+	if r.isIndex {
+		return "[" + strconv.FormatUint(uint64(r.index), 10) + "]"
+	}
+	return r.segment
+}
+
+// String renders the complete YAMLPath.
+func (r *PathRef) String() string {
+	if r == nil {
+		return ""
+	}
+	size := 0
+	depth := 0
+	for p := r; p != nil; p = p.parent {
+		depth++
+		if p.isIndex {
+			size += 2 + decimalLen(p.index)
+		} else {
+			size += len(p.segment)
+		}
+	}
+	segments := make([]*PathRef, depth)
+	for p := r; p != nil; p = p.parent {
+		depth--
+		segments[depth] = p
+	}
+	var b strings.Builder
+	b.Grow(size)
+	for _, p := range segments {
+		if p.isIndex {
+			b.WriteByte('[')
+			b.WriteString(strconv.FormatUint(uint64(p.index), 10))
+			b.WriteByte(']')
+		} else {
+			b.WriteString(p.segment)
+		}
+	}
+	return b.String()
+}
+
+func decimalLen(v uint) int {
+	n := 1
+	for v >= 10 {
+		v /= 10
+		n++
+	}
+	return n
 }
 
 func addCommentString(base string, node *CommentGroupNode) string {
@@ -240,6 +329,9 @@ func (n *BaseNode) GetPath() string {
 	if n == nil {
 		return ""
 	}
+	if n.pathRef != nil {
+		return n.pathRef.String()
+	}
 	return n.Path
 }
 
@@ -249,6 +341,27 @@ func (n *BaseNode) SetPath(path string) {
 		return
 	}
 	n.Path = path
+	n.pathRef = nil
+}
+
+// GetPathRef returns the lazily rendered YAMLPath reference set by SetPathRef,
+// or nil when the node path was set as a string.
+func (n *BaseNode) GetPathRef() *PathRef {
+	if n == nil {
+		return nil
+	}
+	return n.pathRef
+}
+
+// SetPathRef sets a lazily rendered YAMLPath for the current node. GetPath
+// renders it on request; the Path field is cleared because it would otherwise
+// duplicate every parent segment.
+func (n *BaseNode) SetPathRef(path *PathRef) {
+	if n == nil {
+		return
+	}
+	n.Path = ""
+	n.pathRef = path
 }
 
 // GetComment returns comment token instance
