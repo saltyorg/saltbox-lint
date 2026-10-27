@@ -2,6 +2,7 @@ package lint
 
 import (
 	"bytes"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -457,5 +458,46 @@ func TestPlanFixesEmptyProposalsPreserveSourceValidation(t *testing.T) {
 		if _, err := PlanFixes(p, diagnostics); err != nil {
 			t.Fatalf("unselected empty proposal: %v", err)
 		}
+	}
+}
+
+// Structural projections compose every fix stage against the original bytes
+// and keep only changed bytes, so ignored-line checks see the real edits.
+func TestComposeMinimalEdits(t *testing.T) {
+	random := rand.New(rand.NewPCG(1, 2))
+	edits := func(data []byte) []Edit {
+		var result []Edit
+		for pos := 0; pos <= len(data); pos++ {
+			if random.IntN(4) != 0 {
+				continue
+			}
+			end := min(len(data), pos+random.IntN(3))
+			result = append(result, Edit{Span: Span{pos, end}, Text: []string{"", "a", "\r\n", "é", "ab"}[random.IntN(5)]})
+			pos = end
+		}
+		return result
+	}
+	for range 300 {
+		base := []byte("ab\r\ncdé\nef")[:random.IntN(12)]
+		prior := edits(base)
+		middle := applyEdits(base, prior)
+		next := edits(middle)
+		want := applyEdits(middle, next)
+		composed := minimalEdits(base, composeEdits(prior, next))
+		if got := applyEdits(base, composed); !bytes.Equal(got, want) {
+			t.Fatalf("base %q prior %+v next %+v: got %q want %q", base, prior, next, got, want)
+		}
+		if _, err := orderedEdits(composed); err != nil {
+			t.Fatalf("unordered projection %+v: %v", composed, err)
+		}
+		for _, e := range composed {
+			if bytes.Equal(base[e.Span.Start:e.Span.End], []byte(e.Text)) {
+				t.Fatalf("no-op edit %+v", e)
+			}
+		}
+	}
+	got := minimalEdits([]byte("keep\nold\nkeep\n"), []Edit{{Span: Span{0, 14}, Text: "keep\nnew\nkeep\n"}})
+	if len(got) != 1 || got[0] != (Edit{Span: Span{5, 8}, Text: "new"}) {
+		t.Fatalf("minimal edits %+v", got)
 	}
 }

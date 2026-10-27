@@ -122,11 +122,11 @@ func planFixes(project *Project, diagnostics []Diagnostic, decisions *[]FixDecis
 				break
 			}
 		}
-		if !valid || !fixesPreserveIgnoredLines(source, edits) {
+		if !valid {
 			continue
 		}
 		after := applyEdits(source.Data, edits)
-		if bytes.Equal(source.Data, after) || !validation.verifiedCandidate(after) || !independentlyEquivalent(source, after, nil) {
+		if bytes.Equal(source.Data, after) || !whitespaceChangePreservesIgnoredLines(source, after) || !validation.verifiedCandidate(after) || !independentlyEquivalent(source, after, nil) {
 			continue
 		}
 		candidate, _ := Parse(path, after)
@@ -446,15 +446,22 @@ func replaceFile(rootPath string, root *os.Root, path string, change Change, ide
 	return nil
 }
 
+// verifiedChange repeats the planner's checks on the same minimal edits, so a
+// change shown by --diff is never refused by --fix. Structural rebuilding owns
+// its own exact projection and ignored-line check.
 func verifiedChange(s *Source, change Change) bool {
-	if !fixesPreserveIgnoredLines(s, replacementEdits(s.Data, change.After)) {
-		return false
-	}
 	if len(change.fixRules) == 0 {
-		return verifiedCandidate(s, change.After) && independentlyEquivalent(s, change.After, nil)
+		return whitespaceChangePreservesIgnoredLines(s, change.After) && verifiedCandidate(s, change.After) && independentlyEquivalent(s, change.After, nil)
 	}
 	expected, _, ok := buildStructuralChange(s, change.fixRules)
 	return ok && bytes.Equal(change.After, expected.After) && slices.Equal(change.fixEdits, expected.fixEdits)
+}
+
+// whitespaceChangePreservesIgnoredLines checks the minimal whitespace edits
+// between the snapshots rather than one span covering every change.
+func whitespaceChangePreservesIgnoredLines(s *Source, after []byte) bool {
+	edits, ok := whitespaceChanges(s.Data, after)
+	return ok && fixesPreserveIgnoredLines(s, edits)
 }
 
 // RequireWritableSelection preflights every primary before a command can write.

@@ -2,6 +2,8 @@ package lint
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -78,5 +80,41 @@ func TestInlineIgnoreProtectsAgainstCombinedFixes(t *testing.T) {
 	forged := Change{Before: source.Data, After: []byte(strings.Replace(input, "when: first or enabled", "when: (first or enabled)", 1))}
 	if verifiedChange(source, forged) {
 		t.Fatal("writer verification admitted an edit to an ignored line")
+	}
+}
+
+// Fixes on both sides of an ignored line are verified against their minimal
+// edits, so a change shown by --diff is also accepted by --fix.
+func TestInlineIgnoreAllowsFixesAroundIgnoredLine(t *testing.T) {
+	const ignored = "demo_x: 1 # saltbox-lint ignore role-docker-state\n"
+	for _, tc := range []struct{ name, input, want string }{
+		{"whitespace", "demo_v: \"{{ a\n | f }}\"\n" + ignored + "demo_w: \"{{ b\n | g }}\"\n", "demo_v: \"{{ a\n            | f }}\"\n" + ignored + "demo_w: \"{{ b\n            | g }}\"\n"},
+		{"structural", "demo_role_docker_healthcheck:\n  test: [CMD, curl]\n" + ignored + "demo_w: \"{{ b\n | g }}\"\n", "demo_role_docker_healthcheck:\n  test:\n    - CMD\n    - curl\n" + ignored + "demo_w: \"{{ b\n            | g }}\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := expressionFixProject(t, "roles/demo/defaults/main.yml", tc.input)
+			p.Root = t.TempDir()
+			path := filepath.Join(p.Root, "roles/demo/defaults/main.yml")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.input), 0600); err != nil {
+				t.Fatal(err)
+			}
+			admitWriteTestSources(t, p)
+			changes, err := PlanFixes(p, Analyze(p, Rules()))
+			if err != nil || len(changes) != 1 || string(changes[0].After) != tc.want {
+				t.Fatalf("plan %+v %v", changes, err)
+			}
+			if !verifiedChange(p.Sources[changes[0].Path], changes[0]) {
+				t.Fatal("writer refused the planned change")
+			}
+			if err := WriteChanges(p, changes); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != tc.want {
+				t.Fatalf("wrote %q %v", got, err)
+			}
+		})
 	}
 }
