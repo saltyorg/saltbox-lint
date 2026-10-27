@@ -15,6 +15,7 @@ func TestRepresentationFixes(t *testing.T) {
 		{"healthcheck", "demo_role_docker_healthcheck:\n  test: [CMD, 'curl', 42, true, \"null\", '🌨'] # keep\n", "demo_role_docker_healthcheck:\n  test: # keep\n    - CMD\n    - 'curl'\n    - 42\n    - true\n    - \"null\"\n    - '🌨'\n"},
 		{"shell allowance", "demo_role_docker_healthcheck:\n  test: [CMD-SHELL, 'curl || exit 1']  # saltbox-lint allow cmd-shell\n", "demo_role_docker_healthcheck:\n  test:  # saltbox-lint allow cmd-shell\n    - CMD-SHELL\n    - 'curl || exit 1'\n"},
 		{"none", "demo_role_docker_healthcheck:\n  test: [NONE]", "demo_role_docker_healthcheck:\n  test:\n    - NONE"},
+		{"plain indicators", "demo_role_docker_healthcheck:\n  test: [CMD, curl, -f, http://localhost:8080/health, a#b]\n", "demo_role_docker_healthcheck:\n  test:\n    - CMD\n    - curl\n    - -f\n    - http://localhost:8080/health\n    - a#b\n"},
 		{"computed", "# Owner comment\ndemo_role_secret_lookup: '{{ value }}'", "# Owner comment\n# Skip docs\ndemo_role_secret_lookup: '{{ value }}'"},
 		{"mixed", "demo_role_secret_lookup: \"{{ (a if flag else b) }}\"\ndemo_role_docker_healthcheck:\n  test: [CMD, curl, \"{{ (path if flag else fallback) }}\"]\nv: \"{{ x\n | f }}\"\n", "# Skip docs\ndemo_role_secret_lookup: \"{{ a if flag else b }}\"\ndemo_role_docker_healthcheck:\n  test:\n    - CMD\n    - curl\n    - \"{{ path if flag else fallback }}\"\nv: \"{{ x\n       | f }}\"\n"},
 		{"header missing marker", strings.TrimSuffix(safeHeader, "---\n") + "v: true\n", safeHeader + "v: true\n"},
@@ -48,6 +49,7 @@ func TestRepresentationFixes(t *testing.T) {
 func TestRepresentationRefusals(t *testing.T) {
 	for _, input := range []string{
 		"demo_role_docker_healthcheck:\n  test: []\n", "demo_role_docker_healthcheck:\n  test: [CMD]\n", "demo_role_docker_healthcheck:\n  test: [NONE, extra]\n", "demo_role_docker_healthcheck:\n  test: [CMD-SHELL, curl, extra]\n", "demo_role_docker_healthcheck:\n  test: [CMD, '']\n", "demo_role_docker_healthcheck:\n  test: [CMD, null]\n", "demo_role_docker_healthcheck:\n  test: [CMD, {}]\n", "demo_role_docker_healthcheck:\n  test: &test [CMD, curl]\n", "demo_role_docker_healthcheck:\n  test: [CMD, !unsafe curl]\n", "demo_role_docker_healthcheck: {test: [CMD, curl]}\n", "anchor: &command curl\ndemo_role_docker_healthcheck:\n  test: [CMD, *command]\n", "{demo_role_secret_lookup: value}\n", "demo_role_secret_lookup: value\n---\nother: 2\n",
+		"demo_role_docker_healthcheck:\n  test: [CMD, curl, ?x]\n", "demo_role_docker_healthcheck:\n  test: [CMD, curl, :x]\n", "demo_role_docker_healthcheck:\n  test: [CMD, curl, x?]\n", "demo_role_docker_healthcheck:\n  test: [CMD, curl, a?b]\n",
 		"# Title: Incomplete\nv: true\n", "---\n" + safeHeader + "v: true\n", "\ufeff" + safeHeader + "v: true\n", "%YAML 1.2\n" + safeHeader + "v: true\n", safeHeader + "v: true\n---\nw: true\n",
 	} {
 		t.Run(input, func(t *testing.T) {
@@ -278,5 +280,40 @@ func TestRepresentationHeaderMarkerBoundsContinuations(t *testing.T) {
 	again, err := PlanFixes(next, Analyze(next, Rules()))
 	if err != nil || len(again) != 0 {
 		t.Fatalf("not idempotent: %+v %v", again, err)
+	}
+}
+
+// The patched source parser accepts YAML 1.2 flow spellings that YAML 1.1
+// loaders read differently, so yaml.v3 independently decides fix semantics.
+func TestIndependentFixEquivalence(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, after string
+		want                bool
+	}{
+		{"flow to block", "t: [CMD, curl, 'x']\n", "t:\n  - CMD\n  - curl\n  - 'x'\n", true},
+		{"jinja whitespace", "v: \"{{ a | f }}\"\n", "v: \"{{ a\n  | f }}\"\n", true},
+		{"flow key becomes string", "t: [CMD, ?x]\n", "t:\n  - CMD\n  - ?x\n", false},
+		{"invalid original", "t: [CMD, :x]\n", "t:\n  - CMD\n  - :x\n", false},
+		{"literal text", "v: \"{{ a }} b\"\n", "v: \"{{ a }}  b\"\n", false},
+		{"type", "v: '1'\n", "v: 1\n", false},
+		{"comment only", "v: 1\n", "# note\nv: 1\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, _ := Parse("values.yml", []byte(tc.before))
+			if got := independentlyEquivalent(source, []byte(tc.after), nil); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFlowPlainKeepsBlockMeaning(t *testing.T) {
+	for text, want := range map[string]bool{
+		"curl": true, "-f": true, "http://localhost:8080": true, "a#b": true, "42": true,
+		"?x": false, ":x": false, "x?": false, "a?b": false, "x:": false, "a: b": false, "a #b": false, "a\tb": false, "|x": false, "%x": false, "@x": false, "&x": false, "": false,
+	} {
+		if got := flowPlainKeepsBlockMeaning(text); got != want {
+			t.Errorf("%q: got %v want %v", text, got, want)
+		}
 	}
 }

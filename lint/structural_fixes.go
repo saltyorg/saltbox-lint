@@ -213,6 +213,9 @@ func buildStructuralChange(source *Source, rules []string) (Change, []structural
 			chosen = append(chosen, structuralFix{rule: d.RuleID, span: d.Span})
 		}
 	}
+	if !independentlyEquivalent(s, normalized.Data, changes) {
+		return Change{}, nil, false
+	}
 	projection := replacementEdits(s.Data, normalized.Data)
 	if !fixesPreserveIgnoredLines(s, projection) {
 		return Change{}, nil, false

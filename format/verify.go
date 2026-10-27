@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
@@ -13,54 +12,6 @@ import (
 	"github.com/saltyorg/saltbox-lint/lint"
 	"gopkg.in/yaml.v3"
 )
-
-func parseIndependent(ctx context.Context, data []byte) ([]*yaml.Node, error) {
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	var docs []*yaml.Node
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		var n yaml.Node
-		err := decoder.Decode(&n)
-		if err == io.EOF {
-			return docs, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("independent YAML parser: %w", err)
-		}
-		if err = validateKeys(ctx, &n); err != nil {
-			return nil, err
-		}
-		docs = append(docs, &n)
-	}
-}
-
-func validateKeys(ctx context.Context, n *yaml.Node) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if n.Kind == yaml.MappingNode {
-		seen := map[string]bool{}
-		for i := 0; i < len(n.Content); i += 2 {
-			k := n.Content[i]
-			if k.Kind != yaml.ScalarNode {
-				return fmt.Errorf("complex mapping keys are unsupported")
-			}
-			key := k.Tag + "\x00" + k.Value
-			if seen[key] {
-				return fmt.Errorf("duplicate mapping keys are unsupported")
-			}
-			seen[key] = true
-		}
-	}
-	for _, child := range n.Content {
-		if err := validateKeys(ctx, child); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func verify(ctx context.Context, before, after *lint.Source, jinja bool) error {
 	if bytes.HasSuffix(before.Data, []byte("\n")) != bytes.HasSuffix(after.Data, []byte("\n")) {
@@ -92,11 +43,11 @@ func verify(ctx context.Context, before, after *lint.Source, jinja bool) error {
 	if !slices.Equal(documentSyntax(before.Data), documentSyntax(after.Data)) {
 		return fmt.Errorf("document markers or directives changed")
 	}
-	a, err := parseIndependent(ctx, before.Data)
+	a, err := lint.ParseIndependentYAML(ctx, before.Data)
 	if err != nil {
 		return err
 	}
-	b, err := parseIndependent(ctx, after.Data)
+	b, err := lint.ParseIndependentYAML(ctx, after.Data)
 	if err != nil {
 		return err
 	}
@@ -106,7 +57,7 @@ func verify(ctx context.Context, before, after *lint.Source, jinja bool) error {
 	comments := a
 	if jinja {
 		if sections := lint.FormattingSectionEdits(before); len(sections) > 0 {
-			comments, err = parseIndependent(ctx, applyEdits(before.Data, sections))
+			comments, err = lint.ParseIndependentYAML(ctx, applyEdits(before.Data, sections))
 			if err != nil {
 				return err
 			}

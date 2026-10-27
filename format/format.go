@@ -51,7 +51,7 @@ func plan(ctx context.Context, filename string, data []byte) (Result, error) {
 	if len(ds) > 0 {
 		return Result{}, fmt.Errorf("invalid YAML: %s", ds[0].Message)
 	}
-	if _, err := parseIndependent(ctx, data); err != nil {
+	if _, err := lint.ParseIndependentYAML(ctx, data); err != nil {
 		return Result{}, err
 	}
 	after, structural, err := canonicalCandidate(ctx, before)

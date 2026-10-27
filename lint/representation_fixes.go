@@ -87,6 +87,9 @@ func healthcheckFlowFix(s *Source, entry Entry, newline string) (structuralFix, 
 		if bytes.ContainsAny(s.Data[item.Span.Start:item.Span.End], "\r\n") || item.Tag != "" || item.Anchor != "" || item.Kind == "alias" || (item.Style != "plain" && item.Style != "single-quoted" && item.Style != "double-quoted") {
 			return structuralFix{}, false
 		}
+		if item.Style == "plain" && !flowPlainKeepsBlockMeaning(string(s.Data[item.Span.Start:item.Span.End])) {
+			return structuralFix{}, false
+		}
 	}
 	end := n.Span.End
 	for end < len(s.Data) && s.Data[end] != '\r' && s.Data[end] != '\n' {
@@ -132,6 +135,24 @@ func healthcheckFlowFix(s *Source, entry Entry, newline string) (structuralFix, 
 	}
 	edits = append(edits, Edit{Span: Span{gap.Start, end}, Text: strings.TrimSuffix(text, newline)})
 	return structuralFix{rule: "docker-healthcheck-shape", span: key.Span, node: n, sequenceStyle: "block", edits: edits}, true
+}
+
+// flowPlainKeepsBlockMeaning accepts only plain flow items whose spelling is
+// read identically as a block sequence entry by YAML 1.2 and by the YAML 1.1
+// loaders Ansible and yaml.v3 use. YAML 1.2 ns-plain-first permits '?', ':'
+// and '-' before a safe character in both contexts, but YAML 1.1 flow context
+// treats a leading '?' or ':' as a key or value indicator and ends plain
+// scalars at '?'. Other c-indicators cannot begin a plain scalar, and a final
+// ':' or a ':'/'#' after whitespace separates a key or comment. Every such
+// spelling is declined instead of being reinterpreted by the block form.
+func flowPlainKeepsBlockMeaning(text string) bool {
+	if text == "" || strings.ContainsRune("?:,[]{}#&*!|>'\"%@`", rune(text[0])) {
+		return false
+	}
+	if strings.ContainsAny(text, "?\t") || strings.HasSuffix(text, ":") || strings.Contains(text, ": ") || strings.Contains(text, " #") {
+		return false
+	}
+	return true
 }
 
 // Only whitespace, separator commas and complete comment lines may live

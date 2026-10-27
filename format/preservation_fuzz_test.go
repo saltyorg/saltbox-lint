@@ -123,15 +123,15 @@ func FuzzCanonicalFormatting(f *testing.F) {
 		if len(bd)+len(ad) != 0 {
 			t.Fatal("accepted plan contains invalid YAML")
 		}
-		old, err := parseIndependent(t.Context(), data)
+		old, err := lint.ParseIndependentYAML(t.Context(), data)
 		if err != nil {
 			t.Fatal(err)
 		}
-		current, err := parseIndependent(t.Context(), final)
+		current, err := lint.ParseIndependentYAML(t.Context(), final)
 		if err != nil {
 			t.Fatal(err)
 		}
-		comments, err := parseIndependent(t.Context(), apply(data, lint.FormattingSectionEdits(before)))
+		comments, err := lint.ParseIndependentYAML(t.Context(), apply(data, lint.FormattingSectionEdits(before)))
 		if err != nil {
 			t.Fatal(err)
 		}

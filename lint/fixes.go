@@ -126,7 +126,7 @@ func planFixes(project *Project, diagnostics []Diagnostic, decisions *[]FixDecis
 			continue
 		}
 		after := applyEdits(source.Data, edits)
-		if bytes.Equal(source.Data, after) || !validation.verifiedCandidate(after) {
+		if bytes.Equal(source.Data, after) || !validation.verifiedCandidate(after) || !independentlyEquivalent(source, after, nil) {
 			continue
 		}
 		candidate, _ := Parse(path, after)
@@ -451,7 +451,7 @@ func verifiedChange(s *Source, change Change) bool {
 		return false
 	}
 	if len(change.fixRules) == 0 {
-		return verifiedCandidate(s, change.After)
+		return verifiedCandidate(s, change.After) && independentlyEquivalent(s, change.After, nil)
 	}
 	expected, _, ok := buildStructuralChange(s, change.fixRules)
 	return ok && bytes.Equal(change.After, expected.After) && slices.Equal(change.fixEdits, expected.fixEdits)
