@@ -47,7 +47,7 @@ type sarifRegion struct {
 }
 type sarifPhysical struct {
 	ArtifactLocation sarifArtifact `json:"artifactLocation"`
-	Region           sarifRegion   `json:"region"`
+	Region           *sarifRegion  `json:"region,omitempty"`
 }
 type sarifLocation struct {
 	ID               int           `json:"id,omitempty"`
@@ -146,7 +146,6 @@ func sarifRules(ds []Diagnostic) []sarifRule {
 }
 
 func sarifSourceLocation(p *lint.Project, loc Location) sarifLocation {
-	r := utf16Range(p.Sources[loc.Path], loc.Span)
 	// URL.Path escapes literal %, #, ?, spaces and Unicode while preserving
 	// path separators. Source identities already use root-relative slashes.
 	uri := (&url.URL{Path: loc.Path}).EscapedPath()
@@ -155,7 +154,14 @@ func sarifSourceLocation(p *lint.Project, loc Location) sarifLocation {
 	if strings.Contains(first, ":") {
 		uri = "./" + uri
 	}
-	return sarifLocation{PhysicalLocation: sarifPhysical{sarifArtifact{uri, sarifSourceRoot}, sarifRegion{r.Start.Line, r.Start.Column, r.End.Line, r.End.Column}}}
+	location := sarifLocation{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{uri, sarifSourceRoot}}}
+	// Like the other renderers, a location whose source is not loaded keeps its
+	// artifact but omits the optional region, which requires UTF-16 columns.
+	if s := p.Sources[loc.Path]; s != nil {
+		r := utf16Range(s, loc.Span)
+		location.PhysicalLocation.Region = &sarifRegion{r.Start.Line, r.Start.Column, r.End.Line, r.End.Column}
+	}
+	return location
 }
 
 // Context identities exclude physical line numbers and report-local fix IDs.
@@ -190,7 +196,12 @@ func sarifFingerprint(p *lint.Project, d Diagnostic) string {
 }
 
 func sarifLocationContext(p *lint.Project, loc Location) []any {
-	data := p.Sources[loc.Path].Data
+	// An unloaded source contributes empty context; its path and message still
+	// participate in the identity.
+	var data []byte
+	if s := p.Sources[loc.Path]; s != nil {
+		data = s.Data
+	}
 	start, end := min(max(loc.Span.Start, 0), len(data)), min(max(loc.Span.End, 0), len(data))
 	lineStart := bytes.LastIndexByte(data[:start], '\n') + 1
 	lineEnd := end

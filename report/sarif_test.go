@@ -176,7 +176,7 @@ func TestSARIFUTF16HalfOpenLocations(t *testing.T) {
 	p, ds := sample()
 	result, _ := renderSARIF(t, p, ds)
 	related := result.Runs[0].Results[0].RelatedLocations[0]
-	if related.ID != 1 || related.Message.Text != "context" || related.PhysicalLocation.Region != (sarifRegion{2, 1, 2, 5}) {
+	if related.ID != 1 || related.Message.Text != "context" || related.PhysicalLocation.Region == nil || *related.PhysicalLocation.Region != (sarifRegion{2, 1, 2, 5}) {
 		t.Fatalf("related location: %+v", related)
 	}
 }
@@ -330,5 +330,31 @@ func TestSARIFParserFingerprintMovement(t *testing.T) {
 	}
 	if ids[0] != ids[1] {
 		t.Fatal("parser line numbers changed finding identity")
+	}
+}
+
+func TestSARIFUnloadedLocationsOmitRegions(t *testing.T) {
+	p, ds := sample()
+	ds[0].Related = []lint.RelatedLocation{{Path: "missing.yml", Span: lint.Span{Start: 3, End: 5}, Message: "unloaded"}}
+	unloaded := lint.Diagnostic{Path: "absent.yml", RuleID: "jinja-layout", Severity: "error", Message: "primary unloaded", Span: lint.Span{Start: 1, End: 2}}
+	result, wire := renderSARIF(t, p, append(ds[:1], unloaded))
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(wire))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sarifValidator(t).Validate(value); err != nil {
+		t.Fatal(err)
+	}
+	results := result.Runs[0].Results
+	related := results[0].RelatedLocations[0]
+	if related.PhysicalLocation.ArtifactLocation.URI != "missing.yml" || related.PhysicalLocation.Region != nil || related.Message.Text != "unloaded" {
+		t.Fatalf("unloaded related location: %+v", related)
+	}
+	if results[0].Locations[0].PhysicalLocation.Region == nil {
+		t.Fatal("loaded primary location lost its region")
+	}
+	primary := results[1].Locations[0].PhysicalLocation
+	if primary.ArtifactLocation.URI != "absent.yml" || primary.Region != nil || results[1].PartialFingerprints[sarifFingerprintVersion] == "" {
+		t.Fatalf("unloaded primary location: %+v", results[1])
 	}
 }
