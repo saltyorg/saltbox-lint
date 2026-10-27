@@ -7,7 +7,7 @@ Updated: 2026-10-17 for namespace configuration and inline finding ignores
 - Go 1.27.2; CLI builds for Linux, Darwin and Windows amd64/arm64 with CGO disabled; six native binaries feed eight explicit platform VSIXs, including Alpine reuse.
 - Cobra v1.10.2; command factories own explicit I/O and exit-code boundaries.
 - colorprofile v0.4.3, x/term v0.2.2 and uniseg v0.4.7 provide destination-aware terminal presentation and grapheme wrapping.
-- Locally patched goccy/go-yaml v1.19.2 validates lint sources with iterative same-column mapping accumulation and preserved comment unwind; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
+- Locally patched goccy/go-yaml v1.19.2 validates lint sources with iterative same-column mapping accumulation, preserved comment unwind, lazily rendered shared-parent YAML paths and source-faithful plain scalar origins; yaml.v3 v3.0.1 independently defines semantic acceptance. Immutable yamlindex records share preview lexing.
 - Embedded Ansible/Jinja TextMate grammars and authentic themes use locally patched Nuri v1.0.1; semantic data uses a frozen catalog.
 - Go testing covers table/golden fixtures, race safety and real Makefile/editor/terminal harnesses. Shared Action installer/runner tests live in `saltyorg/github-actions`; local `integration/` retains Makefile and VS Code task tests.
 - extension/: TypeScript 5.9.3, esbuild 0.28.2, stable VS Code APIs/types 1.100.0 and Node 24.20.0 build pin; no runtime Node dependencies.
