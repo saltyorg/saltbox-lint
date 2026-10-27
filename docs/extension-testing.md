@@ -528,7 +528,7 @@ The wider editor batches use the same boundaries:
 
 The ordinary build runs strict TypeScript checks for all extension source and
 TypeScript tests, plus [`tsconfig.helpers.json`](../extension/tsconfig.helpers.json)
-for thirty-five JavaScript roots: fourteen build/host/ownership/publishing
+for thirty-six JavaScript roots: fifteen build/host/ownership/publishing
 scripts, nine driver/gate/publishing tests, eight executable fixtures, the shared vulnerability-test
 driver, the pinned Go-tool installer, its owned output reporter and the CI
 summary renderer. Each

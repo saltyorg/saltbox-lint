@@ -11,6 +11,7 @@ import {
 import { createSource, filesIn } from "./source.mjs";
 import { packageTargets } from "./package.mjs";
 import { verifyCLIArchives } from "./verify-package.mjs";
+import { resolveStableTag } from "./verify-release.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -24,11 +25,10 @@ if (!goreleaser)
     "SALTBOX_GORELEASER must name the Makefile-pinned GoReleaser; run make snapshot or make release-artifacts",
   );
 if (stable) {
-  if (
-    run("git", ["describe", "--tags", "--exact-match"]).trim() !==
-    `v${manifest.version}`
-  )
-    throw new Error("Stable tag must match extension/package.json");
+  // Several tags may name one commit; GoReleaser must use the selected one.
+  process.env.GORELEASER_CURRENT_TAG = resolveStableTag(process.env, (args) =>
+    run("git", args),
+  );
   if (run("git", ["status", "--porcelain", "--untracked-files=no"]).trim())
     throw new Error("Stable artifacts require a clean tracked worktree");
 }

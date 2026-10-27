@@ -32,6 +32,7 @@ const helpers = [
   "scripts/owned-command-posix.mjs",
   "scripts/owned-group.mjs",
   "scripts/publish-marketplace.mjs",
+  "scripts/verify-release.mjs",
   "scripts/stage-binary.mjs",
   "scripts/test-host.mjs",
   "scripts/test-native-hosts.mjs",

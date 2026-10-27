@@ -515,6 +515,45 @@ func TestReleasePackagingUsesMakefileGoReleaserPin(t *testing.T) {
 	}
 }
 
+// The GitHub release is public; it must not precede the identity, checksum and
+// package verification that the Marketplace upload already requires.
+func TestReleaseVerifiesIdentityBeforePublishing(t *testing.T) {
+	type step struct {
+		Name string
+		Run  string
+		Env  map[string]string
+	}
+	var release struct {
+		Jobs map[string]struct{ Steps []step }
+	}
+	readYAML(t, "../.github/workflows/release.yml", &release)
+	identity := map[string]string{"RELEASE_TAG": "${{ github.ref_name }}", "RELEASE_COMMIT": "${{ github.sha }}"}
+	for job, publisher := range map[string]string{
+		"release":     "gh release create ",
+		"marketplace": "node extension/scripts/publish-marketplace.mjs dist",
+	} {
+		// The marketplace publisher runs the same shared verification itself.
+		verified, published := job == "marketplace", false
+		for _, phase := range release.Jobs[job].Steps {
+			if strings.TrimSpace(phase.Run) == "node extension/scripts/verify-release.mjs dist" {
+				verified = reflect.DeepEqual(phase.Env, identity)
+			}
+			if strings.Contains(phase.Run, publisher) {
+				published = true
+				if !verified {
+					t.Errorf("%s job publishes before verifying the tag, source identity and checksums", job)
+				}
+				if job == "marketplace" && !reflect.DeepEqual(phase.Env, identity) {
+					t.Error("marketplace publisher must verify the triggering tag and commit")
+				}
+			}
+		}
+		if !published {
+			t.Errorf("%s job publisher missing", job)
+		}
+	}
+}
+
 func readYAML(t *testing.T, path string, value any) {
 	t.Helper()
 	data, err := os.ReadFile(path)

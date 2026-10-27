@@ -80,6 +80,17 @@ validation again. Release authorization must cover both the GitHub release and
 the automatic Marketplace upload. Consumer version updates require separate
 authorization.
 
+Before creating the GitHub release, the release job runs
+[`verify-release.mjs`](../extension/scripts/verify-release.mjs), the same
+verification the Marketplace publisher uses. The triggering tag must equal the
+manifest and `SOURCE.json` versions, `SOURCE.json` must name the workflow
+commit, `checksums.txt` must cover exactly the downloaded assets, every package
+and the source archive must match their records, and a read-only
+`git ls-remote` must show the remote tag still pointing at that commit. Stable
+packaging uses the workflow's triggering tag (`GITHUB_REF_NAME`), or locally the
+manifest tag among all tags on `HEAD`, so several tags on one commit cannot
+select a different version.
+
 Keep the extension manifest and lockfile versions aligned, and add a matching
 version heading to `extension/CHANGELOG.md`. The release workflow prepends that
 section to GitHub's generated release notes and refuses a missing section.
