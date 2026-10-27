@@ -50,6 +50,17 @@ func (identity *sourceDiskIdentity) validate(rootPath string, root *os.Root, nam
 	if writable && current.Mode() != identity.file.Mode() {
 		return fmt.Errorf("file mode changed since analysis: %s", name)
 	}
+	// Atomic replacement gives this name a new file, so another hard link
+	// would keep the old contents. Like symlinks, such files are not written.
+	if writable {
+		links, err := sourceLinkCount(root, filepath.FromSlash(owner))
+		if err != nil {
+			return fmt.Errorf("inspect links of %s: %w", name, err)
+		}
+		if links > 1 {
+			return fmt.Errorf("refuse hard-linked file %s: %d links would diverge after replacement", name, links)
+		}
+	}
 	return nil
 }
 

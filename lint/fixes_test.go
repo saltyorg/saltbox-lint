@@ -165,6 +165,44 @@ func TestWriteChangesPreservesModeRejectsStaleAndSymlink(t *testing.T) {
 		t.Fatal("symlink target altered")
 	}
 }
+
+// Replacement by rename would detach a hard-linked name from its other links,
+// so writes refuse such files and leave every link unchanged.
+func TestWriteChangesRejectsHardLinkedFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "values.yml")
+	before := []byte("v: \"{{ a\n | f }}\"\n")
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "other.yml")
+	if err := os.Link(path, other); err != nil {
+		t.Fatalf("create hard link: %v", err)
+	}
+	p := layoutProject(t, string(before))
+	p.Root = root
+	admitWriteTestSources(t, p)
+	changes, err := PlanFixes(p, Analyze(p, Rules()))
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("plan: %+v %v", changes, err)
+	}
+	err = WriteChanges(p, changes)
+	if err == nil || !strings.Contains(err.Error(), "hard-linked file values.yml") {
+		t.Fatalf("hard-linked write: %v", err)
+	}
+	for _, name := range []string{path, other} {
+		if got, err := os.ReadFile(name); err != nil || !bytes.Equal(got, before) {
+			t.Fatalf("%s altered: %q %v", name, got, err)
+		}
+	}
+	if err := os.Remove(other); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteChanges(p, changes); err != nil {
+		t.Fatalf("single link: %v", err)
+	}
+}
+
 func TestWriteChangesRejectsUnverifiedAndUnselectedChanges(t *testing.T) {
 	root := t.TempDir()
 	input := "v: value\n"
