@@ -2,6 +2,9 @@ package lint
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -58,6 +61,58 @@ func TestParseRejectsInvalidLiteralYAMLCharacters(t *testing.T) {
 
 // These cases catch normalized source replacing original bytes, wrong rune/byte
 // coordinates, and extracting comments as expression-bearing scalar nodes.
+func TestTrailingWhitespaceBeforeLineBreaksIsValidYAML(t *testing.T) {
+	// Plain scalar origins once dropped spaces before CR/CRLF and before any
+	// line break followed by more content, failing as an internal yaml-syntax
+	// error. The equivalent file without trailing whitespace is the oracle.
+	for _, tt := range []struct{ name, input string }{
+		{"crlf integer", "---\r\nfoo_a: 1 \r\n"},
+		{"crlf string", "---\r\nfoo_a: abc  \r\n"},
+		{"crlf siblings", "---\r\nfoo_a: 1 \r\nfoo_b: abc\t\r\n"},
+		{"lf siblings", "---\nfoo_a: 1 \nfoo_b: abc  \n"},
+		{"cr only", "---\rfoo_a: 1 \rfoo_b: abc \r"},
+		{"blank indented line", "---\nfoo_a:\n  \n  b: c\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			file := filepath.Join(root, "roles", "foo", "defaults", "main.yml")
+			if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte(tt.input), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			p, err := Load(context.Background(), Options{Root: root, Paths: []string{file}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range Analyze(p, Rules()) {
+				if d.RuleID == "yaml-syntax" {
+					t.Fatalf("yaml-syntax diagnostic: %+v", d)
+				}
+			}
+			source := p.Sources["roles/foo/defaults/main.yml"]
+			if source == nil || len(source.Documents) != 1 {
+				t.Fatalf("source=%+v", source)
+			}
+			normalized := strings.NewReplacer(" \r\n", "\n", "  \r\n", "\n", "\t\r\n", "\n", "\r\n", "\n", " \r", "\n", "\r", "\n", "  \n", "\n", " \n", "\n").Replace(tt.input)
+			want, ds := Parse("roles/foo/defaults/main.yml", []byte(normalized))
+			if len(ds) != 0 {
+				t.Fatalf("oracle %q diagnostics: %+v", normalized, ds)
+			}
+			for _, key := range []string{"foo_a", "foo_b"} {
+				got, expected := source.Documents[0].Get(key), want.Documents[0].Get(key)
+				if (got == nil) != (expected == nil) || got != nil && (got.Kind != expected.Kind || got.Value != expected.Value) {
+					t.Fatalf("%s=%+v, want %+v", key, got, expected)
+				}
+				if got != nil && got.Kind == "scalar" && string(source.Data[got.Span.Start:got.Span.End]) != got.Value {
+					t.Fatalf("%s span %v does not cover %q", key, got.Span, got.Value)
+				}
+			}
+		})
+	}
+}
+
 func TestParsePreservesScalars(t *testing.T) {
 	cases := []struct{ name, data, key, value, raw, style string }{
 		{"quoted multiline", "value: \"{{ foo\n  | default('bar') }}\"\n", "value", "{{ foo | default('bar') }}", "\"{{ foo\n  | default('bar') }}\"", "double-quoted"},

@@ -129,6 +129,47 @@ func TestLocationProjectionsPreserveWhitespaceOnlyOriginsAndErrorCursors(t *test
 	}
 }
 
+// The lexer once dropped spaces before a line break from plain scalar origins,
+// so the origin " 1\r" or " 1\n" was not a substring of " 1 \r\n" or " 1 \n".
+func TestLocateTokensKeepsWhitespaceBeforeLineBreaksInOrigins(t *testing.T) {
+	for _, source := range []string{
+		"---\r\ncrlf_a: 1 \r\n",
+		"---\r\ncrlf_a: abc  \r\n",
+		"---\ncrlf_a: 1 \n",
+		"a: 1 \nb: 2\n",
+		"a: 1 \r\nb: 2\r\n",
+		"a: 1 \rb: 2 \rc: 3\r",
+		"a: 1\t\r\nb: 2\r\n",
+		"a: 1 \r\n  b \r\nc: 1\r\n",
+		"a: 1\n  \nb: 2\n",
+		"a:\r\n  \r\n  b: c\r\n",
+		"a:  \n  b: c\n",
+		"a:\t\n  b: c\n",
+		"- a \r\n- b\t\r\n",
+		"a: &x 1 \r\nb: !!str 2 \r\n",
+		"k: [a ,\r\n  b \r\n , c]\r\n",
+	} {
+		tokens := lexer.Tokenize(source)
+		if tk := tokens.InvalidToken(); tk != nil {
+			t.Fatalf("%q: invalid token %v", source, tk.Error)
+		}
+		locations, err := LocateTokens(source, tokens)
+		if err != nil {
+			t.Errorf("%q: %v", source, err)
+			continue
+		}
+		for i, tk := range tokens {
+			if tk.Type == token.DoubleQuoteType || tk.Origin == "" {
+				continue
+			}
+			end := locations[i].OriginEnd
+			if start := end - len(tk.Origin); start < 0 || source[start:end] != tk.Origin {
+				t.Errorf("%q token %d origin %q is not the source bytes before %d", source, i, tk.Origin, end)
+			}
+		}
+	}
+}
+
 func TestLocateTokensAcceptsOnlySharedWhitespaceAfterBlockTags(t *testing.T) {
 	for _, tt := range []struct {
 		source     string

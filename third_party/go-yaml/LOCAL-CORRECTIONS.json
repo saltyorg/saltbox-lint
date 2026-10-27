@@ -22,5 +22,17 @@
     "after": "ad879162eceeadb67240116b88547367b6ad0a8d7115159ac1b7f0ddc361357a",
     "patch": "lazy-yaml-path.patch",
     "reason": "shared-parent YAMLPath references rendered on request; before is the iterative-mapping.patch result"
+  },
+  "scanner/context.go": {
+    "before": "46e97f39c3373be9be7c99f2f09011b5ffe862ff52d33e07c2d8f949cfde09c2",
+    "after": "a975d1d281e264be370ea178ecce23eb46dffe3b9e5e2ebf8039d291b02ac88f",
+    "patch": "plain-origin-whitespace.patch",
+    "reason": "plain scalar origins keep whitespace before line breaks as contiguous source bytes"
+  },
+  "lexer/lexer_test.go": {
+    "before": "8c62b8f818d7a209762f9e84537dfdc615d9da4d6a6cebb08817dfdd9eda671d",
+    "after": "8db099fcb8d5faf1d7624beb7cbbf00a6d5c719f421b9091cc1b7911d2382033",
+    "patch": "plain-origin-whitespace.patch",
+    "reason": "upstream origin expectation updated for the retained whitespace; values unchanged"
   }
 }

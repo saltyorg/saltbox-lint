@@ -1979,7 +1979,9 @@ e: f
 					CharacterType: token.CharacterTypeMiscellaneous,
 					Indicator:     token.NotIndicator,
 					Value:         "b\nc d",
-					Origin:        "\n b\n\n\n c\n d\n",
+					// Local patch: whitespace before a line break inside an
+					// origin is retained so the origin is a source substring.
+					Origin: "\n b   \n\n  \n c\n d \n",
 				},
 				{
 					Type:          token.StringType,

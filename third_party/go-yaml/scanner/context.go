@@ -301,7 +301,13 @@ func (c *Context) removeRightSpaceFromBuf() {
 	buflen := len(trimmedBuf)
 	diff := len(c.obuf) - buflen
 	if diff > 0 {
-		c.obuf = c.obuf[:buflen]
+		// Local patch: trailing spaces are dropped only when they are the
+		// whole origin, where they would become leading whitespace. After
+		// content or a line break they stay, so the origin remains a contiguous
+		// source substring for LF, CRLF and CR line breaks.
+		if buflen == 0 {
+			c.obuf = c.obuf[:0]
+		}
 		c.buf = c.bufferedSrc()
 	}
 }

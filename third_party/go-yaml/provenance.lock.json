@@ -16,6 +16,7 @@
   "compatibilityPatchDiff": "lint-compatibility.patch",
   "localCorrections": "LOCAL-CORRECTIONS.json",
   "localCorrectionPatchDiffs": [
-    "lazy-yaml-path.patch"
+    "lazy-yaml-path.patch",
+    "plain-origin-whitespace.patch"
   ]
 }

@@ -32,6 +32,16 @@ because populating it would reintroduce the quadratic copies. Readers must use
 `GetPath`. The root `lint/parser_contract_test.go` deep-flow allocation test
 rejects quadratic growth and checks rendered paths.
 
+`plain-origin-whitespace.patch` keeps spaces and tabs before a line break in
+plain scalar origins once the origin already holds content or a line break.
+Upstream dropped them, so `" 1 \r\n"` produced the origin `" 1\r"` and
+`"a: 1 \nb: 2"` produced `" 1\n"`, neither of which is a source substring;
+lint source location then failed as a yaml-syntax error. Whitespace that would
+lead an origin is still dropped, preserving upstream tab-key validation.
+Scalar values, positions and errors are unchanged. One upstream lexer test
+origin expectation is updated to the retained source bytes. Root yamlindex and
+lint tests cover LF, CRLF and CR sources.
+
 `LOCAL-CORRECTIONS.json` records each corrected file's before and after hash
 and the patch that produced it.
 
