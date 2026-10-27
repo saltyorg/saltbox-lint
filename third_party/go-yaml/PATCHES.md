@@ -57,6 +57,16 @@ Uses of the `reflect.Ptr` alias use its synonymous `reflect.Pointer` name.
 Five debug print calls explicitly discard their results, preserving the existing
 void debug API. No lint exclusions were added.
 
+The root `integration/vendored_test.go` verifies these records offline. Every
+file in `UPSTREAM-SHA256.json` must keep its upstream bytes or be declared by a
+`FORMAT-CHANGES.json` or `COMPATIBILITY-CHANGES.json` before/after record (before
+equals the upstream hash, after the vendored hash) or a `*.patch`. Reverse-applying
+each file's patches, in reverse patch-name order, to the vendored copy must
+reproduce its upstream hash. `provenance.lock.json` must match the go.mod module
+and version, the module checksum, the license and parser hashes, and the files
+patched by each named patch; `lint-compatibility.patch` must patch exactly the
+files listed in `COMPATIBILITY-CHANGES.json`.
+
 Canonical `make check` and all six native Go suites check every retained package,
 including tests, vet, lint and module tidiness. Race runs cover supported targets.
 The source vulnerability scan includes a separate complete local-module scope

@@ -96,6 +96,17 @@ are inventoried above rather than represented as formatting-only changes. The
 captured-regexp functional patch remains separate and applies to the original
 `compile.go`.
 
+`highlighter-caches.patch` records the exact upstream-to-vendored changes for the
+line cache, document checkpoints and result style memo in the seven modified
+upstream files: `nuri.go`, `options.go`, and `internal/tokenizer/captures.go`,
+`injections.go`, `line.go`, `memo.go` and `tokenizer.go`. Files that are new in
+this copy are not part of that patch.
+
+The root `integration/vendored_test.go` verifies these records offline: every
+file in `UPSTREAM-SHA256.json` must keep its upstream bytes or be declared by
+`FORMAT-CHANGES.json` (before/after hashes) or a `*.patch`, and reverse-applying
+each patch to the vendored copy must reproduce the recorded upstream hash.
+
 `internal/grammar/backref_compatibility_test.go` is the compatibility regression test.
 It was observed failing before the patch. The demo's complete independent VS Code
 oracle fixtures also failed before this patch and pass after it.

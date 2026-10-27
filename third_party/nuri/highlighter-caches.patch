@@ -1,0 +1,516 @@
+--- a/nuri.go
++++ b/nuri.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"bytes"
+ 	"context"
++	"encoding/binary"
+ 	"encoding/json"
+ 	"errors"
+ 	"sort"
+@@ -11,8 +12,8 @@
+ 
+ 	"github.com/frostybee/nuri/ast"
+ 	"github.com/frostybee/nuri/internal/ansi"
+-	"github.com/frostybee/nuri/internal/registry"
+ 	"github.com/frostybee/nuri/internal/oniguruma"
++	"github.com/frostybee/nuri/internal/registry"
+ 	"github.com/frostybee/nuri/internal/tokenizer"
+ 	"github.com/frostybee/nuri/renderer"
+ 	"github.com/frostybee/nuri/theme"
+@@ -20,25 +21,25 @@
+ 
+ // Re-export ast types so consumers can write nuri.Element, etc.
+ type (
+-	Element            = ast.Element
+-	Text               = ast.Text
+-	Node               = ast.Node
+-	Transformer        = ast.Transformer
+-	BaseTransformer    = ast.BaseTransformer
+-	ThemedToken        = ast.ThemedToken
+-	TokenStyle         = ast.TokenStyle
+-	TokensResult       = ast.TokensResult
+-	Diagnostic         = ast.Diagnostic
+-	CodeToTokensOptions = ast.CodeToTokensOptions
+-	CodeToHTMLOptions  = ast.CodeToHTMLOptions
++	Element                = ast.Element
++	Text                   = ast.Text
++	Node                   = ast.Node
++	Transformer            = ast.Transformer
++	BaseTransformer        = ast.BaseTransformer
++	ThemedToken            = ast.ThemedToken
++	TokenStyle             = ast.TokenStyle
++	TokensResult           = ast.TokensResult
++	Diagnostic             = ast.Diagnostic
++	CodeToTokensOptions    = ast.CodeToTokensOptions
++	CodeToHTMLOptions      = ast.CodeToHTMLOptions
+ 	CodeToANSIOptions      = ast.CodeToANSIOptions
+ 	CodeToPlainTextOptions = ast.CodeToPlainTextOptions
+ 	CodeToJSONOptions      = ast.CodeToJSONOptions
+ 	CodeToSVGOptions       = ast.CodeToSVGOptions
+-	ColorDepth         = ast.ColorDepth
+-	LineRange          = ast.LineRange
+-	StyleClassMap      = ast.StyleClassMap
+-	ThemeColors        = ast.ThemeColors
++	ColorDepth             = ast.ColorDepth
++	LineRange              = ast.LineRange
++	StyleClassMap          = ast.StyleClassMap
++	ThemeColors            = ast.ThemeColors
+ )
+ 
+ // Re-export ast functions.
+@@ -66,7 +67,10 @@
+ 	timeoutMs     int
+ 	minContrast   float64
+ 	defaults      *ast.CodeToHTMLOptions
++	lineCache     *tokenizer.LineCache
+ 	closeOnce     sync.Once
++	documentMu    sync.RWMutex
++	documents     *documentCache
+ 
+ 	adjustedMu sync.RWMutex
+ 	adjusted   map[string]*theme.Theme
+@@ -137,6 +141,11 @@
+ 		reg.RegisterAlias(a.alias, a.target)
+ 	}
+ 
++	var lineCache *tokenizer.LineCache
++	if cfg.lineCacheBytes > 0 {
++		lineCache = tokenizer.NewLineCache(cfg.lineCacheBytes)
++	}
++
+ 	return &Highlighter{
+ 		eng:           eng,
+ 		pool:          pool,
+@@ -145,6 +154,8 @@
+ 		timeoutMs:     cfg.timeoutMs,
+ 		minContrast:   cfg.minContrast,
+ 		defaults:      cfg.defaults,
++		lineCache:     lineCache,
++		documents:     newDocumentCache(cfg.documentCacheBytes),
+ 		adjusted:      make(map[string]*theme.Theme),
+ 	}, nil
+ }
+@@ -153,6 +164,7 @@
+ 	opts := tokenizer.TokenizeOptions{
+ 		MaxLineLength: h.maxLineLength,
+ 		TimeoutMs:     h.timeoutMs,
++		LineCache:     h.lineCache,
+ 	}
+ 	if maxLine != nil {
+ 		opts.MaxLineLength = *maxLine
+@@ -215,6 +227,10 @@
+ func (h *Highlighter) Close(ctx context.Context) error {
+ 	var closeErr error
+ 	h.closeOnce.Do(func() {
++		h.documentMu.Lock()
++		defer h.documentMu.Unlock()
++		h.documents.close()
++		h.lineCache.Clear()
+ 		poolErr := h.pool.Close(ctx)
+ 		engErr := h.eng.Close(ctx)
+ 		closeErr = errors.Join(poolErr, engErr)
+@@ -566,6 +582,43 @@
+ 	}
+ }
+ 
++// resultStyleMemo reuses theme selection only while one result is built.
++// Themes remain mutable between calls, so this must not live on Highlighter.
++type resultStyleMemo map[*theme.Theme]map[string]ast.TokenStyle
++
++func newResultStyleMemo() resultStyleMemo {
++	return make(resultStyleMemo)
++}
++
++func (m resultStyleMemo) resolve(thm *theme.Theme, scopes []string, key string) ast.TokenStyle {
++	styles := m[thm]
++	if style, ok := styles[key]; ok {
++		return style
++	}
++	if styles == nil {
++		styles = make(map[string]ast.TokenStyle)
++		m[thm] = styles
++	}
++	style := resolveStyle(thm, scopes)
++	styles[key] = style
++	return style
++}
++
++// scopeStackKey preserves every scope boundary and byte in order. A plain
++// separator join is ambiguous because scope strings are not restricted here.
++func scopeStackKey(scopes []string) string {
++	size := len(scopes) * binary.MaxVarintLen64
++	for _, scope := range scopes {
++		size += len(scope)
++	}
++	key := make([]byte, 0, size)
++	for _, scope := range scopes {
++		key = binary.AppendUvarint(key, uint64(len(scope)))
++		key = append(key, scope...)
++	}
++	return string(key)
++}
++
+ func (h *Highlighter) buildResult(
+ 	code string,
+ 	tokResult *tokenizer.TokenizeResult,
+@@ -578,6 +631,7 @@
+ 		BG:        thm.DefaultBackground,
+ 		ThemeName: thm.Name,
+ 	}
++	memo := newResultStyleMemo()
+ 
+ 	for i, tokLine := range tokResult.Lines {
+ 		themed := make([]ast.ThemedToken, 0, len(tokLine))
+@@ -593,7 +647,8 @@
+ 			if content == "" {
+ 				continue
+ 			}
+-			ts := resolveStyle(thm, tok.Scopes)
++			scopeKey := scopeStackKey(tok.Scopes)
++			ts := memo.resolve(thm, tok.Scopes, scopeKey)
+ 			themed = append(themed, ast.ThemedToken{
+ 				Content:   content,
+ 				Color:     ts.Color,
+@@ -636,6 +691,7 @@
+ 		BG:        defaultThm.DefaultBackground,
+ 		ThemeName: defaultThm.Name,
+ 	}
++	memo := newResultStyleMemo()
+ 
+ 	for i, tokLine := range tokResult.Lines {
+ 		themed := make([]ast.ThemedToken, 0, len(tokLine))
+@@ -651,13 +707,14 @@
+ 			if content == "" {
+ 				continue
+ 			}
+-			def := resolveStyle(defaultThm, tok.Scopes)
++			scopeKey := scopeStackKey(tok.Scopes)
++			def := memo.resolve(defaultThm, tok.Scopes, scopeKey)
+ 			styles := make(map[string]ast.TokenStyle, len(keys)-1)
+ 			for _, k := range keys {
+ 				if k == defaultKey {
+ 					continue
+ 				}
+-				styles[k] = resolveStyle(thms[k], tok.Scopes)
++				styles[k] = memo.resolve(thms[k], tok.Scopes, scopeKey)
+ 			}
+ 			themed = append(themed, ast.ThemedToken{
+ 				Content:     content,
+@@ -891,7 +948,14 @@
+ 
+ // LoadLanguage registers a grammar from raw JSON bytes.
+ func (h *Highlighter) LoadLanguage(name string, data []byte) error {
+-	return h.reg.RegisterGrammar(name, data)
++	h.documentMu.Lock()
++	defer h.documentMu.Unlock()
++	if err := h.reg.RegisterGrammar(name, data); err != nil {
++		return err
++	}
++	h.documents.clear()
++	h.lineCache.Clear()
++	return nil
+ }
+ 
+ // LoadTheme registers a theme from raw JSON bytes.
+@@ -901,7 +965,11 @@
+ 
+ // RegisterAlias maps a language alias to a canonical name.
+ func (h *Highlighter) RegisterAlias(alias, target string) {
++	h.documentMu.Lock()
++	defer h.documentMu.Unlock()
+ 	h.reg.RegisterAlias(alias, target)
++	h.documents.clear()
++	h.lineCache.Clear()
+ }
+ 
+ // LoadedLanguages returns the names of all currently cached grammars.
+--- a/options.go
++++ b/options.go
+@@ -36,6 +36,8 @@
+ 	minContrast         float64
+ 	regexInterruption   bool
+ 	compilationCacheDir string
++	lineCacheBytes      int
++	documentCacheBytes  int
+ 	grammars            []grammarEntry
+ 	themes              []themeEntry
+ 	aliases             []aliasEntry
+@@ -159,6 +161,13 @@
+ 	return func(o *options) { o.compilationCacheDir = dir }
+ }
+ 
++// WithLineCache enables exact TextMate line-result reuse with a fixed retained
++// memory budget in bytes. Cache entries are scoped to this Highlighter and key
++// the complete incoming grammar state; 0 disables the cache (the default).
++func WithLineCache(maxBytes int) Option {
++	return func(o *options) { o.lineCacheBytes = max(0, maxBytes) }
++}
++
+ func defaultOptions() options {
+ 	return options{
+ 		poolSize:          runtime.NumCPU(),
+@@ -166,3 +175,8 @@
+ 		regexInterruption: true,
+ 	}
+ }
++
++// WithDocumentCache bounds immutable document checkpoints independently of line reuse.
++func WithDocumentCache(maxBytes int) Option {
++	return func(o *options) { o.documentCacheBytes = max(0, maxBytes) }
++}
+--- a/internal/tokenizer/captures.go
++++ b/internal/tokenizer/captures.go
+@@ -171,6 +171,9 @@
+ 		cc.ctx, truncatedLine, cc.g, cc.onigLib,
+ 		tempState, cc.resolver, nil, cc.memo, captureStart, false, time.Time{},
+ 	)
++	if err != nil {
++		cc.memo.taintCache()
++	}
+ 	if err != nil || len(tokens) == 0 {
+ 		builder.produce(captureEnd, scopes)
+ 		return
+--- a/internal/tokenizer/injections.go
++++ b/internal/tokenizer/injections.go
+@@ -9,7 +9,7 @@
+ 
+ // collectInjections gathers all injections that apply to grammar g:
+ // its own self-injections plus external grammars that injectTo g's scope.
+-func collectInjections(g *grammar.Grammar, resolver grammar.GrammarResolver) []grammar.Injection {
++func collectInjections(g *grammar.Grammar, resolver grammar.GrammarResolver, memo *compileMemo) []grammar.Injection {
+ 	all := make([]grammar.Injection, len(g.Injections))
+ 	copy(all, g.Injections)
+ 
+@@ -23,7 +23,11 @@
+ 	}
+ 
+ 	injectors, err := provider.GetInjectors(g.ScopeName)
+-	if err != nil || len(injectors) == 0 {
++	if err != nil {
++		memo.taintCache()
++		return all
++	}
++	if len(injectors) == 0 {
+ 		return all
+ 	}
+ 
+@@ -74,12 +78,20 @@
+ 		}
+ 
+ 		entry := memo.getOrCompileInjection(ctx, i, inj, g)
+-		if entry.err != nil || len(entry.rules) == 0 {
++		if entry.err != nil {
++			memo.taintCache()
++			continue
++		}
++		if len(entry.rules) == 0 {
+ 			continue
+ 		}
+ 
+ 		mr, err := findNextMatch(ctx, entry, line, pos, options)
+-		if err != nil || mr == nil {
++		if err != nil {
++			memo.taintCache()
++			continue
++		}
++		if mr == nil {
+ 			continue
+ 		}
+ 
+--- a/internal/tokenizer/line.go
++++ b/internal/tokenizer/line.go
+@@ -87,11 +87,13 @@
+ 		searchOpts := computeSearchOptions(isFirstLine, pos, anchorPosition)
+ 		mr, err := findNextMatch(ctx, entry, scanLine, pos, searchOpts)
+ 		if err != nil {
++			memo.taintCache()
+ 			break
+ 		}
+ 
+ 		injMatch, injPriority, injErr := matchInjections(ctx, injections, g, state, scanLine, pos, memo, searchOpts)
+ 		if injErr != nil {
++			memo.taintCache()
+ 			break
+ 		}
+ 
+@@ -448,6 +450,9 @@
+ 
+ 		whileOpts := computeSearchOptions(isFirstLine, linePos, anchorPosition)
+ 		mr, err := findNextMatch(ctx, entry, whileScanLine, linePos, whileOpts)
++		if err != nil {
++			memo.taintCache()
++		}
+ 		if err != nil || mr == nil {
+ 			// While condition failed — pop back to this frame's parent
+ 			for state.depth() > idx {
+--- a/internal/tokenizer/memo.go
++++ b/internal/tokenizer/memo.go
+@@ -45,12 +45,21 @@
+ type compileMemo struct {
+ 	onigLib      oniguruma.OnigLib
+ 	resolver     grammar.GrammarResolver
++	cacheTainted bool
+ 	entries      map[memoKey]*memoEntry
+ 	whiles       map[*grammar.WhileRule]*memoEntry
+ 	injections   map[int]*memoEntry // keyed by index into the injections slice
+ 	captureRoots map[*grammar.CaptureRule]*grammar.CollectionRule
+ }
+ 
++// taintCache prevents this document's current and subsequent line states from
++// entering or consulting the persistent line cache. Tokenization deliberately
++// soft-falls back from some scanner errors, so the taint must survive later
++// lines whose state was derived from that fallback.
++func (m *compileMemo) taintCache() { m.cacheTainted = true }
++
++func (m *compileMemo) cacheSafe() bool { return !m.cacheTainted }
++
+ func newCompileMemo(onigLib oniguruma.OnigLib, resolver grammar.GrammarResolver) *compileMemo {
+ 	return &compileMemo{
+ 		onigLib:      onigLib,
+--- a/internal/tokenizer/tokenizer.go
++++ b/internal/tokenizer/tokenizer.go
+@@ -17,6 +17,7 @@
+ type TokenizeOptions struct {
+ 	MaxLineLength int // 0 = no limit; lines exceeding this are emitted unstyled
+ 	TimeoutMs     int // 0 = no timeout; per-line soft timeout in milliseconds
++	LineCache     *LineCache
+ }
+ 
+ // Tokenize tokenizes source code using the given grammar. The resolver is
+@@ -29,6 +30,10 @@
+ 	opts TokenizeOptions,
+ 	resolver ...grammar.GrammarResolver,
+ ) (*TokenizeResult, error) {
++	return tokenize(ctx, code, g, onigLib, opts, nil, resolver...)
++}
++
++func tokenize(ctx context.Context, code []byte, g *grammar.Grammar, onigLib oniguruma.OnigLib, opts TokenizeOptions, document *documentScan, resolver ...grammar.GrammarResolver) (*TokenizeResult, error) {
+ 	if len(code) == 0 {
+ 		return &TokenizeResult{}, nil
+ 	}
+@@ -38,18 +43,27 @@
+ 		res = resolver[0]
+ 	}
+ 
+-	injections := collectInjections(g, res)
+-
+-	lines := splitLines(code)
++	var lines [][]byte
++	if document != nil {
++		lines = document.lines[:document.limit]
++	} else {
++		lines = splitLines(code)
++	}
+ 	result := &TokenizeResult{
+ 		Lines: make([][]Token, 0, len(lines)),
+ 	}
+ 
+ 	memo := newCompileMemo(onigLib, res)
++	injections := collectInjections(g, res, memo)
+ 
+ 	state := newStateStack(nil, g.ScopeName)
+ 
+-	for i, line := range lines {
++	start := 0
++	if document != nil && memo.cacheSafe() {
++		start, state = document.reusePrefix(result, state)
++	}
++	for i := start; i < len(lines); i++ {
++		line := lines[i]
+ 		select {
+ 		case <-ctx.Done():
+ 			return nil, ctx.Err()
+@@ -57,15 +71,37 @@
+ 		}
+ 
+ 		state.resetForNewLine()
++		if document != nil {
++			if memo.cacheSafe() && document.reuseSuffix(i, state, result) {
++				break
++			}
++			document.stats.Visited++
++		}
+ 
+ 		// MaxLineLength pre-filter: skip tokenization for oversized lines.
+ 		if opts.MaxLineLength > 0 && len(line) > opts.MaxLineLength {
++			memo.taintCache()
+ 			tok := Token{Scopes: state.scopeSlice(), Start: 0, End: len(line)}
+ 			result.Lines = append(result.Lines, []Token{tok})
+ 			result.Diagnostics = append(result.Diagnostics, Diagnostic{Line: i, Kind: "too_long"})
+ 			continue
+ 		}
+ 
++		incomingState := state.clone()
++		if memo.cacheSafe() {
++			if tokens, cachedState, ok := opts.LineCache.lookup(line, g, res, opts, i == 0, incomingState); ok {
++				if err := ctx.Err(); err != nil {
++					return nil, err
++				}
++				result.Lines = append(result.Lines, tokens)
++				state = cachedState
++				if document != nil {
++					document.record(tokens, state)
++				}
++				continue
++			}
++		}
++
+ 		// Compute per-line deadline for soft timeout.
+ 		var deadline time.Time
+ 		if opts.TimeoutMs > 0 {
+@@ -94,20 +130,53 @@
+ 		}()
+ 
+ 		if panicked {
++			memo.taintCache()
+ 			tokens = []Token{{Scopes: state.scopeSlice(), Start: 0, End: len(line)}}
+ 			newState = state
+ 			result.Diagnostics = append(result.Diagnostics, Diagnostic{Line: i, Kind: "panic"})
+ 		} else if lineErr != nil {
++			memo.taintCache()
+ 			return nil, lineErr
+ 		} else if stoppedEarly {
++			memo.taintCache()
+ 			result.Diagnostics = append(result.Diagnostics, Diagnostic{Line: i, Kind: "timeout"})
+ 		}
++		if err := ctx.Err(); err != nil {
++			memo.taintCache()
++			return nil, err
++		}
+ 
+ 		result.Lines = append(result.Lines, tokens)
+ 		state = newState
++		if !completeLineTokens(line, tokens) {
++			memo.taintCache()
++		}
++		if document != nil {
++			document.record(tokens, state)
++		}
++		if memo.cacheSafe() {
++			opts.LineCache.store(line, g, res, opts, i == 0, incomingState, tokens, state)
++		}
+ 	}
+ 
+-	return result, nil
++	if document != nil {
++		document.safe = memo.cacheSafe() && ctx.Err() == nil
++	}
++	return result, ctx.Err()
++}
++
++func completeLineTokens(line []byte, tokens []Token) bool {
++	if len(line) == 0 {
++		return len(tokens) == 0
++	}
++	position := 0
++	for _, token := range tokens {
++		if token.Start != position || token.End <= token.Start || token.End > len(line) {
++			return false
++		}
++		position = token.End
++	}
++	return position == len(line)
+ }
+ 
+ // splitLines splits code into bare lines with terminators stripped: the
