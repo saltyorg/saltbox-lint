@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Check templates in directory scans, including the default `.`, and in
+  `--changed-since` selections, with the same read-only semantics as named
+  templates. `check --fix .` still writes only verified YAML fixes; naming a
+  template file keeps refusing the batch.
+- Publish workspace-scan diagnostics for closed templates and recheck a closed
+  template when it or its owning role context changes.
+
 ## 0.2.4 (2026-10-19)
 
 - Add `exclude_paths` to `.saltbox-lint` for source-root-relative files and folders.

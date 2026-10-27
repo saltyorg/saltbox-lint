@@ -8,6 +8,7 @@ import {
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -401,6 +402,55 @@ test("rejected selected batch retries its selection without full coverage", asyn
     assert.deepEqual(f.queued, [uri(filename).toString()]);
     assert.equal(f.editor.pendingRefresh.size, 0);
     assert.equal(f.timers.size, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+// Directory scans select templates, including symlinked template spellings
+// reported under their lexical paths. Diagnostics are keyed by canonical
+// identity, so those aliases are skipped while their targets stay published.
+test("full scan publishes templates and skips symlinked template aliases", async () => {
+  const f = await fixture();
+  try {
+    const templateAlias = "roles/example/templates/alias.conf";
+    const yamlAlias = "roles/example/tasks/alias.yml";
+    await symlink(join(f.root, f.primary), join(f.root, templateAlias), "file");
+    const scan = async (aliases: string[]): Promise<AnalysisRecord> => {
+      const record = await f.analysis(f.primary);
+      for (const path of [f.template, ...aliases]) {
+        const sha256 = hash(await readFile(join(f.root, path)));
+        record.sources.push({
+          path,
+          source_sha256: sha256,
+          files: [{ path, state: "read", sha256 }],
+          identity: [],
+          discovery: [],
+          directories: [],
+        });
+      }
+      record.sources.sort((a, b) =>
+        a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+      );
+      return record;
+    };
+    f.setReport(await scan([templateAlias]));
+    const accepted = await f.editor.checkSaved(f.folder, false);
+    assert.deepEqual([...(accepted ?? [])].sort(), [f.primary, f.template]);
+    assert.deepEqual(
+      f.published.sort(),
+      [
+        uri(join(f.root, f.primary)).toString(),
+        uri(join(f.root, f.template)).toString(),
+      ].sort(),
+    );
+    // YAML aliases keep their existing identity failure.
+    await symlink(join(f.root, f.primary), join(f.root, yamlAlias), "file");
+    f.setReport(await scan([yamlAlias]));
+    await assert.rejects(
+      f.editor.checkSaved(f.folder, false),
+      /Source identity changed/,
+    );
   } finally {
     await f.close();
   }

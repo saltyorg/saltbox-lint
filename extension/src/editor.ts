@@ -1410,6 +1410,20 @@ export class EditorIntegration implements vscode.Disposable {
             );
             continue;
           }
+          // Directory scans report a symlinked template spelling under its
+          // lexical path. Diagnostics are keyed by canonical identity, which
+          // its own primary or opened snapshot owns, so the alias is skipped.
+          if (
+            !selected &&
+            error instanceof Error &&
+            error.message === "Source identity changed" &&
+            (templatePath(relative) ||
+              templatePath(
+                (await identify(root, path.join(root, ...relative.split("/"))))
+                  .path,
+              ))
+          )
+            continue;
           throw error;
         }
         const uri = vscode.Uri.file(filename);
@@ -2325,10 +2339,12 @@ export class EditorIntegration implements vscode.Disposable {
     }
     // The changed file itself and startup coverage belong to its owner.
     if (dependent) return;
+    // Directory scans select templates as read-only primaries, so closed
+    // template events select that template like a closed YAML source.
     if (
-      (/\.ya?ml$/i.test(uri.path) &&
-        !templatePath(uri.path) &&
-        !templatePath(relative)) ||
+      /\.ya?ml$/i.test(uri.path) ||
+      templatePath(uri.path) ||
+      templatePath(relative) ||
       vscode.workspace.textDocuments.some(
         (document) =>
           document.uri.toString() === uri.toString() && this.eligible(document),
@@ -2366,6 +2382,7 @@ export class EditorIntegration implements vscode.Disposable {
       this.disposed ||
       uri.scheme !== "file" ||
       (!/\.ya?ml$/i.test(uri.path) &&
+        !templatePath(uri.path) &&
         !vscode.workspace.textDocuments.some(
           (document) =>
             document.uri.toString() === uri.toString() &&
@@ -2446,16 +2463,9 @@ export class EditorIntegration implements vscode.Disposable {
         let filename: string | undefined;
         try {
           const identity = await identify(root, uri.fsPath);
-          if (
-            (templatePath(uri.path) ||
-              templatePath(identity.path) ||
-              templatePath(identity.filename)) &&
-            !vscode.workspace.textDocuments.some(
-              (document) =>
-                document.uri.toString() === key && this.eligible(document),
-            )
-          )
-            continue;
+          // Closed templates are read-only primaries of directory scans. A
+          // selected check names them explicitly, which the CLI defines with
+          // the same diagnostics as discovery; they are never written.
           filename = identity.filename;
           const bytes = await (this.adapters?.readFile ?? readFile)(
             identity.filename,

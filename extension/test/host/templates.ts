@@ -18,6 +18,7 @@ import {
 import { ownJoinedResource } from "../support/host-resources.ts";
 import { componentUI } from "../support/component-ui.ts";
 import { initialCodeActions } from "./initial-code-actions.ts";
+import { diagnosticTransition } from "../support/diagnostic-transition.ts";
 import {
   classifyClosedFileEvent,
   observeClosedFileEvent,
@@ -974,25 +975,45 @@ async function observeClosedTemplateContext(
           expectedSha256: hash(changedText),
         }),
       );
-      await owner.operation("closed template external mutation", () =>
-        writeFile(uri.fsPath, changedText),
-      );
-      await owner.operation("closed template actual watcher event", () =>
-        observer.changed(),
-      );
-      // The adapter's public join includes timers and complete saved rendering.
-      // Observe its actual submitted selections after the real callback completes.
-      await adapter.join();
+      // Directory scans now select templates, so the startup scan already
+      // published the original "{{ unfinished" finding. The closed event must
+      // replace it with the current bytes' finding at the native identity.
+      const nativeUri = vscode.Uri.file(closedSource);
+      const current = () => {
+        const items = vscode.languages
+          .getDiagnostics(nativeUri)
+          .filter((item) => item.source === "saltbox-lint");
+        return (
+          items.length > 0 &&
+          items.every(
+            (item) =>
+              diagnosticCode(item) === "template-syntax" &&
+              item.message.includes("if block is missing endif"),
+          )
+        );
+      };
+      await diagnosticTransition({
+        signal: owner.signal,
+        subscribe: (observe) =>
+          vscode.languages.onDidChangeDiagnostics(observe),
+        ready: current,
+        trigger: async () => {
+          await owner.operation("closed template external mutation", () =>
+            writeFile(uri.fsPath, changedText),
+          );
+          await owner.operation("closed template actual watcher event", () =>
+            observer.changed(),
+          );
+          // The adapter's public join includes timers and complete saved
+          // rendering. Observe its actual submitted selections afterwards.
+          await adapter.join();
+        },
+      });
       assert.ok(
-        !selectedSources.slice(before).includes(closedSource),
-        "narrowed physical template stays out of closed primary selections",
+        selectedSources.slice(before).includes("closed-config.yaml"),
+        "a closed narrowed physical template is selected by canonical identity",
       );
-      assert.deepEqual(
-        vscode.languages
-          .getDiagnostics(uri)
-          .filter((item) => item.source === "saltbox-lint"),
-        [],
-      );
+      assert.equal(current(), true, "closed template finding is current");
     },
   );
 }

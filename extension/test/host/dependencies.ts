@@ -206,6 +206,15 @@ async function dependencies(resources: TestResources): Promise<void> {
   );
   const savedDefaults = vscode.Uri.file(await realpath(defaults.fsPath));
   const savedTask = vscode.Uri.file(await realpath(task.fsPath));
+  // Directory scans and closed template events select the role template beside
+  // its task. The CLI then reports the renderer violation once at the template,
+  // so readiness accepts either owner of the same contract finding.
+  const templateDirectory = await realpath(dirname(template.fsPath));
+  const savedTemplates = ["router.conf", "router.yaml"].map((name) =>
+    vscode.Uri.file(join(templateDirectory, name)),
+  );
+  const rendered = () =>
+    [savedTask, ...savedTemplates].some((uri) => renderer(uri));
   const savedOtherTask = vscode.Uri.file(await realpath(otherTask.fsPath));
   const savedUnrelated = vscode.Uri.file(await realpath(unrelatedUri.fsPath));
   const temporary = await hostTemporaryDirectory("saltbox-dependencies-");
@@ -315,7 +324,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.ready();
     await editor.checkWorkspace();
     await editor.join();
-    assert.equal(renderer(savedTask), false);
+    assert.equal(rendered(), false);
     assert.equal(renderer(savedOtherTask), false);
     assert.equal(findings(savedTask).length, 0);
     const unrelatedGood = await readFile(unrelatedUri.fsPath, "utf8");
@@ -594,9 +603,12 @@ async function dependencies(resources: TestResources): Promise<void> {
     let count = invocations().length;
     await writeFile(batchGate, "");
     const batchNonce = randomBytes(32).toString("hex");
+    // The role template depends on the changed defaults and is now a closed
+    // primary of the same selected batch.
     const batchPaths = [
       "roles/example/defaults/main.yml",
       "roles/example/tasks/main.yml",
+      "roles/example/templates/router.conf",
       "roles/unrelated/defaults/main.yml",
     ];
     fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = batchGate;
@@ -667,7 +679,7 @@ async function dependencies(resources: TestResources): Promise<void> {
           (item) => diagnosticCode(item) === "jinja-layout",
         ) &&
         findings(savedUnrelated).length === 0 &&
-        renderer(savedTask),
+        rendered(),
       "rejected mixed batch must refresh both changed primaries and context-driven peers",
     );
     assert.ok(
@@ -688,7 +700,7 @@ async function dependencies(resources: TestResources): Promise<void> {
         findings(savedUnrelated).some(
           (item) => diagnosticCode(item) === "jinja-layout",
         ) &&
-        !renderer(savedTask),
+        !rendered(),
       "mixed-batch recovery must restore the original diagnostics",
     );
     success(
@@ -870,7 +882,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     count = invocations().length;
     await writeFile(template.fsPath, bad);
     await waitFor(
-      () => renderer(savedTask),
+      () => rendered(),
       "closed clean tasks must refresh on a non-j2 template edit",
     );
     assert.deepEqual(findings(savedOtherTask), otherBefore);
@@ -892,7 +904,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
     await writeFile(template.fsPath, good);
     await waitFor(
-      () => !renderer(savedTask),
+      () => !rendered(),
       "template recovery must clear task findings",
     );
     success(
@@ -913,11 +925,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.join();
     await writeFile(yamlTemplate.fsPath, bad);
     await waitFor(
-      () => renderer(savedTask),
-      "YAML-named templates must refresh primaries without entering selected batches",
+      () => rendered(),
+      "YAML-named templates must refresh their selected primaries",
     );
     await writeFile(yamlTemplate.fsPath, good);
-    await waitFor(() => !renderer(savedTask), "YAML-named template recovery");
+    await waitFor(() => !rendered(), "YAML-named template recovery");
     const templateDocument =
       await vscode.workspace.openTextDocument(yamlTemplate);
     const calls = invocations().length;
@@ -938,22 +950,22 @@ async function dependencies(resources: TestResources): Promise<void> {
     );
 
     await writeFile(template.fsPath, bad);
-    await waitFor(() => renderer(savedTask), "template bad state");
+    await waitFor(() => rendered(), "template bad state");
     await writeFile(
       defaults.fsPath,
       defaultsGood.replace("example_role_traefik_enabled: false\n", ""),
     );
     await waitFor(
-      () => !renderer(savedTask),
+      () => !rendered(),
       "defaults removal must change another primary's result",
     );
     await writeFile(defaults.fsPath, defaultsGood);
     await waitFor(
-      () => renderer(savedTask),
+      () => rendered(),
       "defaults restoration must recheck another primary",
     );
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(savedTask), "defaults recovery");
+    await waitFor(() => !rendered(), "defaults recovery");
     success("defaults edits refresh dependent task diagnostics");
 
     const docker = vscode.Uri.joinPath(
@@ -984,27 +996,24 @@ async function dependencies(resources: TestResources): Promise<void> {
     success("shared Docker context uses the same dependency invalidation");
 
     await rm(template.fsPath);
-    await waitFor(
-      () => renderer(savedTask),
-      "template deletion must refresh primaries",
-    );
+    await waitFor(() => rendered(), "template deletion must refresh primaries");
     await writeFile(template.fsPath, good);
     await waitFor(
-      () => !renderer(savedTask),
+      () => !rendered(),
       "missing template creation must refresh primaries",
     );
     const moved = join(roots[0].uri.fsPath, "moved-template.txt");
     await rename(template.fsPath, moved);
-    await waitFor(() => renderer(savedTask), "rename away must refresh");
+    await waitFor(() => rendered(), "rename away must refresh");
     await rename(moved, template.fsPath);
-    await waitFor(() => !renderer(savedTask), "rename back must refresh");
+    await waitFor(() => !rendered(), "rename back must refresh");
     const replacement = join(roots[0].uri.fsPath, "replacement.txt");
     await writeFile(replacement, bad);
     await rename(replacement, template.fsPath);
-    await waitFor(() => renderer(savedTask), "atomic replacement must refresh");
+    await waitFor(() => rendered(), "atomic replacement must refresh");
     await writeFile(replacement, good);
     await rename(replacement, template.fsPath);
-    await waitFor(() => !renderer(savedTask), "atomic recovery");
+    await waitFor(() => !rendered(), "atomic recovery");
     success(
       "missing creation, deletion, rename and atomic replacement refresh dependencies",
     );
@@ -1020,7 +1029,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     assert.ok(action);
     await writeFile(template.fsPath, bad);
     await waitFor(
-      () => renderer(savedTask),
+      () => rendered(),
       "closed dependent refresh during dirty buffer",
     );
     assert.deepEqual(findings(document.uri), displayed);
@@ -1041,7 +1050,7 @@ async function dependencies(resources: TestResources): Promise<void> {
     await replace(document, defaultsGood);
     await document.save();
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(savedTask), "dirty buffer recovery");
+    await waitFor(() => !rendered(), "dirty buffer recovery");
     success(
       "dirty dependent findings remain visible and stale actions cannot apply",
     );
@@ -1116,11 +1125,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     await editor.join();
     await writeFile(template.fsPath, bad);
     await waitFor(
-      () => renderer(savedTask),
+      () => rendered(),
       "deleting the explicit first renderer restores the original primary",
     );
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(savedTask), "original renderer recovery");
+    await waitFor(() => !rendered(), "original renderer recovery");
     success("deleting an explicit renderer restores original role ownership");
 
     if (process.platform !== "win32") {
@@ -1319,7 +1328,7 @@ async function dependencies(resources: TestResources): Promise<void> {
       await writeFile(template.fsPath, index % 2 === 0 ? bad : good);
     await pause(600);
     await waitFor(
-      () => !renderer(savedTask),
+      () => !rendered(),
       "event burst must retain the final template state",
     );
     const burst = invocations().slice(count);
@@ -1642,11 +1651,11 @@ async function dependencies(resources: TestResources): Promise<void> {
     await rm(gate);
     fixtureEnvironment.SALTBOX_TEST_PROCESS_GATE = undefined;
     await waitFor(
-      () => renderer(savedTask),
+      () => rendered(),
       "late context changes must reject the initial result and restore full coverage",
     );
     await writeFile(template.fsPath, good);
-    await waitFor(() => !renderer(savedTask), "late result recovery");
+    await waitFor(() => !rendered(), "late result recovery");
     success(
       "late context events reject in-flight scans and retain startup full coverage",
     );

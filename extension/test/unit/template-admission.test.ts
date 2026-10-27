@@ -193,9 +193,14 @@ test("canonical template events queue the clean alias after a newer saved report
     );
     editor.contextEvent(uri(templateFilename));
     await editor.settleContext();
+    // Directory scans select templates, so the closed template itself is also
+    // queued for a read-only selected check, like a closed YAML source.
     assert.deepEqual(
       queued,
-      [{ target: document.uri.toString(), force: true }],
+      [
+        { target: document.uri.toString(), force: true },
+        { target: uri(templateFilename).toString(), force: false },
+      ],
       "canonical template event must refresh an alias-owned primary",
     );
     assert.ok(
@@ -205,7 +210,7 @@ test("canonical template events queue the clean alias after a newer saved report
     await editor.settleContext();
     assert.equal(
       queued.length,
-      1,
+      2,
       "the consumed event still coalesces its echo",
     );
     document.isDirty = true;
@@ -230,9 +235,10 @@ test("canonical template events queue the clean alias after a newer saved report
     assert.ok(
       dependencies.revision(folder.uri.toString(), primary) > beforeDirtyEvent,
     );
-    assert.equal(
-      queued.length,
-      1,
+    // The closed template itself is queued again; the dirty alias is not.
+    assert.deepEqual(
+      queued.slice(2),
+      [{ target: uri(templateFilename).toString(), force: false }],
       "dirty aliases remain stale without an automatic buffer check",
     );
     assert.equal(await realpath(alias), filename);
@@ -434,7 +440,7 @@ test("first plaintext alias admission resolves canonical templates and retains o
   }
 });
 
-test("closed watcher selection classifies physical templates and preserves ordinary YAML primaries", async () => {
+test("closed watcher selection checks physical templates by canonical identity and preserves ordinary YAML primaries", async () => {
   const base = await realpath(
     await mkdtemp(join(tmpdir(), "saltbox-template-selection-")),
   );
@@ -521,31 +527,44 @@ test("closed watcher selection classifies physical templates and preserves ordin
       "file",
     );
     await symlink(yaml, join(templates, "yaml-alias.yaml"), "file");
+    // Directory scans select templates as read-only primaries, so a closed
+    // template event selects its canonical identity like a closed YAML file.
+    // The selected CLI check classifies that identity; nothing is written.
     for (const scenario of [
       {
         filename: join(templates, "config.yaml"),
         narrow: true,
         open: false,
-        primary: false,
+        primary: true,
+        selected: "config.yaml",
       },
       {
         filename: join(base, "hidden.yaml"),
         narrow: false,
         open: false,
-        primary: false,
+        primary: true,
+        selected: "roles/demo/templates/config.yaml",
       },
       {
         filename: join(templates, "yaml-alias.yaml"),
         narrow: false,
         open: false,
-        primary: false,
+        primary: true,
+        selected: "roles/demo/defaults/main.yml",
       },
-      { filename: yaml, narrow: false, open: false, primary: true },
+      {
+        filename: yaml,
+        narrow: false,
+        open: false,
+        primary: true,
+        selected: "roles/demo/defaults/main.yml",
+      },
       {
         filename: join(templates, "config.yaml"),
         narrow: true,
         open: true,
         primary: true,
+        selected: undefined,
       },
     ]) {
       root = scenario.narrow ? templates : base;
@@ -574,7 +593,7 @@ test("closed watcher selection classifies physical templates and preserves ordin
       );
       if (scenario.open) assert.deepEqual(checked, [scenario.filename]);
       if (scenario.primary && !scenario.open)
-        assert.deepEqual(selected, [["roles/demo/defaults/main.yml"]]);
+        assert.deepEqual(selected, [[scenario.selected]]);
     }
   } finally {
     await rm(base, { recursive: true, force: true });
