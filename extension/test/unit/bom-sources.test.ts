@@ -11,6 +11,11 @@ import {
   withNavigationFixture,
   type NavigationFixture,
 } from "../support/navigation-fixture.ts";
+import {
+  fileClock,
+  settleFiles,
+  type FileClock,
+} from "../support/file-clock.ts";
 
 // VS Code decodes a UTF-8 BOM as encoding metadata: the document model never
 // contains it and saving the clean model writes it back. The Go CLI analyzes raw
@@ -18,50 +23,9 @@ import {
 const bom = Buffer.from([0xef, 0xbb, 0xbf]);
 const token = "port";
 
-function clock() {
-  const timers: { perform(): void; active: boolean }[] = [];
-  return {
-    schedule(perform: () => void, milliseconds: number) {
-      assert.equal(milliseconds, 100);
-      const timer = { perform, active: true };
-      timers.push(timer);
-      return () => {
-        timer.active = false;
-      };
-    },
-    deliver() {
-      const pending = timers.filter((timer) => timer.active);
-      for (const timer of pending) {
-        timer.active = false;
-        timer.perform();
-      }
-      return pending.length;
-    },
-  };
-}
-
-const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-/** Deliver admitted timers until the editor's owned work is quiescent. */
-async function settle(
-  f: NavigationFixture,
-  timer: ReturnType<typeof clock>,
-): Promise<void> {
-  let joined = false;
-  const pending = f.editor.join().then(() => {
-    joined = true;
-  });
-  for (let round = 0; round < 2000 && !joined; round++) {
-    timer.deliver();
-    await turn();
-  }
-  if (!joined) {
-    // Fixture disposal seals producers; the join is still owned by that cleanup.
-    pending.catch(() => undefined);
-    assert.fail("background file work did not become quiescent");
-  }
-  await pending;
-}
+const clock = fileClock;
+const settle = (f: NavigationFixture, timer: FileClock) =>
+  settleFiles(f.editor, timer);
 
 /** Report the first token with the CLI's raw-byte rune columns and spans. */
 function finding(path: string, bytes: Uint8Array): Finding[] {
