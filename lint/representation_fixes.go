@@ -202,7 +202,7 @@ func sourceHeaderFix(s *Source, newline string) (structuralFix, bool) {
 	marker := -1
 	payload := -1
 	unboundedComments := false
-	border := "####################"
+	border, bordered := "####################", false
 	for i, line := range lines {
 		if line.Text == "---" {
 			if marker >= 0 || payload >= 0 {
@@ -225,9 +225,16 @@ func sourceHeaderFix(s *Source, newline string) (structuralFix, bool) {
 			payload = i
 			continue
 		}
-		if i == 0 && line.Text != "" && strings.Trim(line.Text, "#") == "" {
+		// The first hash-only border spelling before the metadata moves to the
+		// top, and a short one is lengthened; blank lines that only preceded it
+		// are dropped. Any later border and a bare "#" comment stay in place.
+		if !bordered && group < 0 && len(line.Text) > 1 && strings.Trim(line.Text, "#") == "" {
+			bordered = true
 			if headerBorder.MatchString(line.Text) {
 				border = line.Text
+			}
+			if strings.Join(preamble, "") == "" {
+				preamble = nil
 			}
 			continue
 		}

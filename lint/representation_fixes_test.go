@@ -19,6 +19,10 @@ func TestRepresentationFixes(t *testing.T) {
 		{"computed", "# Owner comment\ndemo_role_secret_lookup: '{{ value }}'", "# Owner comment\n# Skip docs\ndemo_role_secret_lookup: '{{ value }}'"},
 		{"mixed", "demo_role_secret_lookup: \"{{ (a if flag else b) }}\"\ndemo_role_docker_healthcheck:\n  test: [CMD, curl, \"{{ (path if flag else fallback) }}\"]\nv: \"{{ x\n | f }}\"\n", "# Skip docs\ndemo_role_secret_lookup: \"{{ a if flag else b }}\"\ndemo_role_docker_healthcheck:\n  test:\n    - CMD\n    - curl\n    - \"{{ path if flag else fallback }}\"\nv: \"{{ x\n       | f }}\"\n"},
 		{"header missing marker", strings.TrimSuffix(safeHeader, "---\n") + "v: true\n", safeHeader + "v: true\n"},
+		{"header leading blank", "\n" + strings.TrimSuffix(safeHeader, "---\n") + "v: true\n", safeHeader + "v: true\n"},
+		{"header after marker", "---\n" + strings.TrimSuffix(safeHeader, "---\n") + "v: true\n", safeHeader + "v: true\n"},
+		{"header comment before border", "# note\n" + strings.TrimSuffix(safeHeader, "---\n") + "v: true\n", "####################\n# note\n" + strings.TrimPrefix(safeHeader, "####################\n") + "v: true\n"},
+		{"header bare hash", "#\n" + strings.TrimPrefix(strings.TrimSuffix(safeHeader, "---\n"), "####################\n") + "v: true\n", "####################\n#\n" + strings.TrimPrefix(safeHeader, "####################\n") + "v: true\n"},
 		{"header wrong order", "---\n# Author(s): salty\n#   coauthor continuation\n# Title: Demo 🌨\n# URL: https://example.com\n# unknown: retained\n# GNU General Public License v3.0\nv: true\n", "####################\n# Title: Demo 🌨\n# Author(s): salty\n#   coauthor continuation\n# URL: https://example.com\n# unknown: retained\n# GNU General Public License v3.0\n---\nv: true\n"},
 	} {
 		for _, newline := range []string{"\n", "\r\n"} {
@@ -108,7 +112,7 @@ func TestRepresentationWriteAuthority(t *testing.T) {
 }
 
 func TestRepresentationFixtures(t *testing.T) {
-	for _, name := range []string{"comments", "header"} {
+	for _, name := range []string{"comments", "header", "header-preamble"} {
 		t.Run(name, func(t *testing.T) {
 			input, err := os.ReadFile("testdata/safe-representation/" + name + ".invalid.yml")
 			if err != nil {
