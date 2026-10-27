@@ -528,10 +528,10 @@ The wider editor batches use the same boundaries:
 
 The ordinary build runs strict TypeScript checks for all extension source and
 TypeScript tests, plus [`tsconfig.helpers.json`](../extension/tsconfig.helpers.json)
-for thirty-six JavaScript roots: fifteen build/host/ownership/publishing
-scripts, nine driver/gate/publishing tests, eight executable fixtures, the shared vulnerability-test
-driver, the pinned Go-tool installer, its owned output reporter and the CI
-summary renderer. Each
+for thirty-eight JavaScript roots: fifteen build/host/ownership/publishing
+scripts, ten driver/gate/publishing/bootstrap tests, eight executable fixtures, the shared vulnerability-test
+driver, the pinned Go-tool installer, its owned output reporter, the verified
+npm bootstrap and the CI summary renderer. Each
 selected JavaScript root uses `@ts-check`. Typed ESLint applies the same
 floating-promise, misused-promise and awaited-value rules to these roots. The
 negative gate tests check the actual compiler and lint selectors, including every selected root,

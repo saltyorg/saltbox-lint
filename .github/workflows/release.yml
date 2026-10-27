@@ -22,7 +22,7 @@ jobs:
           cache: npm
           cache-dependency-path: extension/package-lock.json
       - name: Set up npm
-        run: npm install --global npm@11.19.0 --ignore-scripts
+        run: node tools/setup-npm.mjs
       - name: Install the pinned archive reader
         run: npm --prefix extension ci --ignore-scripts
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
@@ -69,7 +69,7 @@ jobs:
           cache: npm
           cache-dependency-path: extension/package-lock.json
       - name: Set up npm
-        run: npm install --global npm@11.19.0 --ignore-scripts
+        run: node tools/setup-npm.mjs
       - name: Install the pinned publishing tool
         run: npm --prefix extension ci --ignore-scripts
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5

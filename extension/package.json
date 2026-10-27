@@ -80,13 +80,13 @@
   },
   "scripts": {
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.helpers.json && npm run lint",
-    "lint": "eslint src test scripts ../tools/vulnerability.test.mjs ../tools/install-go-tool.mjs ../tools/report-go-tool-output.mjs ../tools/ci-summary.mjs --max-warnings 0",
+    "lint": "eslint src test scripts ../tools/vulnerability.test.mjs ../tools/install-go-tool.mjs ../tools/setup-npm.mjs ../tools/report-go-tool-output.mjs ../tools/ci-summary.mjs --max-warnings 0",
     "build": "npm run check && node scripts/build.mjs",
     "test": "node --experimental-strip-types --test test/unit/*.test.ts",
     "test:host": "node scripts/test-host.mjs",
     "stage:binary": "node scripts/stage-binary.mjs",
     "stage:test-fixture": "node scripts/stage-test-fixture.mjs",
-    "format:check": "prettier --check src test scripts package.json tsconfig*.json eslint.config.mjs ../eslint.config.mjs ../tools/vulnerability.test.mjs ../tools/install-go-tool.mjs ../tools/report-go-tool-output.mjs ../tools/ci-summary.mjs",
+    "format:check": "prettier --check src test scripts package.json tsconfig*.json eslint.config.mjs ../eslint.config.mjs ../tools/vulnerability.test.mjs ../tools/install-go-tool.mjs ../tools/setup-npm.mjs ../tools/npm-bootstrap.json ../tools/report-go-tool-output.mjs ../tools/ci-summary.mjs",
     "test:release": "node --test test/*.test.mjs",
     "package": "node scripts/release.mjs",
     "test:package": "node scripts/test-package.mjs"

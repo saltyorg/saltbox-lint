@@ -10,6 +10,14 @@ same qualified VSIXs to Visual Studio Marketplace.
 ## Local packaging
 
 Use the Go version in `go.mod`, Node in `extension/.node-version` and npm 11.19.0.
+CI and release jobs install that npm with `node tools/setup-npm.mjs`: it
+downloads the registry tarball, rejects it unless it matches the sha512
+integrity in [`tools/npm-bootstrap.json`](../tools/npm-bootstrap.json), and
+installs the verified local tarball offline with scripts disabled. That file is
+the only npm version and integrity pin for workflows; update both values
+together from `npm view npm@<version> dist.integrity` after checking the
+downloaded tarball's digest, and keep `packageManager` in
+`extension/package.json` on the same version.
 Native Linux and Darwin release tests also require a pthread-capable `cc` for
 the live-thread cleanup fixture. Windows staging tests require PowerShell 7.
 These tools are development prerequisites; installed extensions need neither.

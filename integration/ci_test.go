@@ -1,8 +1,12 @@
 package integration_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -437,7 +441,7 @@ func TestCISummaryInputsMatchRequiredChecks(t *testing.T) {
 					t.Errorf("%s summary input for %s requires ID %q, got %q", name, prefix, id, phase.ID)
 				}
 			}
-			if strings.HasPrefix(phase.Run, "npm install --global ") && phase.ID != "npm_setup" {
+			if strings.TrimSpace(phase.Run) == npmBootstrap && phase.ID != "npm_setup" {
 				t.Errorf("%s summary must observe npm setup", name)
 			}
 			if name == "required" && phase.Name == "Require every build and acceptance job to succeed" {
@@ -479,6 +483,108 @@ func TestCISummaryInputsMatchRequiredChecks(t *testing.T) {
 	}
 	if observed != results {
 		t.Errorf("acceptance summary checkpoint %q differs from host step checkpoint %q", observed, results)
+	}
+}
+
+const npmBootstrap = "node tools/setup-npm.mjs"
+
+// Jobs that package or publish replace the runner's npm. That npm must come
+// from the single committed version and integrity pin, never from an
+// unverified registry resolution such as npm install --global npm@<version>.
+func TestWorkflowsBootstrapIntegrityVerifiedNpm(t *testing.T) {
+	type step struct {
+		Name  string
+		Uses  string
+		Run   string
+		Shell string
+	}
+	var pin struct {
+		Version   string
+		Integrity string
+	}
+	data, err := os.ReadFile("../tools/npm-bootstrap.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&pin); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(pin.Version) ||
+		!regexp.MustCompile(`^sha512-[A-Za-z0-9+/]{86}==$`).MatchString(pin.Integrity) {
+		t.Fatalf("npm pin must be an exact version with one sha512 integrity: %+v", pin)
+	}
+	var manifest struct {
+		PackageManager string `json:"packageManager"`
+	}
+	data, err = os.ReadFile("../extension/package.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.PackageManager != "npm@"+pin.Version {
+		t.Errorf("packageManager %q differs from verified npm pin %s", manifest.PackageManager, pin.Version)
+	}
+	script, err := os.ReadFile("../tools/setup-npm.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(script), pin.Version) || strings.Contains(string(script), pin.Integrity) {
+		t.Error("setup-npm.mjs must read the version and integrity from npm-bootstrap.json only")
+	}
+	workflows, err := filepath.Glob("../.github/workflows/*.yml")
+	if err != nil || len(workflows) == 0 {
+		t.Fatalf("workflows missing: %v", err)
+	}
+	bootstraps := map[string]int{}
+	for _, path := range workflows {
+		text, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(text), "npm@") {
+			t.Errorf("%s installs npm without the verified bootstrap", path)
+		}
+		var workflow struct {
+			Jobs map[string]struct{ Steps []step }
+		}
+		readYAML(t, path, &workflow)
+		for name, job := range workflow.Jobs {
+			checkout, node, bootstrapped := false, false, false
+			for _, phase := range job.Steps {
+				switch {
+				case strings.HasPrefix(phase.Uses, "actions/checkout@"):
+					checkout = true
+				case strings.HasPrefix(phase.Uses, "actions/setup-node@"):
+					node = true
+				case strings.TrimSpace(phase.Run) == npmBootstrap:
+					if !checkout || !node || bootstrapped {
+						t.Errorf("%s %s must bootstrap npm once after checkout and Node setup", path, name)
+					}
+					if phase.Shell != "" {
+						t.Errorf("%s %s bootstrap must run under each runner's default shell: %q", path, name, phase.Shell)
+					}
+					bootstrapped = true
+					bootstraps[filepath.Base(path)+"/"+name]++
+				case !bootstrapped && regexp.MustCompile(`\bnpm\s`).MatchString(phase.Run):
+					t.Errorf("%s %s runs npm before the verified bootstrap: %q", path, name, phase.Name)
+				}
+			}
+			// The required gate only runs Node scripts and never uses npm.
+			if node && !bootstrapped && name != "required" {
+				t.Errorf("%s %s sets up Node without the verified npm bootstrap", path, name)
+			}
+		}
+	}
+	want := map[string]int{
+		"ci.yml/check": 1, "ci.yml/native": 1, "ci.yml/acceptance": 1,
+		"release.yml/release": 1, "release.yml/marketplace": 1,
+	}
+	if !reflect.DeepEqual(bootstraps, want) {
+		t.Errorf("verified npm bootstraps %v, want %v", bootstraps, want)
 	}
 }
 

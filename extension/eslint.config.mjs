@@ -41,6 +41,7 @@ const helpers = [
   "test/native-fixture-lifetime.test.mjs",
   "test/publish-marketplace.test.mjs",
   "test/go-tool-install.test.mjs",
+  "test/setup-npm.test.mjs",
   "test/ci-summary.test.mjs",
   "test/testdata/*.mjs",
 ];
@@ -72,6 +73,7 @@ export default [
         "tools/vulnerability.test.mjs",
         "tools/ci-summary.mjs",
         "tools/install-go-tool.mjs",
+        "tools/setup-npm.mjs",
         "tools/report-go-tool-output.mjs",
       ],
       "./tsconfig.helpers.json",

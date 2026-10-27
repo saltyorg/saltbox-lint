@@ -34,7 +34,7 @@ jobs:
           cache-dependency-path: extension/package-lock.json
       - name: Set up npm
         id: npm_setup
-        run: npm install --global npm@11.19.0 --ignore-scripts
+        run: node tools/setup-npm.mjs
       - name: Check, build and package local artifacts
         id: build_package
         env:
@@ -140,7 +140,7 @@ jobs:
           cache-dependency-path: extension/package-lock.json
       - name: Set up npm
         id: npm_setup
-        run: npm install --global npm@11.19.0 --ignore-scripts
+        run: node tools/setup-npm.mjs
       - name: Verify native runner architecture
         id: architecture
         env:
@@ -236,7 +236,7 @@ jobs:
           cache-dependency-path: extension/package-lock.json
       - name: Set up npm
         id: npm_setup
-        run: npm install --global npm@11.19.0 --ignore-scripts
+        run: node tools/setup-npm.mjs
       - name: Download release artifacts
         id: download_artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
