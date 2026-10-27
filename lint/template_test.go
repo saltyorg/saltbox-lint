@@ -14,6 +14,11 @@ import (
 func TestTemplateScanner(t *testing.T) {
 	cases := []struct{ name, input, errorText, partial string }{
 		{"literal layout", " \t  literal }} %} #}\r\n\r\n  no final newline", "", ""},
+		{"arithmetic and concatenation", "{{ path + ('/mnt/local' if remote == 'feeder' else '') }} {{ a - -b * c / d // e % f ** g ~ h }}", "", ""},
+		{"arithmetic in conditions", "{% if count + 1 > limit and name ~ '.yml' in files %}{{ total - used }}{% endif %}", "", ""},
+		{"filters bind tighter than arithmetic", "{{ size | int + extra | default(0) | int }}", "", ""},
+		{"dangling operator", "{{ a + }}", "", "expression grammar"},
+		{"unary plus", "{{ a + +b }}", "", "expression grammar"},
 		{"for unpacked target", "{% for a, b in items %}{{ a }}{% endfor %}", "", ""},
 		{"for trailing target comma", "{% for a, in items %}{{ a }}{% endfor %}", "", ""},
 		{"for grouped target", "{% for (a) in items %}{{ a }}{% endfor %}", "", ""},

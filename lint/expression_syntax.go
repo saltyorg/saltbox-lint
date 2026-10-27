@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -74,7 +75,7 @@ func (p *expressionParser) binary(level int) parsedExpression {
 	return left
 }
 func (p *expressionParser) compare() parsedExpression {
-	left := p.value()
+	left := p.operand()
 	var operands []parsedExpression
 	var ops strings.Builder
 	for p.pos < len(p.tokens) {
@@ -93,9 +94,54 @@ func (p *expressionParser) compare() parsedExpression {
 		}
 		ops.WriteString(op)
 		ops.WriteByte(';')
-		operands = append(operands, p.value())
+		operands = append(operands, p.operand())
 	}
 	return comparisonTree(left, operands, ops.String())
+}
+
+// templateArithmetic lists Jinja's arithmetic and concatenation levels from
+// loosest to tightest binding. Jinja's ** is also left-associative but binds
+// tighter than unary signs only on its right, so it has its own level.
+var templateArithmetic = [][]string{{"+", "-"}, {"~"}, {"*", "/", "//", "%"}}
+
+// operand parses a comparison operand. Template checks accept Jinja arithmetic
+// and concatenation; fix expressions keep the narrower grammar, so structural
+// fixes still decline expressions that contain these operators.
+func (p *expressionParser) operand() parsedExpression {
+	if !p.templateSyntax {
+		return p.value()
+	}
+	return p.arithmetic(0)
+}
+func (p *expressionParser) arithmetic(level int) parsedExpression {
+	if level == len(templateArithmetic) {
+		return p.power()
+	}
+	left := p.arithmetic(level + 1)
+	for p.pos < len(p.tokens) && p.tokens[p.pos].Kind == "punctuation" && slices.Contains(templateArithmetic[level], p.tokens[p.pos].Text) {
+		op := p.tokens[p.pos].Text
+		p.pos++
+		left = expressionTree("arithmetic:"+op, false, left, p.arithmetic(level+1))
+	}
+	return left
+}
+func (p *expressionParser) power() parsedExpression {
+	left := p.unary()
+	for p.pos < len(p.tokens) && p.tokens[p.pos].Kind == "punctuation" && p.tokens[p.pos].Text == "**" {
+		p.pos++
+		left = expressionTree("arithmetic:**", false, left, p.unary())
+	}
+	return left
+}
+
+// unary accepts only negation. A leading + stays outside the subset because
+// Jinja reads "{{+" as a whitespace-control modifier, not as unary plus.
+func (p *expressionParser) unary() parsedExpression {
+	if p.pos < len(p.tokens) && p.tokens[p.pos].Kind == "punctuation" && p.tokens[p.pos].Text == "-" {
+		p.pos++
+		return expressionTree("unary:-", false, p.unary())
+	}
+	return p.value()
 }
 func comparisonTree(left parsedExpression, operands []parsedExpression, ops string) parsedExpression {
 	if len(operands) == 0 {
