@@ -23,6 +23,9 @@ func TestInlineRuleIgnores(t *testing.T) {
 		{"cannot ignore directive validation", "custom_mount_branch: value # saltbox-lint ignore lint-directive\n", []string{"lint-directive", "role-variable-prefix"}},
 		{"quoted text", "custom_mount_branch: '# saltbox-lint ignore role-variable-prefix'\n", []string{"role-variable-prefix"}},
 		{"block contents", "custom_mount_branch: |\n  # saltbox-lint ignore role-variable-prefix\n", []string{"role-variable-prefix"}},
+		{"unused", "unionfs_branch: value # saltbox-lint ignore role-variable-prefix\n", []string{"lint-directive"}},
+		{"wrong line", "custom_mount_branch: value\nunionfs_branch: value # saltbox-lint ignore role-variable-prefix\n", []string{"lint-directive", "role-variable-prefix"}},
+		{"rule not evaluated", "unionfs_branch: value # saltbox-lint ignore variable-duplicate\n", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			project := prefixProject(t, map[string]string{
@@ -116,5 +119,47 @@ func TestInlineIgnoreAllowsFixesAroundIgnoredLine(t *testing.T) {
 				t.Fatalf("wrote %q %v", got, err)
 			}
 		})
+	}
+}
+
+// A comment cannot follow the first line of a multi-line flow scalar, so an
+// ignore after the scalar's last line covers findings that start inside it.
+func TestInlineIgnoreCoversMultilineFlowScalars(t *testing.T) {
+	const rule = "jinja-redundant-conditional-parentheses"
+	for _, test := range []struct {
+		name, input string
+		want        []string
+	}{
+		{"double quoted", "example_x: \"{{ (a if b\n             else c) }}\" # saltbox-lint ignore " + rule + "\n", nil},
+		{"flow sequence", "example_x: [\"{{ (a if b\n  else c) }}\",\n  other] # saltbox-lint ignore " + rule + "\n", nil},
+		{"single line still covered", "example_x: \"{{ (a if b else c) }}\" # saltbox-lint ignore " + rule + "\n", nil},
+		{"next entry not covered", "example_x: \"{{ (a if b else c) }}\"\nexample_y: \"{{ (a if b else c) }}\" # saltbox-lint ignore " + rule + "\n", []string{rule}},
+		{"key line not covered", "example_x: # saltbox-lint ignore " + rule + "\n  \"{{ (a if b else c) }}\"\n", []string{rule, "lint-directive"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := prefixProject(t, map[string]string{"roles/example/defaults/main.yml": test.input})
+			rules := slices.DeleteFunc(Rules(), func(r Rule) bool { return r.ID != rule && r.ID != "lint-directive" })
+			var ids []string
+			for _, diagnostic := range Analyze(project, rules) {
+				ids = append(ids, diagnostic.RuleID)
+			}
+			slices.Sort(ids)
+			if !slices.Equal(ids, test.want) {
+				t.Fatalf("diagnosed rules = %v, want %v", ids, test.want)
+			}
+		})
+	}
+}
+
+func TestInlineIgnoreProtectsWholeMultilineScalarFromFixes(t *testing.T) {
+	const input = "example_x: \"{{ (a if b\n             else c) }}\" # saltbox-lint ignore jinja-redundant-conditional-parentheses\n"
+	project := prefixProject(t, map[string]string{"roles/example/defaults/main.yml": input})
+	source := project.Sources["roles/example/defaults/main.yml"]
+	firstLine := strings.Index(input, "(")
+	if fixesPreserveIgnoredLines(source, []Edit{{Span: Span{firstLine, firstLine + 1}}}) {
+		t.Fatal("an edit on the covered scalar's first line was admitted")
+	}
+	if !fixesPreserveIgnoredLines(source, []Edit{{Span: Span{len(input), len(input)}, Text: "example_y: 1\n"}}) {
+		t.Fatal("an insertion after the covered scalar was refused")
 	}
 }

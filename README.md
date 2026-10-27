@@ -113,11 +113,14 @@ custom_mount_branch: mergerfs # saltbox-lint ignore role-variable-prefix
 ```
 
 Only that rule on that line is suppressed. Other rules and lines remain checked.
-Use an exact registered rule ID from `saltbox-lint rules`; YAML syntax errors and
-`lint-directive` cannot be ignored. Standalone comments, unknown IDs and malformed
-directives remain errors. Quoted strings and block scalar contents do not act as
-directives. Automatic lint fixes are declined if their edit range would touch a
-line carrying an ignore; explicit canonical formatting remains a separate action.
+A comment cannot follow the first line of a multi-line quoted or plain scalar, or
+of a multi-line flow collection, so an ignore after its last line covers every
+line of that node. Use an exact registered rule ID from `saltbox-lint rules`; YAML
+syntax errors and `lint-directive` cannot be ignored. Standalone comments, unknown
+IDs, malformed directives and ignores that suppress no finding remain errors.
+Quoted strings and block scalar contents do not act as directives. Automatic lint
+fixes are declined if their edit range would touch a line covered by an ignore;
+explicit canonical formatting remains a separate action.
 
 ## Commands
 

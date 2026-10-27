@@ -477,7 +477,7 @@ value: "{{ (a if condition else b) }}"
 
 Keep lint allowances exact and local
 
-Use # saltbox-lint allow cmd-shell on a Docker healthcheck test key that needs shell execution, or # saltbox-lint ignore RULE_ID after YAML code on the primary finding line. An inline ignore suppresses only the named rule on that physical line, never YAML syntax or lint-directive validation. Unknown, malformed and misplaced directives fail; unnecessary cmd-shell allowances fail. Quoted and block scalar contents are not comments.
+Use # saltbox-lint allow cmd-shell on a Docker healthcheck test key that needs shell execution, or # saltbox-lint ignore RULE_ID after YAML code on the primary finding line. An inline ignore suppresses only the named rule on that physical line, or on every line of a multi-line flow scalar or flow collection it directly follows, never YAML syntax or lint-directive validation. Unknown, malformed and misplaced directives fail, as do ignores that suppress no finding; unnecessary cmd-shell allowances fail. Quoted and block scalar contents are not comments.
 
 Source kinds: defaults, generic, handlers, inventory, playbook, tasks, vars. Scope: file. Automatic fix: false.
 

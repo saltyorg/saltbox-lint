@@ -27,13 +27,15 @@ func Analyze(project *Project, rules []Rule) []Diagnostic {
 			continue
 		}
 		first := len(diagnostics)
+		var evaluated []string
 		for _, rule := range rules {
 			if rule.Check == nil || (len(rule.Kinds) > 0 && !slices.Contains(rule.Kinds, source.Kind)) {
 				continue
 			}
+			evaluated = append(evaluated, rule.ID)
 			diagnostics = append(diagnostics, rule.Check(project, source)...)
 		}
-		diagnostics = append(diagnostics[:first], suppressLineFindings(source, diagnostics[first:])...)
+		diagnostics = append(diagnostics[:first], suppressLineFindings(source, diagnostics[first:], evaluated)...)
 		if project.Selected[name] && source.Kind != Template {
 			attachStructuralFixes(source, diagnostics[first:])
 		}
