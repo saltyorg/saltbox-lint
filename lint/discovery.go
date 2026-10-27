@@ -61,6 +61,7 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 		return nil, err
 	}
 	l.gitRoot = gitRoot
+	l.rootTemplate = isTemplate(filepath.Join(root, "source"))
 	if gitRoot != "" {
 		for _, name := range []string{".gitignore", ".git/info/exclude"} {
 			absolute := filepath.Join(root, filepath.FromSlash(name))
@@ -179,9 +180,10 @@ func load(ctx context.Context, opts Options) (*Project, error) {
 			return nil, fmt.Errorf("selected spelling owner changed during admission: %s", target)
 		}
 		if info.IsDir() {
-			// A conventional template directory remains excluded from primary
-			// discovery even when its parent spelling aliases a YAML directory.
-			if !isTemplate(filepath.Join(target, "source")) {
+			// A conventional template directory spelling that aliases a YAML
+			// directory remains excluded: the canonical names would otherwise be
+			// admitted as writable YAML without the spelling's read-only status.
+			if !isTemplate(filepath.Join(target, "source")) || isTemplate(filepath.Join(absolute, "source")) {
 				p.selectionSpellings = append(p.selectionSpellings, spelling)
 				err = l.directory(absolute, true)
 			}
@@ -441,6 +443,10 @@ type sourceLoader struct {
 	stdinCanonicalPath string
 	stdinTemplate      bool
 	templateSpellings  map[string][]string
+	// rootTemplate records a source root narrowed inside a conventional
+	// template location. Every name below it is then an explicit template
+	// spelling, so directory discovery admits it the same way.
+	rootTemplate bool
 }
 
 func (l *sourceLoader) rememberTemplateSpelling(filename, absolute string) {
@@ -531,6 +537,10 @@ func (l *sourceLoader) add(absolute string, selected bool) error {
 	if selected {
 		l.project.discoverable[relative] = l.directoryWouldSelect(absolute, s)
 		l.project.Selected[relative] = true
+		if l.project.explicit == nil {
+			l.project.explicit = map[string]bool{}
+		}
+		l.project.explicit[relative] = true
 	}
 	return nil
 }
@@ -723,7 +733,7 @@ func (l *sourceLoader) directory(dir string, selected bool) error {
 	var discoveryErr error
 	if l.gitFiles != nil {
 		for name := range gitDirectoryCandidates(l.gitFiles, filepath.FromSlash(relative)) {
-			if directorySource(filepath.ToSlash(name), selected) {
+			if l.directoryCandidate(filepath.ToSlash(name), selected) {
 				paths = append(paths, filepath.Join(l.project.Root, name))
 			}
 		}
@@ -765,7 +775,7 @@ func (l *sourceLoader) walkDirectory(dir string, selected bool) ([]string, error
 		if err != nil {
 			return err
 		}
-		if !directorySource(relative, selected) {
+		if !l.directoryCandidate(relative, selected) {
 			return nil
 		}
 		paths = append(paths, absolute)
@@ -784,6 +794,15 @@ func (l *sourceLoader) directorySources(paths []string, selected bool) error {
 		l.excludedAny = l.excludedAny || selected && excluded
 		return excluded
 	})
+	if selected {
+		// Discovered template names receive the same read-only spelling record
+		// as explicit template targets before the concurrent read batch.
+		for _, absolute := range paths {
+			if relative, err := relativeSource(l.project.Root, absolute); err == nil && (l.rootTemplate || isTemplate(relative)) && len(l.templateSpellings[absolute]) == 0 {
+				l.rememberTemplateSpelling(absolute, absolute)
+			}
+		}
+	}
 	results := readSourceBatch(paths, func(absolute string) (*Source, error) {
 		// Tracked files deleted from the worktree are not source inputs.
 		if l.gitFiles != nil {
@@ -805,9 +824,6 @@ func (l *sourceLoader) directorySources(paths []string, selected bool) error {
 		}
 		kind, _, _ := classify(relative)
 		if source := l.project.Sources[relative]; source != nil && (!selected || kind != Generic) {
-			if selected && source.Kind == Template {
-				return nil, nil
-			}
 			return source, nil
 		}
 		source, err := l.readSource(absolute, relative, "")
@@ -931,15 +947,23 @@ func resolveSourceIdentity(root, filename, sourceFilename string) (SourceIdentit
 	return SourceIdentity{Root: resolvedRoot, Path: relative, template: template}, nil
 }
 
+// directorySource is the lexical directory candidate predicate. Selected
+// discovery admits conventional sources, templates and top-level generic YAML
+// that may parse as a playbook; context discovery admits conventional sources.
 func directorySource(name string, selected bool) bool {
 	if !supportedSource(name) {
 		return false
 	}
 	kind, _, _ := classify(filepath.ToSlash(name))
 	if selected {
-		return kind != Template && (kind != Generic || !strings.Contains(filepath.ToSlash(name), "/"))
+		return kind != Generic || !strings.Contains(filepath.ToSlash(name), "/")
 	}
 	return kind != Generic
+}
+
+// directoryCandidate adds the narrowed-root template rule to directorySource.
+func (l *sourceLoader) directoryCandidate(name string, selected bool) bool {
+	return directorySource(name, selected) || selected && l.rootTemplate
 }
 
 func isTemplate(name string) bool {
@@ -1124,8 +1148,10 @@ func enclosingGitRoot(dir string) (string, error) {
 // Arbitrarily named root playbooks are admitted only when parsing identifies
 // them as playbooks. Explicit selection does not apply this directory policy.
 func directoryAdmitsSource(source *Source, selected bool) bool {
+	// Templates, including YAML spellings whose canonical owner is a template,
+	// are read-only primaries with the same semantics as explicit targets.
 	if selected && source.Kind == Template {
-		return false
+		return true
 	}
 	if !directorySource(source.Path, selected) {
 		return false

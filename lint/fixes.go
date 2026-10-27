@@ -487,10 +487,15 @@ func RequireWritableSelection(project *Project) error {
 		if source := project.Sources[name]; source != nil && source.ExclusionReason != "" {
 			continue
 		}
-		if source := project.Sources[name]; source != nil && source.Kind == Template {
+		source := project.Sources[name]
+		template := source != nil && source.Kind == Template
+		// A named template target asks for a write that can never happen, so
+		// the batch is refused. Directory or changed discovery selects templates
+		// for read-only checking only; they still take part in the identity
+		// and byte revalidation below, but never as write targets.
+		if template && project.explicit[name] {
 			return fmt.Errorf("refuse source writes: selected template %s is read-only", name)
 		}
-		source := project.Sources[name]
 		if source == nil || source.diskIdentity == nil {
 			return fmt.Errorf("source has no admitted disk identity: %s", name)
 		}
@@ -501,14 +506,14 @@ func RequireWritableSelection(project *Project) error {
 				return fmt.Errorf("open project root: %w", err)
 			}
 		}
-		if err := source.diskIdentity.validate(project.Root, root, name, true); err != nil {
+		if err := source.diskIdentity.validate(project.Root, root, name, !template); err != nil {
 			return err
 		}
 		actual, err := root.ReadFile(filepath.FromSlash(name))
 		if err != nil || !bytes.Equal(actual, source.Data) {
 			return fmt.Errorf("file changed since analysis: %s", name)
 		}
-		if err := source.diskIdentity.validate(project.Root, root, name, true); err != nil {
+		if err := source.diskIdentity.validate(project.Root, root, name, !template); err != nil {
 			return err
 		}
 	}

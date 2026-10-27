@@ -14,6 +14,10 @@ import (
 	"testing"
 )
 
+// changedTemplate is the fixture role's template. Directory and changed
+// selection admit it as a read-only primary that depends on its owning role.
+const changedTemplate = "roles/demo/templates/config.conf"
+
 func changedFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -147,7 +151,7 @@ func TestChangedCurrentWorktreeAndExactCommit(t *testing.T) {
 	refs := gitReadTest(t, root, "show-ref")
 	before := snapshotChangedFiles(t, root)
 	p := loadChangedTest(t, root, baseline)
-	assertSelection(t, p, name, "roles/demo/tasks/main.yml")
+	assertSelection(t, p, name, "roles/demo/tasks/main.yml", changedTemplate)
 	if !bytes.Equal(p.Sources[name].Data, before[name]) {
 		t.Fatal("read staged bytes instead of current worktree")
 	}
@@ -164,7 +168,7 @@ func TestChangedCurrentWorktreeAndExactCommit(t *testing.T) {
 	assertSelection(t, loadChangedTest(t, root, baseline))
 	putFile(t, root, name, "demo_role_enabled: false\n")
 	commitChangedFixture(t, root)
-	assertSelection(t, loadChangedTest(t, root, baseline), name, "roles/demo/tasks/main.yml")
+	assertSelection(t, loadChangedTest(t, root, baseline), name, "roles/demo/tasks/main.yml", changedTemplate)
 	assertSelection(t, loadChangedTest(t, root, "HEAD"))
 }
 func snapshotChangedFiles(t *testing.T, root string) map[string][]byte {
@@ -198,14 +202,16 @@ func TestChangedTemplatesSharedResourcesAndIgnores(t *testing.T) {
 		name string
 		want []string
 	}{
-		{"roles/demo/templates/config.conf", []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml"}},
-		{"roles/demo/templates/new.yaml", []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml"}},
+		// A changed template selects itself and its YAML dependents. A new role
+		// template is also owning-role context for the existing template.
+		{changedTemplate, []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate}},
+		{"roles/demo/templates/new.yaml", []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate, "roles/demo/templates/new.yaml"}},
 		{"resources/tasks/docker/policy.yml", []string{"resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml"}},
 		{"roles/new/tasks/created.yaml", []string{"roles/new/tasks/created.yaml"}},
 		{"ignored/tasks/private.yml", nil},
 		{"roles/demo/templates/ignored.conf", nil},
 		{"notes.txt", nil},
-		{".gitignore", []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml"}},
+		{".gitignore", []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate, "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := changedFixture(t)
@@ -213,8 +219,8 @@ func TestChangedTemplatesSharedResourcesAndIgnores(t *testing.T) {
 			p := loadChangedTest(t, root, "HEAD")
 			assertSelection(t, p, tc.want...)
 			for _, selected := range p.Selection.Sources {
-				if isTemplate(selected.Path) {
-					t.Fatal("template selected as primary")
+				if source := p.Sources[selected.Path]; isTemplate(selected.Path) && (source == nil || source.Kind != Template || p.explicit[selected.Path]) {
+					t.Fatal("selected template lost read-only discovered classification")
 				}
 			}
 			if strings.Contains(tc.name, "templates/") && p.Sources[tc.name] != nil && p.Sources[tc.name].Kind != Template {
@@ -245,7 +251,12 @@ func TestChangedDeletionRenameAndEmptyRepository(t *testing.T) {
 			if p.Sources[old] != nil || p.Selected[old] {
 				t.Fatal("deleted file loaded")
 			}
-			assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml")
+			want := []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml"}
+			if rename {
+				// The renamed template is a current primary under the fallback.
+				want = append(want, newName)
+			}
+			assertSelection(t, p, want...)
 		})
 	}
 	root := t.TempDir()
@@ -279,7 +290,7 @@ func TestChangedSubrootAndMergeHistory(t *testing.T) {
 	gitTest(t, root, "checkout", "-q", "-")
 	gitTest(t, root, "merge", "-q", "--no-edit", "side")
 	p := loadChangedTest(t, root, side)
-	assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml")
+	assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate)
 	putFile(t, root, "sub/tasks/main.yml", "- debug: msg=worktree\n")
 	sub := filepath.Join(root, "sub")
 	p = loadChangedTest(t, sub, "HEAD")
@@ -322,7 +333,7 @@ func TestChangedDisabledExternalDiffAndTextconv(t *testing.T) {
 	gitTest(t, root, "config", "diff.must-not-run.textconv", "saltbox-lint-nonexistent-textconv")
 	t.Setenv("GIT_EXTERNAL_DIFF", "saltbox-lint-nonexistent-external-diff")
 	putFile(t, root, "roles/demo/defaults/main.yml", "demo_role_enabled: false\n")
-	assertSelection(t, loadChangedTest(t, root, "HEAD"), "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml")
+	assertSelection(t, loadChangedTest(t, root, "HEAD"), "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate)
 }
 func TestChangedOwnershipAndOpaqueAdministration(t *testing.T) {
 	for _, separate := range []bool{false, true} {
@@ -334,7 +345,7 @@ func TestChangedOwnershipAndOpaqueAdministration(t *testing.T) {
 			}
 			putFile(t, root, "roles/demo/defaults/main.yml", "demo_role_enabled: false\n")
 			p := loadChangedTest(t, root, "HEAD")
-			assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml")
+			assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate)
 			for _, source := range p.Dependencies.Sources {
 				for _, file := range append(source.Files, source.Discovery...) {
 					if strings.HasPrefix(file.Path, "../") {
@@ -365,7 +376,7 @@ func TestChangedRelatedLocationsAndVerifiedFixParity(t *testing.T) {
 	commitChangedFixture(t, root)
 	putFile(t, root, "roles/example/templates/new.j2", "{{ example_role_enabled }}\n")
 	p := loadChangedTest(t, root, "HEAD")
-	assertSelection(t, p, traefikDefaultsPath, traefikTasksPath)
+	assertSelection(t, p, traefikDefaultsPath, traefikTasksPath, "roles/example/templates/new.j2")
 	ds := Analyze(p, Rules())
 	if !slices.ContainsFunc(ds, func(d Diagnostic) bool { return len(d.Related) > 0 }) || !slices.ContainsFunc(ds, func(d Diagnostic) bool { return d.Fix != nil }) {
 		t.Fatalf("fixture did not exercise related locations and edits: %+v", ds)
@@ -403,12 +414,12 @@ func TestChangedFlaggedWorktreeInputs(t *testing.T) {
 				}
 				refs := gitReadTest(t, root, "show-ref")
 				p := loadChangedTest(t, root, "HEAD")
-				want := []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml"}
+				want := []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate}
 				if name == "notes.txt" {
 					want = nil
 				}
 				if name == ".gitignore" {
-					want = []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml"}
+					want = []string{"roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate, "roles/unrelated/defaults/main.yml", "resources/tasks/docker/main.yml", "resources/tasks/docker/policy.yml"}
 				}
 				assertSelection(t, p, want...)
 				if !slices.Equal(p.Selection.Uncertain, []string{name}) || slices.Contains(p.Selection.Changed, name) {
@@ -495,7 +506,7 @@ func TestChangedSymlinkTargetsSelectAliasedSources(t *testing.T) {
 	commitChangedFixture(t, root)
 	putFile(t, root, "shared/vars.yml", "demo_shared: false\n")
 	p = loadChangedTest(t, root, "HEAD")
-	assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/defaults/shared.yml", "roles/demo/tasks/main.yml")
+	assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/defaults/shared.yml", "roles/demo/tasks/main.yml", changedTemplate)
 	if !slices.ContainsFunc(p.Selection.Sources, func(source SelectedSource) bool {
 		return source.Path == "roles/demo/defaults/shared.yml" && slices.Contains(source.Reasons, SelectionReason{Kind: "changed-primary", Path: "shared/vars.yml"})
 	}) {
@@ -548,5 +559,41 @@ func TestFlaggedGitNamesKeepNULIdentities(t *testing.T) {
 	slices.Sort(want)
 	if got := flaggedGitNames(output); !slices.Equal(got, want) {
 		t.Fatalf("flagged names=%q want=%q", got, want)
+	}
+}
+
+// Templates are changed-selection primaries with the dependencies recorded by
+// their owning-role context. Exclusions apply to them like YAML candidates.
+func TestChangedTemplateDependenciesAndExclusions(t *testing.T) {
+	root := changedFixture(t)
+	putFile(t, root, "roles/demo/tasks/main.yml", "- template: {src: config.conf, dest: /tmp/changed}\n")
+	p := loadChangedTest(t, root, "HEAD")
+	assertSelection(t, p, "roles/demo/defaults/main.yml", "roles/demo/tasks/main.yml", changedTemplate)
+	if !slices.ContainsFunc(p.Selection.Sources, func(source SelectedSource) bool {
+		return source.Path == changedTemplate && slices.Contains(source.Reasons, SelectionReason{Kind: "dependency-file", Path: "roles/demo/tasks/main.yml"})
+	}) {
+		t.Fatalf("owning task dependency reason missing: %+v", p.Selection)
+	}
+	if source := p.Sources[changedTemplate]; source.Kind != Template || p.explicit[changedTemplate] {
+		t.Fatalf("changed template lost read-only discovered status: %+v", source)
+	}
+	if err := RequireWritableSelection(p); err != nil {
+		t.Fatalf("changed template selection refused writes preflight: %v", err)
+	}
+
+	// An unrelated role change leaves the template unselected. Defaults keep
+	// their cross-role variable declaration dependency.
+	root = changedFixture(t)
+	putFile(t, root, "roles/unrelated/defaults/main.yml", "value: fixed\n")
+	assertSelection(t, loadChangedTest(t, root, "HEAD"), "roles/demo/defaults/main.yml", "roles/unrelated/defaults/main.yml")
+
+	// A configured exclusion keeps a changed template out of the selection.
+	root = changedFixture(t)
+	putFile(t, root, ".saltbox-lint", "exclude_paths: [roles/demo/templates/]\n")
+	commitChangedFixture(t, root)
+	putFile(t, root, changedTemplate, "{% if broken %}\n")
+	p = loadChangedTest(t, root, "HEAD")
+	if p.Selected[changedTemplate] {
+		t.Fatalf("excluded template selected: %+v", p.Selection)
 	}
 }

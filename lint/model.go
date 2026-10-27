@@ -139,17 +139,20 @@ type Project struct {
 	referenceDirectories map[string][]string
 	referenceFiles       []string
 	discoverable         map[string]bool
-	identity             []DependencyFile
-	discovery            []DependencyFile
-	directories          map[string]string
-	analysis             *analysis
-	configuration        projectConfiguration
-	Root, Name           string
-	Sources              map[string]*Source
-	Selected             map[string]bool
-	Diagnostics          []Diagnostic
-	Dependencies         *AnalysisRecord
-	Selection            *SelectionRecord
+	// explicit records sources selected by a named file target or stdin.
+	// Directory and changed selection never grant or remove this status.
+	explicit      map[string]bool
+	identity      []DependencyFile
+	discovery     []DependencyFile
+	directories   map[string]string
+	analysis      *analysis
+	configuration projectConfiguration
+	Root, Name    string
+	Sources       map[string]*Source
+	Selected      map[string]bool
+	Diagnostics   []Diagnostic
+	Dependencies  *AnalysisRecord
+	Selection     *SelectionRecord
 }
 type Options struct {
 	referenceContext    bool

@@ -281,3 +281,46 @@ func TestTemplateDirectorySpellingCommandBoundaries(t *testing.T) {
 		})
 	}
 }
+
+// Directory discovery checks templates read-only. Discovered templates never
+// make a directory --fix fail; naming a template target still refuses writes.
+func TestTemplateDirectoryDiscoveryFixAndDiff(t *testing.T) {
+	root := t.TempDir()
+	yaml := filepath.Join(root, "roles/demo/tasks/main.yml")
+	template := filepath.Join(root, "roles/demo/templates/config.j2")
+	yamlText := "- name: Example\n  ansible.builtin.debug:\n    msg: \"{{ a\n      | combine(b) }}\"\n"
+	templateText := " \t{% if enabled %}\r\n  {{ value }}\r\n"
+	for name, text := range map[string]string{yaml: yamlText, template: templateText} {
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, stderr := invoke(t, "", "check", "--root", root, "--format", "concise", root)
+	if code != 1 || !strings.Contains(out, "roles/demo/templates/config.j2") || !strings.Contains(out, "template-syntax") {
+		t.Fatalf("directory template check: %d %s %s", code, out, stderr)
+	}
+	code, out, stderr = invoke(t, "", "check", "--root", root, "--diff", root)
+	if code != 1 || !strings.Contains(out, "roles/demo/tasks/main.yml") || strings.Contains(out, "config.j2") {
+		t.Fatalf("directory diff: %d %s %s", code, out, stderr)
+	}
+	code, out, stderr = invoke(t, "", "check", "--root", root, "--fix", root, template)
+	if code != 2 || !strings.Contains(stderr, "read-only") {
+		t.Fatalf("explicit template beside directory --fix: %d %s %s", code, out, stderr)
+	}
+	if after, err := os.ReadFile(yaml); err != nil || string(after) != yamlText {
+		t.Fatal("explicit template refusal wrote YAML")
+	}
+	code, out, stderr = invoke(t, "", "check", "--root", root, "--fix", "--format", "concise", root)
+	if code != 1 || !strings.Contains(out, "template-syntax") || strings.Contains(stderr, "read-only") {
+		t.Fatalf("directory --fix: %d %s %s", code, out, stderr)
+	}
+	if after, err := os.ReadFile(yaml); err != nil || string(after) == yamlText {
+		t.Fatalf("directory --fix did not correct YAML: %q %v", after, err)
+	}
+	if after, err := os.ReadFile(template); err != nil || string(after) != templateText {
+		t.Fatal("directory --fix changed template bytes")
+	}
+}

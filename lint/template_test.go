@@ -235,12 +235,47 @@ func TestTemplateSelectionReferencesAndPreservation(t *testing.T) {
 	if err != nil || string(bytesAfter) != text {
 		t.Fatal("template bytes changed")
 	}
+	// Default discovery now selects the same read-only template. It reports
+	// the same diagnostics, plans no edits and does not refuse a fix batch,
+	// because no template target was named.
 	directory, err := Load(t.Context(), Options{Root: root, Paths: []string{root}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directory.Selected[name] {
-		t.Fatal("template entered default discovery")
+	discovered := directory.Sources[name]
+	if !directory.Selected[name] || discovered == nil || discovered.Kind != Template || directory.explicit[name] || discovered.RolePath != p.Sources[name].RolePath || !slices.Equal(discovered.templateSpellings, p.Sources[name].templateSpellings) {
+		t.Fatalf("default discovery template differs from explicit admission: %+v", discovered)
+	}
+	directoryDiagnostics := []Diagnostic{}
+	for _, d := range Analyze(directory, Rules()) {
+		if d.Path == name {
+			directoryDiagnostics = append(directoryDiagnostics, d)
+		}
+	}
+	if !reflect.DeepEqual(directoryDiagnostics, ds) {
+		t.Fatalf("discovered template diagnostics differ:\n%+v\n%+v", directoryDiagnostics, ds)
+	}
+	if changes, err := PlanFixes(directory, Analyze(directory, Rules())); err != nil || slices.ContainsFunc(changes, func(c Change) bool { return c.Path == name }) {
+		t.Fatalf("discovered template edit plan: %+v %v", changes, err)
+	}
+	if err := RequireWritableSelection(directory); err != nil {
+		t.Fatalf("discovered template refused a directory fix batch: %v", err)
+	}
+	if bytesAfter, err := os.ReadFile(filename); err != nil || string(bytesAfter) != text {
+		t.Fatal("template bytes changed")
+	}
+	// Naming the template beside its directory keeps the explicit refusal.
+	both, err := Load(t.Context(), Options{Root: root, Paths: []string{root, filename}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireWritableSelection(both); err == nil {
+		t.Fatal("explicit template beside its directory became writable")
+	}
+	// The discovered template still participates in fix revalidation.
+	putFile(t, root, name, text+"\n")
+	if err := RequireWritableSelection(directory); err == nil || !strings.Contains(err.Error(), "changed since analysis") {
+		t.Fatalf("changed discovered template did not refuse the batch: %v", err)
 	}
 }
 
@@ -632,9 +667,26 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 		}
 	}
 	// A tasks-looking suffix beneath the physical template root also stays raw.
+	// Directory discovery under the narrowed root admits every name as the
+	// same read-only template that an explicit target would be.
 	putFile(t, root, "roles/demo/templates/tasks/main.yml", "{{ value }}")
-	if p, err := Load(t.Context(), Options{Root: narrow, Paths: []string{narrow}}); err == nil {
-		t.Fatalf("narrow directory selected templates: %+v", p)
+	p, err := Load(t.Context(), Options{Root: narrow, Paths: []string{narrow}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedPaths(p); !slices.Equal(got, []string{"config.yaml", "extensionless", "tasks/main.yml"}) {
+		t.Fatalf("narrow directory selection: %q", got)
+	}
+	for _, name := range selectedPaths(p) {
+		if source := p.Sources[name]; source.Kind != Template || source.RolePath != "" || p.explicit[name] {
+			t.Fatalf("narrow discovered template invented context or explicit status: %s %+v", name, source)
+		}
+	}
+	if len(p.Sources) != 3 {
+		t.Fatalf("narrow directory read outside-root context: %v", sortedKeys(p.Sources))
+	}
+	if err := RequireWritableSelection(p); err != nil {
+		t.Fatalf("narrow discovered templates refused a read-only batch: %v", err)
 	}
 	alias := putFile(t, root, "unrelated.yml", "x: true\n")
 	if err := os.Remove(alias); err != nil {
@@ -644,7 +696,7 @@ func TestTemplatePhysicalClassificationPreservesRootAndUnknownOwner(t *testing.T
 		t.Fatal(err)
 	}
 	canonicalRoot := canonicalTestPath(t, root)
-	p, err := Load(t.Context(), Options{Root: root, Paths: []string{alias}})
+	p, err = Load(t.Context(), Options{Root: root, Paths: []string{alias}})
 	if err != nil {
 		t.Fatal(err)
 	}

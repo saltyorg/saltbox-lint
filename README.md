@@ -141,8 +141,8 @@ saltbox-lint --version
 ```
 
 `check` defaults to `.`. Directory checks discover conventional role defaults,
-tasks, handlers and vars, shared tasks, inventory variables and playbooks;
-explicit YAML files also receive applicable generic rules. Git discovery uses
+tasks, handlers and vars, shared tasks, inventory variables, playbooks and
+read-only templates; explicit YAML files also receive applicable generic rules. Git discovery uses
 tracked and untracked files that pass Git ignore rules and configured exclusions.
 Explicit files also respect exclusions. Working-tree contents are read, including local edits. The root is
 inferred from the first target's nearest Saltbox/Sandbox project marker or Git
@@ -152,7 +152,9 @@ context, but only primary findings in selected files are reported.
 
 `-` reads stdin and requires `--stdin-filename`; it can accompany other targets
 and overlays that filename without writing it. Input may be empty. `--fix` and
-`--diff` reject stdin and cannot be combined. `--diff` prints a verified unified
+`--diff` reject stdin and cannot be combined. `--fix` never writes templates:
+templates found by directory discovery are only checked, while naming a template
+file refuses the whole batch before any write. `--diff` prints a verified unified
 patch on stdout and all original findings on stderr; human/concise output is
 supported for those diagnostics. JSON/GitHub cannot be combined with `--diff`.
 Each changed file gets minimal unified hunks with three lines of context; nearby
@@ -233,9 +235,10 @@ local edits and nonignored untracked files. It does not choose a merge base.
 Staged changes contribute only when they are present in the current worktree.
 Partial staging does not create an index snapshot for checking.
 
-Changed YAML sources and existing primaries affected by changed context are
-selected through the shared dependency observations. Template changes select
-YAML dependents; templates remain raw, read-only context. Rename pairs contribute
+Changed YAML sources, changed templates and existing primaries affected by
+changed context are selected through the shared dependency observations. A
+template change selects that template and its dependents; owning role changes
+reselect the role's templates. Templates remain raw and read-only. Rename pairs contribute
 both their old and new names. Deleted sources are never loaded as existing
 primaries. Removed context can erase earlier dependencies, so the command
 conservatively selects all current in-root primaries and explains that fallback.
@@ -343,8 +346,9 @@ directory discovery would omit it; exclusions still apply. Excluded sources have
 parse state `excluded`, an exclusion reason and no applicable policies. Unsaved stdin identities
 can describe files that do not yet exist. Templates, including conventional
 `.yaml` or extensionless templates, support explicit read-only checking and
-static navigation. Directory and changed-file discovery retain YAML primary
-selection. Template formatting, fixes, completion edits and rename are unavailable.
+static navigation. Directory and changed-file discovery select templates with
+the same read-only semantics. Template formatting, fixes, completion edits and
+rename are unavailable.
 See [template coverage](https://github.com/saltyorg/saltbox-lint/blob/main/docs/templates.md) for supported syntax and partial reasons.
 
 Fix decisions come from the existing verified planner. They describe each

@@ -36,7 +36,9 @@ func TestExplainSelectionAndContext(t *testing.T) {
 		selected       bool
 		kind           Kind
 	}{
-		{"ignored explicit", ignored, false, Generic}, {"nested generic", generic, false, Generic}, {"tasks", tasks, true, Tasks}, {"template", template, false, Template},
+		{"ignored explicit", ignored, false, Generic}, {"nested generic", generic, false, Generic}, {"tasks", tasks, true, Tasks},
+		// Directory discovery selects templates as read-only primaries.
+		{"template", template, true, Template},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			before, err := os.ReadFile(tt.filename)
@@ -89,6 +91,8 @@ func TestExplainParsedDirectoryAdmission(t *testing.T) {
 				{"arbitrary.yaml", "- hosts: all\n  tasks: []\n", true},
 				{"malformed.yml", "value: [\n", false},
 				{"nested/generic.yml", "value: fine\n", false},
+				{"roles/demo/templates/extensionless", "{{ value }}\n", true},
+				{"roles/demo/templates/config.yml", "{{ raw invalid YAML }}\n", true},
 			}
 			for _, input := range inputs {
 				filename := filepath.Join(root, filepath.FromSlash(input.name))

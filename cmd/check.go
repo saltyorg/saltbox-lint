@@ -26,7 +26,7 @@ func newCheckCommand(rootOpts *rootOptions) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "check [paths...]",
 		Short: "Check sources (defaults to the current directory)",
-		Long: "Check YAML sources and explicitly selected read-only templates with their required context. Directory discovery keeps its existing YAML primary selection. --changed-since REF selects current worktree changes and dependents. Use '-' with --stdin-filename to check an unsaved buffer.\n" +
+		Long: "Check YAML sources and read-only templates with their required context. Directory discovery and --changed-since REF select templates beside YAML; --fix never edits them and refuses only explicitly named templates. --changed-since REF selects current worktree changes and dependents. Use '-' with --stdin-filename to check an unsaved buffer.\n" +
 			"Exit status: 0 clean, 1 findings, 2 usage or operational failure.",
 		RunE: func(command *cobra.Command, args []string) error {
 			if command.Flags().Changed("changed-since") && opts.changedSince == "" {

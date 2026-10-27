@@ -162,8 +162,9 @@ func TestLoadSelectedRoleContext(t *testing.T) {
 	if len(p.Sources) != 6 || p.Sources["roles/demo/templates/config.conf"].Kind != Template {
 		t.Errorf("context: %v", p.Sources)
 	}
+	// The whole project also selects the role template as a read-only primary.
 	p, err = Load(t.Context(), Options{Paths: []string{root}})
-	if err != nil || len(p.Selected) != 7 || len(p.Sources) != 8 || len(p.Diagnostics) != 1 {
+	if err != nil || len(p.Selected) != 8 || !p.Selected["roles/demo/templates/config.conf"] || len(p.Sources) != 8 || len(p.Diagnostics) != 1 {
 		t.Fatalf("whole project: %v %#v", err, p)
 	}
 }
@@ -227,15 +228,54 @@ func TestLoadExplicitRootControlsRelativeIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadTemplatesRequireExplicitSelection(t *testing.T) {
+// Directory discovery admits templates with explicit-target semantics while
+// respecting configured exclusions and Git ignore rules like YAML candidates.
+func TestLoadDirectoryTemplatesMatchExplicitSelection(t *testing.T) {
 	root := t.TempDir()
 	template := putFile(t, root, "roles/demo/templates/config.j2", "{% if enabled %}\n{% endif %}")
-	if _, err := Load(t.Context(), Options{Paths: []string{root}}); err == nil {
-		t.Fatal("default directory selected a template")
+	putFile(t, root, "roles/demo/templates/nested/extensionless", "{{ value }}\n")
+	putFile(t, root, "resources/templates/shared.yml", "{{ value }}\n")
+	putFile(t, root, "roles/demo/templates/excluded.conf", "{{ value }}\n")
+	putFile(t, root, "roles/demo/templates/ignored.conf", "{{ value }}\n")
+	putFile(t, root, "roles/demo/templates/untracked.conf", "{{ value }}\n")
+	putFile(t, root, ".saltbox-lint", "exclude_paths: [roles/demo/templates/excluded.conf]\n")
+	putFile(t, root, ".gitignore", "roles/demo/templates/ignored.conf\n")
+	gitTest(t, root, "init", "-q")
+	directory, err := Load(t.Context(), Options{Paths: []string{root}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	p, err := Load(t.Context(), Options{Root: root, Paths: []string{template}})
-	if err != nil || !p.Selected["roles/demo/templates/config.j2"] {
-		t.Fatalf("explicit template: %v %#v", err, p)
+	want := []string{"resources/templates/shared.yml", "roles/demo/templates/config.j2", "roles/demo/templates/nested/extensionless", "roles/demo/templates/untracked.conf"}
+	if got := selectedPaths(directory); !slices.Equal(got, want) {
+		t.Fatalf("directory templates=%q want=%q", got, want)
+	}
+	explicit, err := Load(t.Context(), Options{Root: root, Paths: []string{template}})
+	if err != nil || !explicit.Selected["roles/demo/templates/config.j2"] {
+		t.Fatalf("explicit template: %v %#v", err, explicit)
+	}
+	got, wantSource := directory.Sources["roles/demo/templates/config.j2"], explicit.Sources["roles/demo/templates/config.j2"]
+	if got.Kind != Template || got.Kind != wantSource.Kind || got.RolePath != wantSource.RolePath || got.templatePath != wantSource.templatePath || !slices.Equal(got.templateSpellings, wantSource.templateSpellings) {
+		t.Fatalf("directory admission differs: %+v %+v", got, wantSource)
+	}
+	if directory.explicit["roles/demo/templates/config.j2"] || !explicit.explicit["roles/demo/templates/config.j2"] {
+		t.Fatal("explicit selection status not tracked")
+	}
+	if !explicit.discoverable["roles/demo/templates/config.j2"] {
+		t.Fatal("explain does not report that directory discovery selects the template")
+	}
+	if err := RequireWritableSelection(directory); err != nil {
+		t.Fatalf("directory templates refused a fix batch: %v", err)
+	}
+	if err := RequireWritableSelection(explicit); err == nil {
+		t.Fatal("explicit template became writable")
+	}
+	// A template directory target behaves like the default discovery subset.
+	templates, err := Load(t.Context(), Options{Root: root, Paths: []string{filepath.Join(root, "roles/demo/templates")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedPaths(templates); !slices.Equal(got, want[1:]) {
+		t.Fatalf("template directory=%q", got)
 	}
 }
 
