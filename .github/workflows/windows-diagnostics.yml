@@ -4,12 +4,18 @@ name: Windows diagnostics
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: isolated repeats the image release sampler; release-suite repeats the full release tests under their normal parallel load.
+        required: true
+        type: choice
+        options: [isolated, release-suite]
+        default: isolated
       repeats:
-        description: Test file runs per Windows target (1-50).
+        description: Runs per Windows target (isolated 1-50, release-suite 1-20).
         required: true
         default: "10"
       iterations:
-        description: Fixture executions per test run (1-500).
+        description: Fixture executions per isolated run (1-500).
         required: true
         default: "100"
 permissions:
@@ -26,7 +32,7 @@ jobs:
           - runner: windows-11-arm
             target: win32-arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -44,6 +50,7 @@ jobs:
       - name: Set up npm
         run: node tools/setup-npm.mjs
       - name: Sample fixture image release
+        if: inputs.mode == 'isolated'
         shell: bash
         working-directory: extension
         env:
@@ -71,6 +78,48 @@ jobs:
             fi
             line=$(grep -h -o 'fixture image release .*' "$log" || echo "no diagnostic (failed before sampling)")
             echo "run $run: $line" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          {
+            echo '```'
+            echo
+            echo "Failed runs: $failures of $REPEATS"
+          } >> "$GITHUB_STEP_SUMMARY"
+          (( failures == 0 ))
+      - name: Install extension dependencies
+        if: inputs.mode == 'release-suite'
+        shell: bash
+        run: npm --prefix extension ci --ignore-scripts
+      - name: Build extension
+        if: inputs.mode == 'release-suite'
+        shell: bash
+        run: npm --prefix extension run build
+      - name: Repeat release tests
+        if: inputs.mode == 'release-suite'
+        shell: bash
+        env:
+          REPEATS: ${{ inputs.repeats }}
+          PACKAGE_TARGET: ${{ matrix.target }}
+        run: |
+          [[ $REPEATS =~ ^[1-9][0-9]?$ ]] && (( REPEATS <= 20 ))
+          node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.PACKAGE_TARGET)"
+          {
+            echo "### Release tests ($PACKAGE_TARGET)"
+            echo
+            echo "$REPEATS runs; waited fixture releases and failing tests per run."
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          failures=0
+          for run in $(seq 1 "$REPEATS"); do
+            log="$RUNNER_TEMP/release-$run.log"
+            status=passed
+            if ! npm --prefix extension run test:release > "$log" 2>&1; then
+              failures=$((failures + 1))
+              status=failed
+              grep -E '^✖ |EPERM|EBUSY|not released within' "$log" | sort -u | head -20 || true
+            fi
+            waits=$(grep -h -o 'saltbox-diagnostic native-query-fixture-release .*' "$log" | tr '\n' ' ' || true)
+            echo "run $run: $status ${waits:-no waited releases}" | tee -a "$GITHUB_STEP_SUMMARY"
           done
           {
             echo '```'
