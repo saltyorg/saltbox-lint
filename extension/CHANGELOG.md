@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.5 (2026-10-28)
 
 - Check templates in directory scans, including the default `.`, and in
   `--changed-since` selections, with the same read-only semantics as named
@@ -8,6 +8,33 @@
   template file keeps refusing the batch.
 - Publish workspace-scan diagnostics for closed templates and recheck a closed
   template when it or its owning role context changes.
+- Accept Jinja arithmetic, concatenation and list and dict literals in template
+  expressions. Template tasks with dynamic sources now reduce coverage only
+  when they can change template delimiters.
+- Report inline ignores that suppress no finding. An ignore after a multi-line
+  flow scalar or flow collection now covers every line of that node.
+- Keep the healthcheck fix from changing what YAML loads, and verify every fix
+  with an independent YAML parser before it is shown or written.
+- Make `--diff` and `--fix` agree around ignored lines, match inserted line
+  breaks to the edited line, indent `- |` items from their marker, refuse
+  hard-linked files and stop duplicating header borders.
+- Emit minimal unified diff hunks with three context lines instead of whole
+  files.
+- Bound parser memory on deeply nested flow YAML and accept trailing whitespace
+  before CRLF line breaks.
+- Exempt `host_vars/localhost/` directories from duplicate variable checks.
+- Select symlinked sources whose target changed, and ignore-file changes above
+  a nested root, in `--changed-since`.
+- Resolve symlinked GitHub workspaces in annotation paths, escape control and
+  bidirectional characters in concise, GitHub and human output, exit 2 when
+  help output cannot be written, and keep SARIF locations for unloaded sources.
+- Recheck saved UTF-8 BOM files and correct their first-line columns, keep
+  stale markers in place while typing, refresh enclosing roots for nested
+  workspace folders and read context files off the extension host thread.
+- Stop CLI processes when the editor host exits without deactivating.
+- Verify the release tag, source identity and checksums before publishing,
+  install npm from an integrity-verified tarball and byte-compare source
+  rebuilds with the shipped binaries.
 
 ## 0.2.4 (2026-10-19)
 
