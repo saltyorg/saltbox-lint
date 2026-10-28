@@ -22,7 +22,7 @@ function clock() {
 test("windows removal waits asynchronously for a released fixture image", async () => {
   const c = clock();
   let attempts = 0;
-  await removeExecutedFixtureDirectory("fixture", 3000, {
+  const released = await removeExecutedFixtureDirectory("fixture", 3000, {
     platform: "win32",
     now: c.now,
     wait: c.wait,
@@ -32,6 +32,7 @@ test("windows removal waits asynchronously for a released fixture image", async 
   });
   assert.equal(attempts, 3);
   assert.deepEqual(c.waits, [50, 50]);
+  assert.deepEqual(released, { attempts: 3, waitedMs: 100 });
 });
 
 test("windows removal reports the first lock as the cause after the deadline", async () => {

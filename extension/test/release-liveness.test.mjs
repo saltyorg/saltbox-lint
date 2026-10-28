@@ -61,10 +61,15 @@ async function withGroupQuery(mode, body, control = {}) {
     if (modes.includes("overflow") && !control.nodeOverflow) {
       const directory = mkdtempSync(join(tmpdir(), "saltbox-native-query-"));
       // The overflowing fixture executable runs from this directory. Removal
-      // observes Windows image release within the 5s cleanup budget.
-      resources.defer("native query fixture directory", () =>
-        removeExecutedFixtureDirectory(directory, 3000),
-      );
+      // observes Windows image release within the 5s cleanup budget and
+      // reports any release it had to wait for, so recurrences stay visible.
+      resources.defer("native query fixture directory", async () => {
+        const released = await removeExecutedFixtureDirectory(directory, 3000);
+        if (released.attempts > 1)
+          console.log(
+            `saltbox-diagnostic native-query-fixture-release ${JSON.stringify(released)}`,
+          );
+      });
       overflowBinary = join(
         directory,
         "process-fixture" + (process.platform === "win32" ? ".exe" : ""),
