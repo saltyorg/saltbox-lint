@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":separateMajorReleases",
+    "helpers:pinGitHubActionDigestsToSemver"
+  ],
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "automergeType": "pr",
+  "platformAutomerge": false,
+  "automergeStrategy": "squash",
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Merge non-major updates once every CI check on the pull request passes",
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Toolchains and Node type definitions follow runtime targets and are reviewed by hand",
+      "matchPackageNames": ["go", "golang", "node", "@types/node"],
+      "automerge": false
+    },
+    {
+      "description": "The VS Code API floor is the minimum supported editor and is raised deliberately",
+      "matchPackageNames": ["@types/vscode", "vscode"],
+      "enabled": false
+    },
+    {
+      "description": "npm comes from the integrity pin in tools/npm-bootstrap.json, which changes together with packageManager",
+      "matchPackageNames": ["npm"],
+      "enabled": false
+    },
+    {
+      "description": "Locally patched replacements are re-vendored together with their patch records",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/goccy/go-yaml", "github.com/frostybee/nuri"],
+      "enabled": false
+    },
+    {
+      "description": "Vendored upstream sources and pinned offline oracle inputs are not dependency manifests",
+      "matchFileNames": ["third_party/**", "tools/oracles/**"],
+      "enabled": false
+    }
+  ]
+}
