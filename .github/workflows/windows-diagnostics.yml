@@ -1,0 +1,80 @@
+name: Windows diagnostics
+# Manually dispatched OS-specific sampling for intermittent Windows behaviour.
+# It runs only the named diagnostic test, repeatedly, on both Windows targets.
+on:
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: Test file runs per Windows target (1-50).
+        required: true
+        default: "10"
+      iterations:
+        description: Fixture executions per test run (1-500).
+        required: true
+        default: "100"
+permissions:
+  contents: read
+jobs:
+  image-release:
+    name: Fixture image release (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: win32-x64
+          - runner: windows-11-arm
+            target: win32-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: extension/.node-version
+      - name: Set up npm
+        run: node tools/setup-npm.mjs
+      - name: Sample fixture image release
+        shell: bash
+        working-directory: extension
+        env:
+          REPEATS: ${{ inputs.repeats }}
+          SALTBOX_IMAGE_RELEASE_ITERATIONS: ${{ inputs.iterations }}
+          PACKAGE_TARGET: ${{ matrix.target }}
+        run: |
+          [[ $REPEATS =~ ^[1-9][0-9]?$ ]] && (( REPEATS <= 50 ))
+          [[ $SALTBOX_IMAGE_RELEASE_ITERATIONS =~ ^[1-9][0-9]{0,2}$ ]] && (( SALTBOX_IMAGE_RELEASE_ITERATIONS <= 500 ))
+          node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.PACKAGE_TARGET)"
+          {
+            echo "### Fixture image release ($PACKAGE_TARGET)"
+            echo
+            echo "$REPEATS runs of $SALTBOX_IMAGE_RELEASE_ITERATIONS fixture executions each."
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          failures=0
+          for run in $(seq 1 "$REPEATS"); do
+            log="$RUNNER_TEMP/image-release-$run.log"
+            if ! node --test test/fixture-image-release.test.mjs > "$log" 2>&1; then
+              failures=$((failures + 1))
+              echo "run $run failed:"
+              cat "$log"
+            fi
+            line=$(grep -h -o 'fixture image release .*' "$log" || echo "no diagnostic (failed before sampling)")
+            echo "run $run: $line" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          {
+            echo '```'
+            echo
+            echo "Failed runs: $failures of $REPEATS"
+          } >> "$GITHUB_STEP_SUMMARY"
+          (( failures == 0 ))

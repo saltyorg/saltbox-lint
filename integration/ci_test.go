@@ -582,6 +582,7 @@ func TestWorkflowsBootstrapIntegrityVerifiedNpm(t *testing.T) {
 	want := map[string]int{
 		"ci.yml/check": 1, "ci.yml/native": 1, "ci.yml/acceptance": 1,
 		"release.yml/release": 1, "release.yml/marketplace": 1,
+		"windows-diagnostics.yml/image-release": 1,
 	}
 	if !reflect.DeepEqual(bootstraps, want) {
 		t.Errorf("verified npm bootstraps %v, want %v", bootstraps, want)
