@@ -13,6 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { ownedCommand } from "../scripts/owned-command.mjs";
 import { probeFixtureLifetime as probe } from "./support/fixture-lifetime.ts";
 import { withTestResources } from "./support/test-resources.ts";
+import { removeExecutedFixtureDirectory } from "./support/executed-fixture-directory.ts";
 import { ownJoinedResource } from "./support/host-resources.ts";
 import { stageBinary } from "../scripts/stage-binary.mjs";
 import { createHostProcessSupervisor } from "../scripts/host-process-supervisor.mjs";
@@ -59,8 +60,10 @@ async function withGroupQuery(mode, body, control = {}) {
     let overflowBinary;
     if (modes.includes("overflow") && !control.nodeOverflow) {
       const directory = mkdtempSync(join(tmpdir(), "saltbox-native-query-"));
+      // The overflowing fixture executable runs from this directory. Removal
+      // observes Windows image release within the 5s cleanup budget.
       resources.defer("native query fixture directory", () =>
-        rmSync(directory, { recursive: true, force: true }),
+        removeExecutedFixtureDirectory(directory, 3000),
       );
       overflowBinary = join(
         directory,
