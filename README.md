@@ -369,7 +369,10 @@ schema version 2.
 `--format auto` is the default. It selects human output when the
 diagnostic destination is a capable terminal, and concise output for pipes,
 files, buffers, or `TERM=dumb`. In `--diff` mode the diagnostic destination is
-stderr, independently of the patch on stdout. Explicit `--format human` keeps
+stderr, independently of the patch on stdout. When `auto` selects concise output,
+one summary line follows on stderr, such as `No findings in 12 checked files.` or
+`1 file fixed. 2 findings (2 errors) in 12 checked files.`, so an empty stdout
+is visibly a clean result. Explicit `--format concise` never writes this line. Explicit `--format human` keeps
 the same layout when redirected, which is useful for readable exports.
 Human output uses the full detected destination width, with an 80-column fallback
 when detection is unavailable. Long source lines wrap visually without changing
@@ -439,7 +442,7 @@ VS Code. Control characters (C0, DEL, C1), Unicode bidirectional formatting
 controls and invalid UTF-8 bytes become the same visible escapes as human output,
 such as `\n`, `\x1b` and `\u202e`; concise paths also double backslashes so
 escapes stay unambiguous. Other Unicode remains literal. Human columns count Unicode code
-points. Clean concise output is empty. JSON schema version 2 always emits one
+points. Clean concise stdout is empty. JSON schema version 2 always emits one
 object with `schema_version: 2`, a `diagnostics` array and a shared `fixes` array.
 Both arrays are empty for clean input. Each diagnostic contains `path`, `rule_id`,
 `severity`, `message`, `range` and `span`, and optional `expected`, `related` and

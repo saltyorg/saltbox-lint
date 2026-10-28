@@ -37,29 +37,30 @@ func TestCheckInvocations(t *testing.T) {
 		args     []string
 		code     int
 		contains string
+		summary  string
 	}{
-		{"clean", []string{"check", clean}, 0, ""},
-		{"default dot", []string{"check"}, 1, "jinja"},
-		{"finding", []string{"check", "--format", "human", bad}, 1, "Fix available:"},
-		{"concise", []string{"check", "--format", "concise", bad}, 1, "error [jinja"},
-		{"root", []string{"check", "--root", root, bad}, 1, "bad.yml:"},
-		{"missing", []string{"check", "missing.yml"}, 2, ""},
-		{"unknown flag", []string{"check", "--bogus"}, 2, ""},
-		{"bad format", []string{"check", "--format", "bogus", clean}, 2, ""},
-		{"conflicting fix", []string{"check", "--fix", "--diff", bad}, 2, ""},
-		{"diff json", []string{"check", "--diff", "--format", "json", bad}, 2, ""},
-		{"diff github", []string{"check", "--diff", "--format", "github", bad}, 2, ""},
-		{"stdin missing filename", []string{"check", "-"}, 2, ""},
-		{"filename missing stdin", []string{"check", "--stdin-filename", "virtual.yml"}, 2, ""},
-		{"stdin fix", []string{"check", "-", "--stdin-filename", "virtual.yml", "--fix"}, 2, ""},
-		{"stdin diff", []string{"check", "-", "--stdin-filename", "virtual.yml", "--diff"}, 2, ""},
-		{"duplicate stdin", []string{"check", "-", "-", "--stdin-filename", "virtual.yml"}, 2, ""},
-		{"version", []string{"--version"}, 0, "test-version"},
-		{"help", []string{"--help"}, 0, "check"},
-		{"rules", []string{"rules"}, 0, "jinja-layout"},
-		{"rule explain", []string{"rules", "jinja-layout"}, 0, "Good example:"},
-		{"unknown rule", []string{"rules", "missing"}, 2, ""},
-		{"unknown command", []string{"missing"}, 2, ""},
+		{"clean", []string{"check", clean}, 0, "", "No findings in 1 checked file.\n"},
+		{"default dot", []string{"check"}, 1, "jinja", "1 finding (1 error) in 1 checked file.\n"},
+		{"finding", []string{"check", "--format", "human", bad}, 1, "Fix available:", ""},
+		{"concise", []string{"check", "--format", "concise", bad}, 1, "error [jinja", ""},
+		{"root", []string{"check", "--root", root, bad}, 1, "bad.yml:", "1 finding (1 error) in 1 checked file.\n"},
+		{"missing", []string{"check", "missing.yml"}, 2, "", ""},
+		{"unknown flag", []string{"check", "--bogus"}, 2, "", ""},
+		{"bad format", []string{"check", "--format", "bogus", clean}, 2, "", ""},
+		{"conflicting fix", []string{"check", "--fix", "--diff", bad}, 2, "", ""},
+		{"diff json", []string{"check", "--diff", "--format", "json", bad}, 2, "", ""},
+		{"diff github", []string{"check", "--diff", "--format", "github", bad}, 2, "", ""},
+		{"stdin missing filename", []string{"check", "-"}, 2, "", ""},
+		{"filename missing stdin", []string{"check", "--stdin-filename", "virtual.yml"}, 2, "", ""},
+		{"stdin fix", []string{"check", "-", "--stdin-filename", "virtual.yml", "--fix"}, 2, "", ""},
+		{"stdin diff", []string{"check", "-", "--stdin-filename", "virtual.yml", "--diff"}, 2, "", ""},
+		{"duplicate stdin", []string{"check", "-", "-", "--stdin-filename", "virtual.yml"}, 2, "", ""},
+		{"version", []string{"--version"}, 0, "test-version", ""},
+		{"help", []string{"--help"}, 0, "check", ""},
+		{"rules", []string{"rules"}, 0, "jinja-layout", ""},
+		{"rule explain", []string{"rules", "jinja-layout"}, 0, "Good example:", ""},
+		{"unknown rule", []string{"rules", "missing"}, 2, "", ""},
+		{"unknown command", []string{"missing"}, 2, "", ""},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,8 +72,8 @@ func TestCheckInvocations(t *testing.T) {
 				if out != "" || stderr == "" {
 					t.Fatalf("operational error streams: %q %q", out, stderr)
 				}
-			} else if stderr != "" {
-				t.Fatalf("unexpected stderr %q", stderr)
+			} else if stderr != tt.summary {
+				t.Fatalf("stderr %q, want %q", stderr, tt.summary)
 			}
 		})
 	}

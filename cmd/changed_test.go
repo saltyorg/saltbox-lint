@@ -41,7 +41,11 @@ func TestChangedCommandCleanRenderers(t *testing.T) {
 	for _, format := range []string{"auto", "human", "concise", "json", "github"} {
 		t.Run(format, func(t *testing.T) {
 			code, out, stderr := invoke(t, "", "check", "--root", root, "--changed-since", "HEAD", "--format", format, "--color", "never")
-			if code != 0 || stderr != "" {
+			summary := ""
+			if format == "auto" {
+				summary = "No findings in 0 checked files.\n"
+			}
+			if code != 0 || stderr != summary {
 				t.Fatalf("%d %q %q", code, out, stderr)
 			}
 			var want bytes.Buffer
@@ -58,7 +62,7 @@ func TestChangedCommandCleanRenderers(t *testing.T) {
 		})
 	}
 	code, out, stderr := invoke(t, "", "check", "--root", root, "--changed-since", "HEAD", "--diff")
-	if code != 0 || out != "" || stderr != "" {
+	if code != 0 || out != "" || stderr != "No formatting changes. No findings in 0 checked files.\n" {
 		t.Fatalf("empty diff: %d %q %q", code, out, stderr)
 	}
 	// An empty source repository also produces each normal clean result.

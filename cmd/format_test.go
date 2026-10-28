@@ -270,7 +270,7 @@ func TestFormatLintStructuralFixMatchesCheck(t *testing.T) {
 		}
 	}
 	code, _, stderr = invoke(t, "", "check", "--fix", "--root", root, "--", path)
-	if code != 0 || stderr != "" {
+	if code != 0 || stderr != "1 file fixed. No findings in 1 checked file.\n" {
 		t.Fatalf("check fix: %d %q", code, stderr)
 	}
 	disk, err = os.ReadFile(path)

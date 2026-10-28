@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/saltyorg/saltbox-lint/lint"
@@ -104,6 +106,7 @@ func (opts checkOptions) loadOptions(args []string, in io.Reader) (lint.Options,
 }
 
 func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMode, themeMode string) (resultErr error) {
+	fixed := 0
 	var statistics *checkStatistics
 	if opts.stats {
 		statistics = newCheckStatistics()
@@ -126,6 +129,9 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMod
 		diagnosticOutput = command.ErrOrStderr()
 	}
 	format, human := resolveCheckPresentation(command.Context(), diagnosticOutput, opts.format, colorMode, themeMode)
+	// Explicit concise output is an exact machine contract; only the automatic
+	// fallback for pipes adds a summary, so an empty run is visibly complete.
+	summarize := opts.format == "auto" && format == "concise"
 	statistics.begin("discovery_loading")
 	project, err := lint.Load(command.Context(), load)
 	statistics.end(err)
@@ -172,6 +178,11 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMod
 			if err := report.Render(command.ErrOrStderr(), project, diagnostics, report.Options{Format: format, Human: human, Statistics: record}); err != nil {
 				return err
 			}
+			if summarize {
+				if err := writeConciseSummary(command.ErrOrStderr(), fmt.Sprintf("%s. ", plural(len(changes), "file has formatting changes", "files have formatting changes", "No formatting changes")), project, diagnostics); err != nil {
+					return err
+				}
+			}
 			statistics.end(nil)
 			if len(diagnostics) > 0 {
 				return errFindings
@@ -182,6 +193,7 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMod
 		if err := lint.WriteChanges(project, changes); err != nil {
 			return err
 		}
+		fixed = len(changes)
 		statistics.end(nil)
 		if statistics != nil {
 			count := len(changes)
@@ -229,11 +241,57 @@ func runCheck(command *cobra.Command, args []string, opts checkOptions, colorMod
 		}
 		return err
 	}
+	if summarize {
+		prefix := ""
+		if opts.fix {
+			prefix = fmt.Sprintf("%s. ", plural(fixed, "file fixed", "files fixed", "No files needed fixes"))
+		}
+		if err := writeConciseSummary(command.ErrOrStderr(), prefix, project, diagnostics); err != nil {
+			return err
+		}
+	}
 	statistics.end(nil)
 	if len(diagnostics) > 0 {
 		return errFindings
 	}
 	return nil
+}
+
+// writeConciseSummary reports the outcome on stderr while stdout keeps one
+// finding per line and nothing else.
+func writeConciseSummary(w io.Writer, prefix string, project *lint.Project, diagnostics []lint.Diagnostic) error {
+	checked := 0
+	for name, source := range project.Sources {
+		if source != nil && project.Selected[name] {
+			checked++
+		}
+	}
+	files := plural(checked, "checked file", "checked files", "0 checked files")
+	if len(diagnostics) == 0 {
+		_, err := fmt.Fprintf(w, "%sNo findings in %s.\n", prefix, files)
+		return err
+	}
+	severities := map[string]int{}
+	for _, d := range diagnostics {
+		severities[d.Severity]++
+	}
+	var parts []string
+	for _, severity := range slices.Sorted(maps.Keys(severities)) {
+		parts = append(parts, plural(severities[severity], severity, severity+"s", ""))
+	}
+	_, err := fmt.Fprintf(w, "%s%s (%s) in %s.\n", prefix, plural(len(diagnostics), "finding", "findings", ""), strings.Join(parts, ", "), files)
+	return err
+}
+
+// plural counts n items, using none verbatim when n is zero.
+func plural(n int, one, many, none string) string {
+	switch {
+	case n == 0 && none != "":
+		return none
+	case n == 1:
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 func renderCheck(ctx context.Context, out io.Writer, project *lint.Project, diagnostics []lint.Diagnostic, format string, human report.HumanOptions, statistics *report.Statistics) error {
