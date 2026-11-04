@@ -100,7 +100,7 @@
     "esbuild": "0.28.2",
     "eslint": "10.12.0",
     "mocha": "12.0.0",
-    "prettier": "3.9.6",
+    "prettier": "3.9.10",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
     "yauzl": "3.4.0"
