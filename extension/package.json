@@ -7,7 +7,7 @@
   "license": "GPL-3.0-only",
   "engines": {
     "vscode": "^1.100.0",
-    "node": "24.20.0"
+    "node": "24.22.2"
   },
   "main": "./dist/extension.js",
   "extensionKind": [
