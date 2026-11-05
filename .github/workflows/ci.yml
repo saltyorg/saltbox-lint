@@ -79,14 +79,14 @@ jobs:
       - name: Retain required vulnerability scan evidence
         id: vulnerability_upload
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: vulnerability-evidence
           path: bin/vulnerability/*
           if-no-files-found: error
       - name: Upload release artifacts
         id: release_upload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-artifacts
           path: |
