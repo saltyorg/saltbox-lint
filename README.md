@@ -615,11 +615,12 @@ pinned developer tools under ignored `bin/tools`; Go's build/module caches can
 also be populated. `make check` checks
 formatting without rewriting files, verifies module tidiness with `go mod tidy
 -diff`, runs vet, standard golangci-lint checks, race tests (including the patched
-Nuri module and Makefile/editor integrations), actionlint for
-workflows/examples, GoReleaser configuration validation, extension build/unit/
-release checks, and offline documentation links and platform-table freshness.
+Nuri module and Makefile/editor integrations), GoReleaser configuration
+validation, extension build/unit/release checks, and offline documentation links
+and platform-table freshness.
 Use `make docs-update` to explicitly regenerate the platform table.
-CI uses the same gates.
+CI uses the same gates and additionally lints the workflows and examples with
+the shared `saltyorg/github-actions/jactionlint` action.
 
 Local and native Go checks use current tracked and nonignored untracked project
 sources through `tools/go-check.mjs`. Go applies the current target and build

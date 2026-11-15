@@ -381,6 +381,7 @@ func TestCISummaryInputsMatchRequiredChecks(t *testing.T) {
 	readYAML(t, "../.github/workflows/ci.yml", &ci)
 	reported := map[string]map[string]string{
 		"check": {
+			"Lint workflows and examples":                                      "workflow_lint",
 			"Check, build and package local artifacts":                         "build_package",
 			"Rebuild the matching source offline and compare shipped binaries": "source_rebuild",
 			"Retain required vulnerability scan evidence":                      "vulnerability_upload",

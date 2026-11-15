@@ -333,6 +333,7 @@ export function renderSummary(kind, context) {
   } else if (kind === "check") {
     checks = [
       ...preparation,
+      ["workflow_lint", "Workflow and example lint"],
       ["build_package", "Quality gate and package verification"],
       ["source_rebuild", "Offline source rebuild and binary comparison"],
       ["vulnerability_upload", "Vulnerability evidence upload"],

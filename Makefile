@@ -2,25 +2,20 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := build
 
 GOLANGCI_VERSION := v2.14.0
-ACTIONLINT_VERSION := v1.7.12
 GORELEASER_VERSION := v2.18.1
 GOVULNCHECK_VERSION := v1.8.0
 TOOLS := $(CURDIR)/bin/tools
 GOLANGCI := $(TOOLS)/golangci-lint-$(GOLANGCI_VERSION)/golangci-lint
-ACTIONLINT := $(TOOLS)/actionlint-$(ACTIONLINT_VERSION)/actionlint
 GORELEASER := $(TOOLS)/goreleaser-$(GORELEASER_VERSION)/goreleaser
 GOVULNCHECK := $(TOOLS)/govulncheck-$(GOVULNCHECK_VERSION)/govulncheck
 VERSION ?= dev
 
 .PHONY: tools catalog check format-check build snapshot extension-check release-artifacts docs-check docs-update rules-update fuzz-check vulnerability-check
 
-tools: $(GOLANGCI) $(ACTIONLINT) $(GORELEASER) $(GOVULNCHECK)
+tools: $(GOLANGCI) $(GORELEASER) $(GOVULNCHECK)
 
 $(GOLANGCI):
 	GOBIN='$(dir $(GOLANGCI))' node tools/install-go-tool.mjs github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
-
-$(ACTIONLINT):
-	GOBIN='$(dir $(ACTIONLINT))' node tools/install-go-tool.mjs github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 
 $(GORELEASER):
 	GOBIN='$(dir $(GORELEASER))' node tools/install-go-tool.mjs github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
@@ -67,7 +62,6 @@ check: tools format-check extension-check docs-check vulnerability-check
 	node tools/go-check.mjs '$(GOLANGCI)' run
 	node tools/go-check.mjs go test -race
 	go -C third_party/nuri test -race . ./internal/grammar ./internal/tokenizer
-	$(ACTIONLINT) -shellcheck= -pyflakes= .github/workflows/*.yml examples/github/*.yml
 	$(GORELEASER) check
 
 # Opt-in qualification: fixed per-target budgets, separate minimizable properties.

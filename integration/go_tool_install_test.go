@@ -109,12 +109,11 @@ if(failed)throw original;
 	}
 	want := []struct{ target, directory, binary string }{
 		{"github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0", "golangci-lint-v2.14.0", "golangci-lint"},
-		{"github.com/rhysd/actionlint/cmd/actionlint@v1.7.12", "actionlint-v1.7.12", "actionlint"},
 		{"github.com/goreleaser/goreleaser/v2@v2.18.1", "goreleaser-v2.18.1", "goreleaser"},
 		{"golang.org/x/vuln/cmd/govulncheck@v1.8.0", "govulncheck-v1.8.0", "govulncheck"},
 	}
-	if len(records) != 8 {
-		t.Fatalf("got %d invocations, want two owned invocations for each of four tools", len(records))
+	if len(records) != 6 {
+		t.Fatalf("got %d invocations, want two owned invocations for each of three tools", len(records))
 	}
 	for _, tool := range want {
 		destination := filepath.Join(root, "bin", "tools", tool.directory)

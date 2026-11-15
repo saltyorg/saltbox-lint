@@ -166,6 +166,7 @@ test("required summary explains its own setup or gate failure when dependencies 
 test("successful preparation collapses to one row while setup problems remain explicit", () => {
   const steps = passed([
     ...setup,
+    "workflow_lint",
     "build_package",
     "source_rebuild",
     "vulnerability_upload",
@@ -195,6 +196,7 @@ test("successful preparation collapses to one row while setup problems remain ex
 test("step outcomes retain failures hidden by continue-on-error", () => {
   const steps = passed([
     ...setup,
+    "workflow_lint",
     "build_package",
     "source_rebuild",
     "vulnerability_upload",
@@ -507,6 +509,7 @@ test("non-Linux acceptance labels Linux preparation and Alpine probes as not app
 test("artifact links require successful uploads and the same repository and run", () => {
   const ids = [
     ...setup,
+    "workflow_lint",
     "build_package",
     "source_rebuild",
     "vulnerability_upload",
@@ -561,6 +564,7 @@ test("artifact links require successful uploads and the same repository and run"
 test("package counts require verified metadata for this commit and never claim native qualification", () => {
   const steps = passed([
     ...setup,
+    "workflow_lint",
     "build_package",
     "source_rebuild",
     "vulnerability_upload",

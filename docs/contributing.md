@@ -4,9 +4,10 @@ Use Go from `go.mod`, Node from `extension/.node-version`, npm 11.19.0, GNU make
 Git and bash. `make tools` installs the pinned developer tools in ignored
 `bin/tools`. `make check` is the non-mutating quality gate. It checks Go formatting
 and module tidiness, runs vet, lint, race suites, extension build/unit/release
-checks, actionlint, GoReleaser configuration checks, documentation links and
-generated documentation freshness. Tool caches and ignored build artifacts may
-be populated.
+checks, GoReleaser configuration checks, documentation links and generated
+documentation freshness. Tool caches and ignored build artifacts may be
+populated. Workflows and examples are linted in CI only, by the shared
+`saltyorg/github-actions/jactionlint` action in the `check` job.
 
 The [pinned Go-tool installer](../tools/install-go-tool.mjs) retries a confirmed
 module-download HTTP/2 `INTERNAL_ERROR` at most twice, after the previous command

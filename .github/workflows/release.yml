@@ -4,6 +4,10 @@ on:
     tags: ['v[0-9]*.[0-9]*.[0-9]*']
 permissions:
   contents: read
+# A release in progress is never cancelled; a repeated run for the same tag waits.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   qualify:
     uses: ./.github/workflows/ci.yml
@@ -12,6 +16,7 @@ jobs:
   release:
     needs: qualify
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -19,8 +24,6 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: extension/.node-version
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
       - name: Set up npm
         run: node tools/setup-npm.mjs
       - name: Install the pinned archive reader
@@ -66,8 +69,6 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: extension/.node-version
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
       - name: Set up npm
         run: node tools/setup-npm.mjs
       - name: Install the pinned publishing tool
