@@ -28,7 +28,7 @@ jobs:
         run: node tools/setup-npm.mjs
       - name: Install the pinned archive reader
         run: npm --prefix extension ci --ignore-scripts
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: release-artifacts
           path: dist
@@ -73,7 +73,7 @@ jobs:
         run: node tools/setup-npm.mjs
       - name: Install the pinned publishing tool
         run: npm --prefix extension ci --ignore-scripts
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: release-artifacts
           path: dist
