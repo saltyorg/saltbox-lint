@@ -15,7 +15,7 @@ jobs:
       stable: true
   release:
     needs: qualify
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
@@ -58,7 +58,7 @@ jobs:
             dist/vsix-artifacts.json dist/checksums.txt
   marketplace:
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     environment: marketplace-publish
     permissions:
