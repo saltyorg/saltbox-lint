@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.6 (2026-11-22)
+
+- End `check` output with a one-line summary on stderr when `--format auto`
+  selects concise output, such as `No findings in 12 checked files.`, so a
+  clean run in a pipe or agent no longer prints nothing. Stdout and explicit
+  `--format concise` are unchanged.
+- Update lipgloss to v2.1.1, golang.org/x/sys to v0.50.0, jsonschema to
+  v6.0.3 and x/ansi to v0.11.9.
+
 ## 0.2.5 (2026-10-28)
 
 - Check templates in directory scans, including the default `.`, and in
