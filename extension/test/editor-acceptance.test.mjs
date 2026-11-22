@@ -1128,16 +1128,55 @@ test("inherited command requires the external owner and awaits real child closur
       }),
     /external profile owner/,
   );
+  // The deadline only bounds a real Node child's startup and exit under the
+  // parallel suite, like the other real-child cases here; its expiry path is
+  // covered with injected timers.
   const value = await inheritedCommand(
     process.execPath,
     ["-e", "process.stdout.write('ready')"],
     {
       env: { ...process.env, SALTBOX_TEST_HOST_WORKER: "1" },
       phase: "adapter contract",
-      timeoutMs: 1000,
+      timeoutMs: 10000,
     },
   );
   assert.equal(value, "ready");
+});
+
+test("inherited command deadline kills the child and rejects after its closure", async () => {
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let armed;
+  /** @type {unknown} */
+  let cleared;
+  let observed = 0;
+  await assert.rejects(
+    inheritedCommand(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {
+        env: { ...process.env, SALTBOX_TEST_HOST_WORKER: "1" },
+        phase: "adapter deadline",
+        timeoutMs: 25,
+      },
+      {
+        // Expire as soon as the child is spawned; the child never exits alone.
+        setTimer: /** @type {typeof setTimeout} */ (
+          /** @param {() => void} expired */
+          (expired) => (armed = setTimeout(expired, 0))
+        ),
+        clearTimer: (timer) => {
+          clearTimeout(timer);
+          cleared = timer;
+        },
+        onFirstFailure: () => observed++,
+      },
+    ),
+    /adapter deadline: timed out after 25ms/,
+  );
+  // The deadline is cleared from 'close', so rejection followed child closure.
+  assert.ok(armed);
+  assert.equal(cleared, armed);
+  assert.equal(observed, 1);
 });
 
 test("actual process failure joins the owned group or Job and removes its profile", async () => {
